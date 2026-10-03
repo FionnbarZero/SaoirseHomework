@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -22,6 +22,13 @@ function emptyState() {
     completionRecords: [],
     guardianConnected: false,
     chromeConnected: false,
+    googleProof: {
+      mode: 'mock',
+      connected: false,
+      accountEmail: null,
+      connectedAt: null,
+      deliveries: [],
+    },
   }
 }
 
@@ -64,6 +71,14 @@ function normalizeOrigin(value) {
   } catch {
     throw serviceError('A valid HTTP game origin is required')
   }
+}
+
+function normalizeEmail(value, label) {
+  const email = String(value ?? '').trim().toLowerCase()
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw serviceError(`A valid ${label} email address is required`)
+  }
+  return email
 }
 
 export function createStore(filename, options = {}) {
@@ -201,6 +216,38 @@ export function createStore(filename, options = {}) {
       last_seen_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS google_connection (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      mode TEXT NOT NULL CHECK (mode = 'mock'),
+      account_email TEXT NOT NULL,
+      connected INTEGER NOT NULL CHECK (connected IN (0, 1)),
+      connected_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS google_delivery (
+      id TEXT PRIMARY KEY,
+      week_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      mode TEXT NOT NULL CHECK (mode = 'mock'),
+      status TEXT NOT NULL CHECK (status IN ('creating', 'simulated', 'skipped', 'failed')),
+      account_email TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      document_name TEXT NOT NULL,
+      document_path TEXT,
+      pdf_path TEXT,
+      draft_count INTEGER NOT NULL DEFAULT 0,
+      attempt_count INTEGER NOT NULL DEFAULT 1,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS google_delivery_week
+      ON google_delivery (week_id, created_at);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -268,6 +315,12 @@ export function createStore(filename, options = {}) {
     UPDATE activity_session
     SET status = 'paused', runtime_id = NULL, last_tick_ms = NULL, updated_at = ?
     WHERE status = 'active'
+  `).run(asIso(wallNow()))
+
+  db.prepare(`
+    UPDATE google_delivery
+    SET status = 'failed', last_error = 'The local service restarted during artifact creation', updated_at = ?
+    WHERE status = 'creating'
   `).run(asIso(wallNow()))
 
   // Preserve a timer written by schema version 1 as a paused, server-owned session.
@@ -383,6 +436,7 @@ export function createStore(filename, options = {}) {
     state.entered = settings.entered === '1'
     state.guardianConnected = getGuardianStatus().connected
     state.chromeConnected = getChromeExtensionStatus().connected
+    state.googleProof = getGoogleProofState()
 
     for (const row of db.prepare('SELECT day, activity_id FROM daily_completion ORDER BY completed_at').all()) {
       if (DAYS.includes(row.day)) state.requiredByDay[row.day].push(row.activity_id)
@@ -876,6 +930,240 @@ export function createStore(filename, options = {}) {
     }
   }
 
+  function googleDeliveryFromRow(row) {
+    if (!row) return null
+    return {
+      id: row.id,
+      weekId: row.week_id,
+      mode: row.mode,
+      status: row.status,
+      accountEmail: row.account_email,
+      recipient: row.recipient,
+      documentId: row.document_id,
+      documentName: row.document_name,
+      documentUrl: row.document_path ? `/api/google/mock/deliveries/${encodeURIComponent(row.id)}/document` : null,
+      pdfUrl: row.pdf_path ? `/api/google/mock/deliveries/${encodeURIComponent(row.id)}/pdf` : null,
+      draftCount: Number(row.draft_count),
+      attemptCount: Number(row.attempt_count),
+      lastError: row.last_error ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      deliveredAt: row.delivered_at ?? null,
+    }
+  }
+
+  function listGoogleDeliveries(limit = 12) {
+    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 12))
+    return db.prepare(`
+      SELECT * FROM google_delivery ORDER BY created_at DESC LIMIT ?
+    `).all(safeLimit).map(googleDeliveryFromRow)
+  }
+
+  function getGoogleProofState() {
+    const connection = db.prepare('SELECT * FROM google_connection WHERE singleton = 1').get()
+    return {
+      mode: 'mock',
+      connected: Boolean(connection?.connected),
+      accountEmail: connection?.connected ? connection.account_email : null,
+      connectedAt: connection?.connected ? connection.connected_at : null,
+      deliveries: listGoogleDeliveries(),
+    }
+  }
+
+  function connectMockGoogle(input) {
+    const accountEmail = normalizeEmail(input.accountEmail, 'test account')
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        INSERT INTO google_connection (
+          singleton, mode, account_email, connected, connected_at, updated_at
+        ) VALUES (1, 'mock', ?, 1, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET
+          mode = 'mock',
+          account_email = excluded.account_email,
+          connected = 1,
+          connected_at = excluded.connected_at,
+          updated_at = excluded.updated_at
+      `).run(accountEmail, now, now)
+      insertAudit.run('google_mock_connected', JSON.stringify({ accountEmail }), now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getGoogleProofState()
+  }
+
+  function disconnectMockGoogle() {
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        UPDATE google_connection SET connected = 0, updated_at = ? WHERE singleton = 1
+      `).run(now)
+      insertAudit.run('google_mock_disconnected', '{}', now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getGoogleProofState()
+  }
+
+  function prepareMockGoogleDelivery(input) {
+    const connection = db.prepare(`
+      SELECT * FROM google_connection WHERE singleton = 1 AND connected = 1
+    `).get()
+    if (!connection) throw serviceError('Connect the test Google account first', 409, 'google_not_connected')
+
+    const recipient = normalizeEmail(input.recipient, 'test recipient')
+    const weekId = input.weekId ? String(input.weekId) : getMondayId(wallNow())
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekId)) throw serviceError('A valid week ID is required')
+    const documentId = `mock-doc-${createHash('sha256')
+      .update(`${connection.account_email}:${weekId}`)
+      .digest('hex')
+      .slice(0, 16)}`
+    const idempotencyKey = `${weekId}:${documentId}`
+    const existing = db.prepare('SELECT * FROM google_delivery WHERE idempotency_key = ?').get(idempotencyKey)
+    const draftRows = db.prepare(`
+      SELECT id, title, body, findings_json, updated_at
+      FROM writing_submission
+      WHERE length(trim(body)) > 0
+      ORDER BY updated_at
+    `).all()
+    const drafts = draftRows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      body: row.body,
+      findings: safeJson(row.findings_json, []),
+      updatedAt: row.updated_at,
+    }))
+
+    if (existing && existing.status !== 'failed') {
+      return { delivery: googleDeliveryFromRow(existing), drafts: [], created: false }
+    }
+
+    const now = asIso(wallNow())
+    const documentName = `Fionnbar Writing - Week of ${weekId}`
+    if (existing) {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.prepare(`
+          UPDATE google_delivery
+          SET status = 'creating', recipient = ?, draft_count = ?, attempt_count = attempt_count + 1,
+              last_error = NULL, updated_at = ?
+          WHERE id = ? AND status = 'failed'
+        `).run(recipient, drafts.length, now, existing.id)
+        insertAudit.run(
+          'google_mock_delivery_retried',
+          JSON.stringify({ deliveryId: existing.id, weekId, documentId, recipient }),
+          now,
+        )
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+      return {
+        delivery: googleDeliveryFromRow(db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(existing.id)),
+        drafts,
+        created: true,
+      }
+    }
+
+    const id = makeId()
+    const status = drafts.length === 0 ? 'skipped' : 'creating'
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        INSERT INTO google_delivery (
+          id, week_id, idempotency_key, mode, status, account_email, recipient,
+          document_id, document_name, draft_count, created_at, updated_at
+        ) VALUES (?, ?, ?, 'mock', ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, weekId, idempotencyKey, status, connection.account_email, recipient,
+        documentId, documentName, drafts.length, now, now,
+      )
+      insertAudit.run(
+        drafts.length === 0 ? 'google_mock_delivery_skipped' : 'google_mock_delivery_started',
+        JSON.stringify({ deliveryId: id, weekId, documentId, recipient, draftCount: drafts.length }),
+        now,
+      )
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    return {
+      delivery: googleDeliveryFromRow(db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(id)),
+      drafts,
+      created: true,
+    }
+  }
+
+  function completeMockGoogleDelivery(id, artifacts) {
+    const deliveryId = String(id)
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const update = db.prepare(`
+        UPDATE google_delivery
+        SET status = 'simulated', document_path = ?, pdf_path = ?, last_error = NULL,
+            updated_at = ?, delivered_at = ?
+        WHERE id = ? AND status = 'creating'
+      `).run(String(artifacts.documentPath), String(artifacts.pdfPath), now, now, deliveryId)
+      if (Number(update.changes) !== 1) {
+        throw serviceError('The proof delivery is no longer awaiting artifacts', 409, 'delivery_not_pending')
+      }
+      const row = db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(deliveryId)
+      insertAudit.run(
+        'google_mock_delivery_simulated',
+        JSON.stringify({
+          deliveryId,
+          weekId: row.week_id,
+          documentId: row.document_id,
+          recipient: row.recipient,
+          draftCount: Number(row.draft_count),
+        }),
+        now,
+      )
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return googleDeliveryFromRow(db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(deliveryId))
+  }
+
+  function failMockGoogleDelivery(id, error) {
+    const deliveryId = String(id)
+    const message = String(error instanceof Error ? error.message : error).slice(0, 500)
+    const now = asIso(wallNow())
+    db.prepare(`
+      UPDATE google_delivery
+      SET status = 'failed', last_error = ?, updated_at = ?
+      WHERE id = ? AND status = 'creating'
+    `).run(message, now, deliveryId)
+    addAudit('google_mock_delivery_failed', { deliveryId, error: message })
+    return googleDeliveryFromRow(db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(deliveryId))
+  }
+
+  function getGoogleDeliveryArtifact(id, kind) {
+    if (!['document', 'pdf'].includes(kind)) throw serviceError('Unknown delivery artifact', 404, 'artifact_not_found')
+    const row = db.prepare('SELECT * FROM google_delivery WHERE id = ?').get(String(id))
+    const path = kind === 'document' ? row?.document_path : row?.pdf_path
+    if (!row || row.status !== 'simulated' || !path) {
+      throw serviceError('Delivery artifact not found', 404, 'artifact_not_found')
+    }
+    return {
+      path,
+      filename: kind === 'document' ? `${row.document_name}.html` : `${row.document_name}.pdf`,
+      contentType: kind === 'document' ? 'text/html; charset=utf-8' : 'application/pdf',
+    }
+  }
+
   function isOptionalComplete(sessionKey) {
     return Boolean(db.prepare('SELECT 1 FROM optional_completion WHERE session_key = ?').get(String(sessionKey)))
   }
@@ -926,6 +1214,13 @@ export function createStore(filename, options = {}) {
     getGuardianStatus,
     recordChromeExtensionHeartbeat,
     getChromeExtensionStatus,
+    connectMockGoogle,
+    disconnectMockGoogle,
+    getGoogleProofState,
+    prepareMockGoogleDelivery,
+    completeMockGoogleDelivery,
+    failMockGoogleDelivery,
+    getGoogleDeliveryArtifact,
     addAudit,
     listAudit,
     listCompletions,

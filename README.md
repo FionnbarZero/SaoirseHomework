@@ -44,6 +44,9 @@ npm run build
 - One-time Reading Strategies game sessions with hashed nonces and a 60-minute expiry
 - Exact-origin CORS, atomic `game-verified` completion, and replay rejection
 - Child-screen game launch, status polling, and a clearly labeled local verification simulator
+- Persistent safe-mode Google connection and weekly delivery records
+- Duplicate-safe local document assembly, real PDF export, and no-writing skip behavior
+- Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Automatic migration from browser storage on the first service run
 - Parent action audit log and restart-safe timer records
 - Browser-cache fallback when the loopback service is unavailable
@@ -56,7 +59,7 @@ The UI labels the following honestly as pending because they require external in
 - Parent-authorized guardian installation and enforcement on the second Mac
 - Chrome Web Store publication and parent-installed policy on the second Mac
 - The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
-- Google OAuth, Drive/Docs/Gmail delivery, and Family Link approval
+- Live Google OAuth, Drive/Docs/Gmail delivery, Keychain storage, and Family Link approval (a no-network local proof is implemented)
 - Existing spelling-practice module
 
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
@@ -64,3 +67,5 @@ The browser prototype does not claim to enforce applications or URLs. Those cont
 The session service verifies time reported by the browser, but the browser is not yet an enforcement boundary. The future macOS guardian and managed Chrome extension will supply approved-window, approved-origin, and application-blocking signals.
 
 To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.
+
+The Parent screen's Google delivery proof is deliberately local. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`. Live mode must use Authorization Code with PKCE, macOS Keychain token storage, minimal Drive/Gmail scopes, and explicit Family Link approval before it can replace the simulator.

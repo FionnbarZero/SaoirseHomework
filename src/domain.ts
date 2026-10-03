@@ -81,6 +81,33 @@ export type GameSession = {
   completedAt: string | null
 }
 
+export type GoogleDelivery = {
+  id: string
+  weekId: string
+  mode: 'mock'
+  status: 'creating' | 'simulated' | 'skipped' | 'failed'
+  accountEmail: string
+  recipient: string
+  documentId: string
+  documentName: string
+  documentUrl: string | null
+  pdfUrl: string | null
+  draftCount: number
+  attemptCount: number
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+  deliveredAt: string | null
+}
+
+export type GoogleProofState = {
+  mode: 'mock'
+  connected: boolean
+  accountEmail: string | null
+  connectedAt: string | null
+  deliveries: GoogleDelivery[]
+}
+
 export type AppState = {
   entered: boolean
   requiredByDay: Record<DayName, string[]>
@@ -92,6 +119,7 @@ export type AppState = {
   completionRecords: CompletionRecord[]
   guardianConnected: boolean
   chromeConnected: boolean
+  googleProof: GoogleProofState
 }
 
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
@@ -214,6 +242,13 @@ export const defaultState: AppState = {
   completionRecords: [],
   guardianConnected: false,
   chromeConnected: false,
+  googleProof: {
+    mode: 'mock',
+    connected: false,
+    accountEmail: null,
+    connectedAt: null,
+    deliveries: [],
+  },
 }
 
 export function activeRequiredActivities() {

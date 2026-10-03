@@ -6,6 +6,8 @@ import {
   ChevronRight,
   CircleUserRound,
   Clock3,
+  Download,
+  FileText,
   Gift,
   Home,
   LockKeyhole,
@@ -16,6 +18,7 @@ import {
   RotateCcw,
   Settings2,
   ShieldCheck,
+  Send,
   Sparkles,
   Star,
   Trophy,
@@ -43,12 +46,15 @@ import {
 } from './domain'
 import {
   acknowledgeControlledSession,
+  connectMockGoogle,
+  disconnectMockGoogle,
   endControlledSession,
   heartbeatControlledSession,
   hydrateFromService,
   getReadingGameSession,
   loadStateFromService,
   recordAudit,
+  runMockGoogleDelivery,
   saveStateToService,
   setDailyCompletion,
   startControlledSession,
@@ -745,7 +751,7 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
           )}
         </aside>
       </div>
-      <div className="integration-note"><Clock3 size={19} /><div><strong>Friday delivery is not connected yet.</strong><p>Google authorization and the spelling-practice module are required before writing can be sent.</p></div></div>
+      <div className="integration-note"><Clock3 size={19} /><div><strong>Friday delivery is still in safe test mode.</strong><p>The Parent screen can generate a local document and PDF proof. Real Google authorization and the spelling-practice module are still required before writing can be sent.</p></div></div>
     </section>
   )
 }
@@ -849,6 +855,70 @@ function ParentView({
   serviceMeta: ServiceMeta | null
   reconnectService: () => void
 }) {
+  const [googleAccount, setGoogleAccount] = useState(state.googleProof.accountEmail ?? 'parent-test@example.com')
+  const [googleRecipient, setGoogleRecipient] = useState(
+    state.googleProof.deliveries[0]?.recipient ?? 'school-test@example.com',
+  )
+  const [googleBusy, setGoogleBusy] = useState(false)
+  const [googleMessage, setGoogleMessage] = useState('')
+
+  const connectGoogleProof = async () => {
+    if (serviceStatus !== 'online') {
+      setGoogleMessage('Reconnect the local service before using the delivery proof.')
+      return
+    }
+    setGoogleBusy(true)
+    setGoogleMessage('')
+    try {
+      const response = await connectMockGoogle(googleAccount)
+      setState(response.state)
+      setGoogleMessage('Safe test account connected. No Google authorization occurred.')
+    } catch (error) {
+      setGoogleMessage(error instanceof Error ? error.message : 'The test account could not be connected.')
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
+
+  const disconnectGoogleProof = async () => {
+    setGoogleBusy(true)
+    setGoogleMessage('')
+    try {
+      const response = await disconnectMockGoogle()
+      setState(response.state)
+      setGoogleMessage('Safe test account disconnected. Existing local proof records were preserved.')
+    } catch (error) {
+      setGoogleMessage(error instanceof Error ? error.message : 'The test account could not be disconnected.')
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
+
+  const deliverGoogleProof = async () => {
+    if (serviceStatus !== 'online') {
+      setGoogleMessage('Reconnect the local service before generating a delivery proof.')
+      return
+    }
+    setGoogleBusy(true)
+    setGoogleMessage('')
+    try {
+      await saveStateToService(state)
+      const response = await runMockGoogleDelivery(googleRecipient)
+      setState(response.state)
+      setGoogleMessage(
+        response.duplicate
+          ? 'Duplicate prevented: this week already has a proof delivery record.'
+          : response.delivery.status === 'skipped'
+            ? 'Nothing was sent: there are no non-empty writing drafts for this week.'
+            : 'Local document and PDF created. Drive, sharing, and email were simulated only.',
+      )
+    } catch (error) {
+      setGoogleMessage(error instanceof Error ? error.message : 'The delivery proof could not be generated.')
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
+
   const toggleOverride = async (activityId: string) => {
     const wasComplete = state.requiredByDay[day].includes(activityId)
     if (serviceStatus === 'online') {
@@ -908,13 +978,64 @@ function ParentView({
           </div>
         </div>
         <div className="parent-panel integration-panel">
-          <div className="panel-heading"><div><h3>System connections</h3><p>Feasibility work still required.</p></div></div>
+          <div className="panel-heading"><div><h3>System connections</h3><p>Local proofs and live integrations.</p></div></div>
           <div className="connection-row"><span className={serviceStatus === 'online' ? 'dot good' : 'dot'} /><div><strong>Local data service</strong><small>{serviceStatus === 'online' ? `SQLite schema ${serviceMeta?.schemaVersion ?? 1} · restart-safe` : 'Using browser backup storage'}</small></div>{serviceStatus === 'online' ? <b>Connected</b> : <button onClick={reconnectService}>Retry</button>}</div>
           <div className="connection-row"><span className={state.guardianConnected ? 'dot good' : 'dot'} /><div><strong>macOS guardian</strong><small>{state.guardianConnected ? 'Heartbeat received within 15 seconds' : 'No live guardian heartbeat'}</small></div><b>{state.guardianConnected ? 'Connected' : 'Pending'}</b></div>
           <div className="connection-row"><span className={state.chromeConnected ? 'dot good' : 'dot'} /><div><strong>Managed Chrome</strong><small>{state.chromeConnected ? 'Extension heartbeat received within 45 seconds' : 'Policy and extension not installed'}</small></div><b>{state.chromeConnected ? 'Connected' : 'Pending'}</b></div>
-          <div className="connection-row"><span className="dot" /><div><strong>Google delivery</strong><small>OAuth not authorized</small></div><b>Pending</b></div>
-          <div className="connection-row"><span className="dot" /><div><strong>Reading game</strong><small>Completion origin needed</small></div><b>Pending</b></div>
+          <div className="connection-row"><span className={state.googleProof.connected ? 'dot good' : 'dot'} /><div><strong>Google delivery proof</strong><small>{state.googleProof.connected ? `${state.googleProof.accountEmail} · no external access` : 'Safe test account not connected'}</small></div><b>{state.googleProof.connected ? 'Test ready' : 'Pending'}</b></div>
+          <div className="connection-row"><span className="dot good" /><div><strong>Reading game contract</strong><small>Local simulator and verified completion are ready</small></div><b>Test ready</b></div>
           <button className="secondary-button full-button" onClick={addCredit}><Plus size={17} /> Add a 5-minute credit</button>
+        </div>
+      </div>
+      <div className="parent-panel google-proof-panel">
+        <div className="panel-heading">
+          <div><h3>Google delivery proof</h3><p>Creates local artifacts and an audit record without contacting Google or sending email.</p></div>
+          <span className="mock-badge">SAFE TEST MODE</span>
+        </div>
+        <div className="google-proof-content">
+          <div className="google-proof-form">
+            <label>
+              <span>Test Google account</span>
+              <input type="email" value={googleAccount} onChange={(event) => setGoogleAccount(event.target.value)} disabled={state.googleProof.connected || googleBusy} />
+            </label>
+            {!state.googleProof.connected ? (
+              <button className="secondary-button" onClick={connectGoogleProof} disabled={googleBusy || serviceStatus !== 'online'}>
+                <ShieldCheck size={16} /> Connect test account
+              </button>
+            ) : (
+              <button className="text-button danger" onClick={disconnectGoogleProof} disabled={googleBusy}>
+                <X size={16} /> Disconnect test account
+              </button>
+            )}
+            <label>
+              <span>Test school recipient</span>
+              <input type="email" value={googleRecipient} onChange={(event) => setGoogleRecipient(event.target.value)} disabled={googleBusy} />
+            </label>
+            <button className="primary-button" onClick={deliverGoogleProof} disabled={googleBusy || !state.googleProof.connected || serviceStatus !== 'online'}>
+              <Send size={16} /> {googleBusy ? 'Working…' : 'Run delivery proof'}
+            </button>
+            {googleMessage && <p className="google-proof-message" role="status">{googleMessage}</p>}
+          </div>
+          <div className="delivery-history">
+            <div className="delivery-heading"><strong>Recent proof deliveries</strong><small>One record per weekly document</small></div>
+            {state.googleProof.deliveries.length === 0 ? (
+              <div className="completion-empty">No delivery proofs have run yet. Save a writing draft, then run the proof.</div>
+            ) : state.googleProof.deliveries.slice(0, 5).map((delivery) => (
+              <div className="delivery-row" key={delivery.id}>
+                <span className={`delivery-icon ${delivery.status}`}><FileText size={17} /></span>
+                <span>
+                  <strong>Week of {delivery.weekId}</strong>
+                  <small>{delivery.draftCount} {delivery.draftCount === 1 ? 'draft' : 'drafts'} · {delivery.recipient} · attempt {delivery.attemptCount}</small>
+                  {delivery.lastError && <small className="delivery-error">{delivery.lastError}</small>}
+                </span>
+                <span className="delivery-actions">
+                  <b className={`delivery-status ${delivery.status}`}>{delivery.status === 'simulated' ? 'Test delivered' : delivery.status}</b>
+                  {delivery.documentUrl && <a href={delivery.documentUrl}><FileText size={14} /> Document</a>}
+                  {delivery.pdfUrl && <a href={delivery.pdfUrl}><Download size={14} /> PDF</a>}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       <div className="parent-panel completion-panel">

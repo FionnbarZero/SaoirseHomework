@@ -1,4 +1,4 @@
-import type { ActiveTimer, AppState, DayName, GameSession } from './domain'
+import type { ActiveTimer, AppState, DayName, GameSession, GoogleDelivery, GoogleProofState } from './domain'
 
 export type ServiceMeta = {
   database: string
@@ -24,11 +24,20 @@ type GameSessionLaunchResponse = StateResponse & {
   gameSession: GameSession & { launchUrl: string }
 }
 
+type GoogleProofResponse = StateResponse & {
+  googleProof: GoogleProofState
+}
+
+type GoogleDeliveryResponse = StateResponse & {
+  delivery: GoogleDelivery
+  duplicate: boolean
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    signal: AbortSignal.timeout(3500),
+    signal: options?.signal ?? AbortSignal.timeout(3500),
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
@@ -113,4 +122,23 @@ export function startReadingGame(day: DayName) {
 
 export function getReadingGameSession(sessionId: string) {
   return request<GameSessionResponse>(`/api/game-sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export function connectMockGoogle(accountEmail: string) {
+  return request<GoogleProofResponse>('/api/google/mock/connect', {
+    method: 'POST',
+    body: JSON.stringify({ accountEmail }),
+  })
+}
+
+export function disconnectMockGoogle() {
+  return request<GoogleProofResponse>('/api/google/mock/disconnect', { method: 'POST' })
+}
+
+export function runMockGoogleDelivery(recipient: string) {
+  return request<GoogleDeliveryResponse>('/api/google/mock/deliveries', {
+    method: 'POST',
+    body: JSON.stringify({ recipient }),
+    signal: AbortSignal.timeout(15_000),
+  })
 }

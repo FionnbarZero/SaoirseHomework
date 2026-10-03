@@ -66,7 +66,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 5)
+    assert.equal(reopened.info().schemaVersion, 6)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -415,5 +415,70 @@ test('browser state import cannot spoof a verified or timed required completion'
   assert.deepEqual(saved.requiredByDay.Monday, ['mandarin', 'math'])
   assert.equal(saved.completionRecords.some((record) => record.activityId === 'reading-strategies'), false)
   assert.equal(saved.completionRecords.some((record) => record.activityId === 'ninja-dojo'), false)
+  store.close()
+})
+
+test('mock Google delivery is persistent and duplicate-safe for a weekly document', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  store.saveState(sampleState())
+
+  const connected = store.connectMockGoogle({ accountEmail: 'Parent.Test@example.com' })
+  assert.equal(connected.connected, true)
+  assert.equal(connected.accountEmail, 'parent.test@example.com')
+
+  const prepared = store.prepareMockGoogleDelivery({
+    recipient: 'Teacher.Test@example.com',
+    weekId: '2026-09-28',
+  })
+  assert.equal(prepared.created, true)
+  assert.equal(prepared.delivery.status, 'creating')
+  assert.equal(prepared.delivery.draftCount, 1)
+  assert.equal(prepared.drafts[0].title, 'A test draft')
+
+  const completed = store.completeMockGoogleDelivery(prepared.delivery.id, {
+    documentPath: '/tmp/mock-google-proof.html',
+    pdfPath: '/tmp/mock-google-proof.pdf',
+  })
+  assert.equal(completed.status, 'simulated')
+  assert.match(completed.documentUrl, /\/document$/)
+  assert.match(completed.pdfUrl, /\/pdf$/)
+
+  const duplicate = store.prepareMockGoogleDelivery({
+    recipient: 'different@example.com',
+    weekId: '2026-09-28',
+  })
+  assert.equal(duplicate.created, false)
+  assert.equal(duplicate.delivery.id, completed.id)
+  assert.equal(store.getGoogleProofState().deliveries.length, 1)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'google_mock_delivery_simulated').length,
+    1,
+  )
+
+  assert.equal(store.disconnectMockGoogle().connected, false)
+  assert.equal(store.getGoogleProofState().deliveries.length, 1)
+  store.close()
+})
+
+test('mock Google proof records a duplicate-safe skip when no writing exists', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  store.connectMockGoogle({ accountEmail: 'parent@example.com' })
+
+  const skipped = store.prepareMockGoogleDelivery({
+    recipient: 'teacher@example.com',
+    weekId: '2026-09-28',
+  })
+  assert.equal(skipped.created, true)
+  assert.equal(skipped.delivery.status, 'skipped')
+  assert.equal(skipped.delivery.draftCount, 0)
+
+  const duplicate = store.prepareMockGoogleDelivery({
+    recipient: 'teacher@example.com',
+    weekId: '2026-09-28',
+  })
+  assert.equal(duplicate.created, false)
+  assert.equal(store.getGoogleProofState().deliveries.length, 1)
   store.close()
 })

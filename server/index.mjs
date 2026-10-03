@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createStore } from './database.mjs'
+import { createMockGoogleArtifacts } from './google-proof.mjs'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -11,6 +12,7 @@ const host = '127.0.0.1'
 const serviceOrigin = `http://${host}:${port}`
 const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
+const googleProofDirectory = process.env.HOMEWORK_GOOGLE_PROOF_DIR || join(dataDirectory, 'google-proof')
 const distDirectory = join(projectRoot, 'dist')
 const store = createStore(databasePath)
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
@@ -113,6 +115,19 @@ function serveStatic(pathname, response) {
     'Cache-Control': filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
   })
   createReadStream(filePath).pipe(response)
+  return true
+}
+
+function serveArtifact(artifact, response) {
+  if (!existsSync(artifact.path) || !statSync(artifact.path).isFile()) return false
+  const filename = artifact.filename.replace(/["\r\n]/g, '')
+  response.writeHead(200, {
+    'Content-Type': artifact.contentType,
+    'Content-Length': statSync(artifact.path).size,
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+  })
+  createReadStream(artifact.path).pipe(response)
   return true
 }
 
@@ -262,6 +277,72 @@ const server = createServer(async (request, response) => {
       }
       const extension = store.recordChromeExtensionHeartbeat(body)
       return sendJson(response, 200, { extension, status: chromeResponse() })
+    }
+
+    if (url.pathname === '/api/google/mock/status' && request.method === 'GET') {
+      return sendJson(response, 200, {
+        googleProof: store.getGoogleProofState(),
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    if (url.pathname === '/api/google/mock/connect' && request.method === 'POST') {
+      const body = await readJson(request)
+      const googleProof = store.connectMockGoogle(body)
+      return sendJson(response, 200, { googleProof, state: store.loadState(), meta: store.info() })
+    }
+
+    if (url.pathname === '/api/google/mock/disconnect' && request.method === 'POST') {
+      const googleProof = store.disconnectMockGoogle()
+      return sendJson(response, 200, { googleProof, state: store.loadState(), meta: store.info() })
+    }
+
+    if (url.pathname === '/api/google/mock/deliveries' && request.method === 'POST') {
+      const body = await readJson(request)
+      const prepared = store.prepareMockGoogleDelivery({ recipient: body.recipient })
+      if (!prepared.created || prepared.delivery.status === 'skipped') {
+        return sendJson(response, 200, {
+          delivery: prepared.delivery,
+          duplicate: !prepared.created,
+          state: store.loadState(),
+          meta: store.info(),
+        })
+      }
+
+      try {
+        const artifacts = await createMockGoogleArtifacts({
+          outputDirectory: googleProofDirectory,
+          delivery: prepared.delivery,
+          drafts: prepared.drafts,
+        })
+        const delivery = store.completeMockGoogleDelivery(prepared.delivery.id, artifacts)
+        return sendJson(response, 201, {
+          delivery,
+          duplicate: false,
+          state: store.loadState(),
+          meta: store.info(),
+        })
+      } catch (error) {
+        const delivery = store.failMockGoogleDelivery(prepared.delivery.id, error)
+        return sendJson(response, 500, {
+          error: error instanceof Error ? error.message : 'The local proof artifacts could not be created',
+          code: 'google_mock_artifact_failed',
+          delivery,
+          state: store.loadState(),
+          meta: store.info(),
+        })
+      }
+    }
+
+    const googleArtifactMatch = url.pathname.match(/^\/api\/google\/mock\/deliveries\/([^/]+)\/(document|pdf)$/)
+    if (googleArtifactMatch && request.method === 'GET') {
+      const artifact = store.getGoogleDeliveryArtifact(
+        decodeURIComponent(googleArtifactMatch[1]),
+        googleArtifactMatch[2],
+      )
+      if (serveArtifact(artifact, response)) return
+      return sendJson(response, 404, { error: 'Delivery artifact file not found', code: 'artifact_not_found' })
     }
 
     if (url.pathname === '/api/sessions' && request.method === 'POST') {

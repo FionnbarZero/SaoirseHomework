@@ -182,6 +182,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .big-score { width: 130px; height: 82px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 20px; color: #2e6159; background: #dbeae5; }
 .big-score strong { font-family: Georgia, serif; font-size: 38px; }
 .big-score span { font-size: 10px; line-height: 1.2; font-weight: 800; text-transform: uppercase; }
+.head-start-page { max-width: 1080px; }
+.head-start-note { margin-bottom: 30px; padding: 18px 20px; display: flex; align-items: center; gap: 15px; border: 1px solid #d8c187; border-radius: 18px; color: #674e1d; background: linear-gradient(135deg, #fff7df, #f4e5b8); box-shadow: 0 10px 32px rgba(106,80,27,.08); }
+.head-start-note > span { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 14px; color: #805f1b; background: rgba(255,255,255,.64); }
+.head-start-note small, .head-start-note strong { display: block; }
+.head-start-note small { margin-bottom: 4px; color: #9a6e1b; font-size: 8px; font-weight: 900; letter-spacing: .13em; }
+.head-start-note strong { font-family: Georgia, serif; font-size: 18px; }
+.head-start-note p { margin: 4px 0 0; color: #856c3b; font-size: 10px; line-height: 1.45; }
 .practice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .practice-card { min-height: 245px; padding: 21px; border: 1px solid var(--line); border-radius: 20px; background: rgba(251,249,244,.94); box-shadow: 0 10px 34px rgba(63,58,44,.04); }
 .practice-card:nth-child(4), .practice-card:nth-child(5) { grid-column: span 1; }

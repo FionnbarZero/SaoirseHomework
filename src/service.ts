@@ -33,6 +33,18 @@ type GoogleDeliveryResponse = StateResponse & {
   duplicate: boolean
 }
 
+export class ServiceRequestError extends Error {
+  status: number
+  code: string
+
+  constructor(message: string, status: number, code = 'service_error') {
+    super(message)
+    this.name = 'ServiceRequestError'
+    this.status = status
+    this.code = code
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
@@ -41,7 +53,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body.error || `Service request failed (${response.status})`)
+    throw new ServiceRequestError(
+      body.error || `Service request failed (${response.status})`,
+      response.status,
+      body.code,
+    )
   }
   return response.json() as Promise<T>
 }
@@ -106,10 +122,11 @@ export function setDailyCompletion(
   activityId: string,
   completed: boolean,
   method: 'self-reported' | 'parent-override',
+  weekId: string,
 ) {
   return request<StateResponse>('/api/completions', {
     method: 'POST',
-    body: JSON.stringify({ day, activityId, completed, method }),
+    body: JSON.stringify({ day, activityId, completed, method, weekId }),
   })
 }
 

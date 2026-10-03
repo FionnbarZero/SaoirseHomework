@@ -5,12 +5,25 @@ import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const SCHEMA_VERSION = 6
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const SCHEMA_VERSION = 7
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
+const DEFAULT_TIME_ZONE = 'America/Los_Angeles'
 
-function emptyState() {
+function emptyWeekContext() {
+  return {
+    weekId: '',
+    fridayId: '',
+    timeZone: DEFAULT_TIME_ZONE,
+    localDay: 'Monday',
+    headStart: false,
+    clockRollbackDetected: false,
+  }
+}
+
+function emptyState(weekContext = emptyWeekContext()) {
   return {
     entered: false,
     requiredByDay: Object.fromEntries(DAYS.map((day) => [day, []])),
@@ -29,6 +42,7 @@ function emptyState() {
       connectedAt: null,
       deliveries: [],
     },
+    weekContext,
   }
 }
 
@@ -81,6 +95,46 @@ function normalizeEmail(value, label) {
   return email
 }
 
+function addUtcDays(dateId, days) {
+  const date = new Date(`${dateId}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+export function getWeekContext(value, timeZone = DEFAULT_TIME_ZONE) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) throw new Error('A valid date is required')
+
+  let parts
+  try {
+    parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date).map((part) => [part.type, part.value]))
+  } catch {
+    throw new Error(`Invalid weekly-plan time zone: ${timeZone}`)
+  }
+
+  const localDateId = `${parts.year}-${parts.month}-${parts.day}`
+  const localDayIndex = new Date(`${localDateId}T00:00:00.000Z`).getUTCDay()
+  const localHour = Number(parts.hour)
+  const headStart = localDayIndex === 0 && localHour >= 4
+  const mondayOffset = localDayIndex === 0 ? (headStart ? 1 : -6) : 1 - localDayIndex
+  const weekId = addUtcDays(localDateId, mondayOffset)
+  return {
+    weekId,
+    fridayId: addUtcDays(weekId, 4),
+    timeZone,
+    localDay: DAY_NAMES[localDayIndex],
+    headStart,
+    clockRollbackDetected: false,
+  }
+}
+
 export function createStore(filename, options = {}) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true })
 
@@ -89,6 +143,7 @@ export function createStore(filename, options = {}) {
   const makeId = options.makeId ?? (() => randomUUID())
   const makeNonce = options.makeNonce ?? (() => randomBytes(32).toString('base64url'))
   const runtimeId = options.runtimeId ?? randomUUID()
+  const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE
   const db = new DatabaseSync(filename)
   db.exec('PRAGMA foreign_keys = ON')
   db.exec('PRAGMA journal_mode = WAL')
@@ -118,6 +173,25 @@ export function createStore(filename, options = {}) {
       session_key TEXT PRIMARY KEY,
       completed_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS weekly_daily_completion (
+      week_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      activity_id TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'browser',
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (week_id, day, activity_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_optional_completion (
+      week_id TEXT NOT NULL,
+      session_key TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (week_id, session_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS weekly_optional_completion_date
+      ON weekly_optional_completion (week_id, completed_at);
 
     CREATE TABLE IF NOT EXISTS reward_credit (
       id TEXT PRIMARY KEY,
@@ -261,6 +335,14 @@ export function createStore(filename, options = {}) {
     );
   `)
 
+  function ensureColumn(table, column, definition) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name)
+    if (!columns.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+
+  ensureColumn('activity_session', 'week_id', 'TEXT')
+  ensureColumn('game_session', 'week_id', 'TEXT')
+
   const setMeta = db.prepare(`
     INSERT INTO app_meta (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -272,14 +354,14 @@ export function createStore(filename, options = {}) {
   const upsertWeek = db.prepare(`
     INSERT INTO weekly_plan (week_id, optional_target, archived, updated_at)
     VALUES (?, 13, 0, ?)
-    ON CONFLICT(week_id) DO UPDATE SET updated_at = excluded.updated_at
+    ON CONFLICT(week_id) DO UPDATE SET archived = 0, updated_at = excluded.updated_at
   `)
   const insertRequired = db.prepare(`
-    INSERT INTO daily_completion (day, activity_id, source, completed_at)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+    VALUES (?, ?, ?, ?, ?)
   `)
   const insertOptional = db.prepare(`
-    INSERT INTO optional_completion (session_key, completed_at) VALUES (?, ?)
+    INSERT INTO weekly_optional_completion (week_id, session_key, completed_at) VALUES (?, ?, ?)
   `)
   const insertReward = db.prepare(`
     INSERT INTO reward_credit (id, source, remaining_seconds, earned_at) VALUES (?, ?, ?, ?)
@@ -293,9 +375,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertSession = db.prepare(`
     INSERT INTO activity_session (
-      id, nonce, kind, activity_id, session_key, label, target_ms, credited_ms,
+      id, nonce, kind, activity_id, session_key, week_id, label, target_ms, credited_ms,
       status, runtime_id, last_tick_ms, created_at, last_heartbeat_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertCompletion = db.prepare(`
     INSERT OR IGNORE INTO completion_record (
@@ -304,9 +386,88 @@ export function createStore(filename, options = {}) {
   `)
   const insertGameSession = db.prepare(`
     INSERT INTO game_session (
-      id, activity_id, day, nonce_hash, expected_origin, status, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+      id, activity_id, day, week_id, nonce_hash, expected_origin, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
   `)
+
+  function ensureCurrentWeek() {
+    const computed = getWeekContext(wallNow(), timeZone)
+    const activeWeekId = db.prepare(`
+      SELECT value FROM app_meta WHERE key = 'active_week_id'
+    `).get()?.value
+
+    // A clock rollback must never reopen an older ledger or reset it again.
+    if (activeWeekId && computed.weekId < activeWeekId) {
+      return {
+        ...computed,
+        weekId: activeWeekId,
+        fridayId: addUtcDays(activeWeekId, 4),
+        clockRollbackDetected: true,
+      }
+    }
+
+    const now = asIso(wallNow())
+    if (!activeWeekId || activeWeekId !== computed.weekId) {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        if (activeWeekId) {
+          db.prepare('UPDATE weekly_plan SET archived = 1, updated_at = ? WHERE week_id = ?')
+            .run(now, activeWeekId)
+        }
+        upsertWeek.run(computed.weekId, now)
+        setMeta.run('active_week_id', computed.weekId)
+        if (activeWeekId) {
+          setSetting.run('entered', '0')
+          insertAudit.run(
+            'weekly_plan_rolled_over',
+            JSON.stringify({ previousWeekId: activeWeekId, weekId: computed.weekId, timeZone }),
+            now,
+          )
+        }
+        db.exec('COMMIT')
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    } else if (!db.prepare('SELECT 1 FROM weekly_plan WHERE week_id = ?').get(computed.weekId)) {
+      upsertWeek.run(computed.weekId, now)
+    }
+    return computed
+  }
+
+  const computedMigrationWeek = getWeekContext(wallNow(), timeZone).weekId
+  const legacyWeekId = db.prepare(`
+    SELECT week_id FROM weekly_plan WHERE archived = 0 ORDER BY updated_at DESC LIMIT 1
+  `).get()?.week_id
+  const migrationWeek = /^\d{4}-\d{2}-\d{2}$/.test(legacyWeekId ?? '')
+    ? legacyWeekId
+    : computedMigrationWeek
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'weekly_scope_migrated'`).get()?.value !== '1') {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO weekly_daily_completion (
+          week_id, day, activity_id, source, completed_at
+        ) SELECT ?, day, activity_id, source, completed_at FROM daily_completion
+      `).run(migrationWeek)
+      db.prepare(`
+        INSERT OR IGNORE INTO weekly_optional_completion (week_id, session_key, completed_at)
+        SELECT ?, session_key, completed_at FROM optional_completion
+      `).run(migrationWeek)
+      if (!db.prepare(`SELECT value FROM app_meta WHERE key = 'active_week_id'`).get()) {
+        setMeta.run('active_week_id', migrationWeek)
+      }
+      setMeta.run('weekly_scope_migrated', '1')
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  db.prepare('UPDATE activity_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
+  db.prepare('UPDATE game_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
+  ensureCurrentWeek()
 
   setMeta.run('schema_version', String(SCHEMA_VERSION))
 
@@ -331,9 +492,10 @@ export function createStore(filename, options = {}) {
   `).get()
   if (legacyTimer && !pendingSession) {
     const now = asIso(wallNow())
+    const weekId = ensureCurrentWeek().weekId
     insertSession.run(
       makeId(), makeId(), legacyTimer.kind, legacyTimer.activity_id,
-      legacyTimer.session_key ?? null, legacyTimer.label,
+      legacyTimer.session_key ?? null, weekId, legacyTimer.label,
       Number(legacyTimer.total_seconds) * 1000,
       Math.max(0, Number(legacyTimer.total_seconds - legacyTimer.remaining_seconds)) * 1000,
       'paused', null, null, now, null, now,
@@ -353,6 +515,7 @@ export function createStore(filename, options = {}) {
       kind: row.kind,
       activityId: row.activity_id,
       sessionKey: row.session_key ?? undefined,
+      weekId: row.week_id ?? undefined,
       label: row.label,
       totalSeconds: Math.ceil(Number(row.target_ms) / 1000),
       creditedSeconds: Math.floor(Number(row.credited_ms) / 1000),
@@ -383,6 +546,7 @@ export function createStore(filename, options = {}) {
       id: row.id,
       activityId: row.activity_id,
       day: row.day,
+      weekId: row.week_id,
       status: row.status,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
@@ -428,7 +592,8 @@ export function createStore(filename, options = {}) {
   }
 
   function loadState() {
-    const state = emptyState()
+    const weekContext = ensureCurrentWeek()
+    const state = emptyState(weekContext)
     const settings = Object.fromEntries(
       db.prepare('SELECT key, value FROM settings').all().map((row) => [row.key, row.value]),
     )
@@ -438,13 +603,19 @@ export function createStore(filename, options = {}) {
     state.chromeConnected = getChromeExtensionStatus().connected
     state.googleProof = getGoogleProofState()
 
-    for (const row of db.prepare('SELECT day, activity_id FROM daily_completion ORDER BY completed_at').all()) {
+    for (const row of db.prepare(`
+      SELECT day, activity_id FROM weekly_daily_completion
+      WHERE week_id = ? ORDER BY completed_at
+    `).all(weekContext.weekId)) {
       if (DAYS.includes(row.day)) state.requiredByDay[row.day].push(row.activity_id)
     }
 
     state.optionalCompleted = db
-      .prepare('SELECT session_key FROM optional_completion ORDER BY completed_at')
-      .all()
+      .prepare(`
+        SELECT session_key FROM weekly_optional_completion
+        WHERE week_id = ? ORDER BY completed_at
+      `)
+      .all(weekContext.weekId)
       .map((row) => row.session_key)
 
     state.rewardCredits = db
@@ -474,13 +645,13 @@ export function createStore(filename, options = {}) {
     return state
   }
 
-  function importBrowserTimer(timer, now) {
+  function importBrowserTimer(timer, now, weekId) {
     if (!timer || getPendingSessionRow()) return
     const totalSeconds = Math.max(1, Number(timer.totalSeconds) || 1)
     const remainingSeconds = Math.max(0, Math.min(totalSeconds, Number(timer.remainingSeconds) || 0))
     insertSession.run(
       makeId(), makeId(), String(timer.kind), String(timer.activityId), timer.sessionKey ? String(timer.sessionKey) : null,
-      String(timer.label), totalSeconds * 1000, (totalSeconds - remainingSeconds) * 1000,
+      weekId, String(timer.label), totalSeconds * 1000, (totalSeconds - remainingSeconds) * 1000,
       remainingSeconds === 0 ? 'completed' : 'paused', null, null, now, null, now,
     )
   }
@@ -488,42 +659,49 @@ export function createStore(filename, options = {}) {
   function saveState(state) {
     assertState(state)
     const now = asIso(wallNow())
-    const weekId = getMondayId(new Date(now))
+    const weekContext = ensureCurrentWeek()
+    const weekId = weekContext.weekId
+    if (state.weekContext?.weekId && state.weekContext.weekId !== weekId) {
+      throw serviceError('This browser state belongs to an archived week. Refresh before saving.', 409, 'stale_week')
+    }
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      db.exec(`
-        DELETE FROM daily_completion WHERE source IN ('browser', 'self-reported');
-        DELETE FROM optional_completion;
-        DELETE FROM reward_credit;
-        DELETE FROM writing_submission;
-      `)
+      db.prepare(`
+        DELETE FROM weekly_daily_completion
+        WHERE week_id = ? AND source IN ('browser', 'self-reported')
+      `).run(weekId)
+      db.prepare('DELETE FROM weekly_optional_completion WHERE week_id = ?').run(weekId)
+      db.exec('DELETE FROM reward_credit; DELETE FROM writing_submission;')
 
       for (const day of DAYS) {
         const activities = Array.isArray(state.requiredByDay[day]) ? state.requiredByDay[day] : []
         for (const activityId of [...new Set(activities)]) {
           if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId))) continue
-          insertRequired.run(day, String(activityId), 'browser', now)
+          insertRequired.run(weekId, day, String(activityId), 'browser', now)
           const hasRecord = db.prepare(`
-            SELECT 1 FROM completion_record WHERE activity_id = ? AND session_key = ? LIMIT 1
-          `).get(String(activityId), day)
+            SELECT 1 FROM completion_record
+            WHERE activity_id = ? AND session_key = ? AND details_json LIKE ? LIMIT 1
+          `).get(String(activityId), day, `%"weekId":"${weekId}"%`)
           if (!hasRecord) {
             insertCompletion.run(
-              `imported:${day}:${activityId}`, String(activityId), day, 'imported', 'browser-state', null, now, '{}',
+              `imported:${weekId}:${day}:${activityId}`, String(activityId), day, 'imported', 'browser-state',
+              null, now, JSON.stringify({ weekId }),
             )
           }
         }
       }
 
       for (const sessionKey of [...new Set(state.optionalCompleted)]) {
-        insertOptional.run(String(sessionKey), now)
+        insertOptional.run(weekId, String(sessionKey), now)
         const activityId = String(sessionKey).split(':')[0]
         const hasRecord = db.prepare(`
-          SELECT 1 FROM completion_record WHERE session_key = ? LIMIT 1
-        `).get(String(sessionKey))
+          SELECT 1 FROM completion_record WHERE session_key = ? AND details_json LIKE ? LIMIT 1
+        `).get(String(sessionKey), `%"weekId":"${weekId}"%`)
         if (!hasRecord) {
           insertCompletion.run(
-            `imported:${sessionKey}`, activityId, String(sessionKey), 'imported', 'browser-state', null, now, '{}',
+            `imported:${weekId}:${sessionKey}`, activityId, String(sessionKey), 'imported', 'browser-state',
+            null, now, JSON.stringify({ weekId }),
           )
         }
       }
@@ -542,10 +720,9 @@ export function createStore(filename, options = {}) {
         )
       }
 
-      importBrowserTimer(state.activeTimer, now)
+      importBrowserTimer(state.activeTimer, now, weekId)
       setSetting.run('entered', state.entered ? '1' : '0')
       setSetting.run('guardian_connected', state.guardianConnected ? '1' : '0')
-      upsertWeek.run(weekId, now)
       setMeta.run('initialized', '1')
       setMeta.run('last_write_at', now)
       db.exec('COMMIT')
@@ -568,9 +745,10 @@ export function createStore(filename, options = {}) {
     if (!Number.isFinite(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 24 * 60 * 60) {
       throw serviceError('Game session lifetime must be between 1 second and 24 hours')
     }
+    const weekId = ensureCurrentWeek().weekId
     if (db.prepare(
-      'SELECT 1 FROM daily_completion WHERE day = ? AND activity_id = ?',
-    ).get(day, activityId)) {
+      'SELECT 1 FROM weekly_daily_completion WHERE week_id = ? AND day = ? AND activity_id = ?',
+    ).get(weekId, day, activityId)) {
       throw serviceError('Reading Strategies is already complete for that day', 409, 'already_completed')
     }
 
@@ -585,14 +763,14 @@ export function createStore(filename, options = {}) {
       db.prepare(`
         UPDATE game_session
         SET status = 'cancelled'
-        WHERE activity_id = ? AND day = ? AND status = 'pending'
-      `).run(activityId, day)
+        WHERE activity_id = ? AND day = ? AND week_id = ? AND status = 'pending'
+      `).run(activityId, day, weekId)
       insertGameSession.run(
-        id, activityId, day, hashNonce(nonce).toString('hex'), expectedOrigin, createdAt, expiresAt,
+        id, activityId, day, weekId, hashNonce(nonce).toString('hex'), expectedOrigin, createdAt, expiresAt,
       )
       insertAudit.run(
         'game_session_started',
-        JSON.stringify({ sessionId: id, activityId, day, expectedOrigin, expiresAt }),
+        JSON.stringify({ sessionId: id, activityId, day, weekId, expectedOrigin, expiresAt }),
         createdAt,
       )
       db.exec('COMMIT')
@@ -652,20 +830,20 @@ export function createStore(filename, options = {}) {
       }
 
       db.prepare(`
-        INSERT INTO daily_completion (day, activity_id, source, completed_at)
-        VALUES (?, ?, 'game-verified', ?)
-        ON CONFLICT(day, activity_id) DO UPDATE SET
+        INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+        VALUES (?, ?, ?, 'game-verified', ?)
+        ON CONFLICT(week_id, day, activity_id) DO UPDATE SET
           source = excluded.source,
           completed_at = excluded.completed_at
-      `).run(row.day, row.activity_id, now)
+      `).run(row.week_id, row.day, row.activity_id, now)
       insertCompletion.run(
         `game:${row.id}`, row.activity_id, row.day, 'game-verified', 'reading-game-contract', row.id,
-        now, JSON.stringify({ expectedOrigin: row.expected_origin }),
+        now, JSON.stringify({ expectedOrigin: row.expected_origin, weekId: row.week_id }),
       )
       completedSession = gameSessionFromRow({ ...row, status: 'completed', completed_at: now })
       insertAudit.run(
         'game_session_completed',
-        JSON.stringify({ sessionId: row.id, activityId: row.activity_id, day: row.day }),
+        JSON.stringify({ sessionId: row.id, activityId: row.activity_id, day: row.day, weekId: row.week_id }),
         now,
       )
       db.exec('COMMIT')
@@ -685,11 +863,18 @@ export function createStore(filename, options = {}) {
 
     const id = makeId()
     const now = asIso(wallNow())
+    const weekId = ensureCurrentWeek().weekId
     insertSession.run(
       id, makeId(), input.kind, String(input.activityId), input.sessionKey ? String(input.sessionKey) : null,
-      String(input.label), targetSeconds * 1000, 0, 'active', runtimeId, monotonicNow(), now, now, now,
+      weekId, String(input.label), targetSeconds * 1000, 0, 'active', runtimeId, monotonicNow(), now, now, now,
     )
-    addAudit('session_started', { sessionId: id, kind: input.kind, activityId: input.activityId, sessionKey: input.sessionKey })
+    addAudit('session_started', {
+      sessionId: id,
+      kind: input.kind,
+      activityId: input.activityId,
+      sessionKey: input.sessionKey,
+      weekId,
+    })
     return sessionFromRow(getSessionRow(id))
   }
 
@@ -697,20 +882,26 @@ export function createStore(filename, options = {}) {
     const method = row.kind === 'reward' ? 'reward-playback' : 'time-in-session'
     const result = insertCompletion.run(
       `session:${row.id}`, row.activity_id, row.session_key ?? null, method, 'server-heartbeat', row.id,
-      completedAt, JSON.stringify({ creditedSeconds: Math.ceil(Number(row.target_ms) / 1000) }),
+      completedAt, JSON.stringify({
+        creditedSeconds: Math.ceil(Number(row.target_ms) / 1000),
+        weekId: row.week_id,
+      }),
     )
     if (Number(result.changes) === 0) return false
 
     if (row.kind === 'required') {
       db.prepare(`
-        INSERT INTO daily_completion (day, activity_id, source, completed_at)
-        VALUES (?, ?, 'time-in-session', ?)
-        ON CONFLICT(day, activity_id) DO UPDATE SET source = excluded.source, completed_at = excluded.completed_at
-      `).run(row.session_key, row.activity_id, completedAt)
+        INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+        VALUES (?, ?, ?, 'time-in-session', ?)
+        ON CONFLICT(week_id, day, activity_id) DO UPDATE SET
+          source = excluded.source,
+          completed_at = excluded.completed_at
+      `).run(row.week_id, row.session_key, row.activity_id, completedAt)
     } else if (row.kind === 'optional') {
       const optionalResult = db.prepare(`
-        INSERT OR IGNORE INTO optional_completion (session_key, completed_at) VALUES (?, ?)
-      `).run(row.session_key, completedAt)
+        INSERT OR IGNORE INTO weekly_optional_completion (week_id, session_key, completed_at)
+        VALUES (?, ?, ?)
+      `).run(row.week_id, row.session_key, completedAt)
       if (Number(optionalResult.changes) > 0) {
         db.prepare(`
           INSERT OR IGNORE INTO reward_credit (id, source, remaining_seconds, earned_at)
@@ -805,29 +996,37 @@ export function createStore(filename, options = {}) {
     return null
   }
 
-  function setDailyCompletion({ day, activityId, completed, method }) {
+  function setDailyCompletion({ day, activityId, completed, method, weekId: requestedWeekId }) {
     if (!DAYS.includes(day)) throw new Error('Invalid weekday')
     if (!['self-reported', 'parent-override'].includes(method)) throw new Error('Invalid completion method')
+    const weekId = ensureCurrentWeek().weekId
+    if (requestedWeekId && String(requestedWeekId) !== weekId) {
+      throw serviceError('That completion belongs to an archived week', 409, 'stale_week')
+    }
     const now = asIso(wallNow())
     const wasComplete = Boolean(db.prepare(
-      'SELECT 1 FROM daily_completion WHERE day = ? AND activity_id = ?',
-    ).get(day, String(activityId)))
+      'SELECT 1 FROM weekly_daily_completion WHERE week_id = ? AND day = ? AND activity_id = ?',
+    ).get(weekId, day, String(activityId)))
     if (completed) {
       db.prepare(`
-        INSERT INTO daily_completion (day, activity_id, source, completed_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(day, activity_id) DO UPDATE SET source = excluded.source, completed_at = excluded.completed_at
-      `).run(day, String(activityId), method, now)
+        INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(week_id, day, activity_id) DO UPDATE SET
+          source = excluded.source,
+          completed_at = excluded.completed_at
+      `).run(weekId, day, String(activityId), method, now)
       if (!wasComplete) {
         insertCompletion.run(
           makeId(), String(activityId), day, method, method === 'parent-override' ? 'parent-dashboard' : 'child-ui',
-          null, now, '{}',
+          null, now, JSON.stringify({ weekId }),
         )
       }
     } else {
-      db.prepare('DELETE FROM daily_completion WHERE day = ? AND activity_id = ?').run(day, String(activityId))
+      db.prepare(`
+        DELETE FROM weekly_daily_completion WHERE week_id = ? AND day = ? AND activity_id = ?
+      `).run(weekId, day, String(activityId))
     }
-    addAudit('daily_completion_changed', { day, activityId, completed: Boolean(completed), method })
+    addAudit('daily_completion_changed', { weekId, day, activityId, completed: Boolean(completed), method })
     return loadState()
   }
 
@@ -1018,7 +1217,7 @@ export function createStore(filename, options = {}) {
     if (!connection) throw serviceError('Connect the test Google account first', 409, 'google_not_connected')
 
     const recipient = normalizeEmail(input.recipient, 'test recipient')
-    const weekId = input.weekId ? String(input.weekId) : getMondayId(wallNow())
+    const weekId = input.weekId ? String(input.weekId) : ensureCurrentWeek().weekId
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekId)) throw serviceError('A valid week ID is required')
     const documentId = `mock-doc-${createHash('sha256')
       .update(`${connection.account_email}:${weekId}`)
@@ -1165,7 +1364,10 @@ export function createStore(filename, options = {}) {
   }
 
   function isOptionalComplete(sessionKey) {
-    return Boolean(db.prepare('SELECT 1 FROM optional_completion WHERE session_key = ?').get(String(sessionKey)))
+    const weekId = ensureCurrentWeek().weekId
+    return Boolean(db.prepare(`
+      SELECT 1 FROM weekly_optional_completion WHERE week_id = ? AND session_key = ?
+    `).get(weekId, String(sessionKey)))
   }
 
   function addAudit(eventType, details = {}) {
@@ -1228,11 +1430,4 @@ export function createStore(filename, options = {}) {
     isInitialized,
     close: () => db.close(),
   }
-}
-
-function getMondayId(date) {
-  const copy = new Date(date)
-  const day = copy.getDay()
-  copy.setDate(copy.getDate() + (day === 0 ? -6 : 1 - day))
-  return copy.toISOString().slice(0, 10)
 }

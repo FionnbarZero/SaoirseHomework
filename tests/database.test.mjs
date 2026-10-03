@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
-import { createStore } from '../server/database.mjs'
+import { createStore, getWeekContext } from '../server/database.mjs'
 
 function sampleState() {
   return {
@@ -66,7 +67,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 6)
+    assert.equal(reopened.info().schemaVersion, 7)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -74,8 +75,8 @@ test('SQLite state survives closing and reopening the service', () => {
   }
 })
 
-function controlledClock() {
-  let wallMs = Date.parse('2026-10-03T16:00:00.000Z')
+function controlledClock(start = '2026-10-03T16:00:00.000Z') {
+  let wallMs = Date.parse(start)
   let monotonicMs = 0
   let id = 0
   let nonce = 0
@@ -92,6 +93,9 @@ function controlledClock() {
     advance(milliseconds) {
       wallMs += milliseconds
       monotonicMs += milliseconds
+    },
+    setWall(value) {
+      wallMs = Date.parse(value)
     },
   }
 }
@@ -480,5 +484,210 @@ test('mock Google proof records a duplicate-safe skip when no writing exists', (
   })
   assert.equal(duplicate.created, false)
   assert.equal(store.getGoogleProofState().deliveries.length, 1)
+  store.close()
+})
+
+test('weekly context changes at Sunday 4 a.m. in the configured time zone', () => {
+  const before = getWeekContext(new Date('2026-10-04T10:59:59.000Z'), 'America/Los_Angeles')
+  assert.equal(before.localDay, 'Sunday')
+  assert.equal(before.headStart, false)
+  assert.equal(before.weekId, '2026-09-28')
+
+  const after = getWeekContext(new Date('2026-10-04T11:00:00.000Z'), 'America/Los_Angeles')
+  assert.equal(after.headStart, true)
+  assert.equal(after.weekId, '2026-10-05')
+  assert.equal(after.fridayId, '2026-10-09')
+
+  const monday = getWeekContext(new Date('2026-10-05T15:00:00.000Z'), 'America/Los_Angeles')
+  assert.equal(monday.localDay, 'Monday')
+  assert.equal(monday.headStart, false)
+  assert.equal(monday.weekId, '2026-10-05')
+})
+
+test('six Sunday sessions and seven Monday sessions share one bank, then archive once', () => {
+  const clock = controlledClock('2026-10-04T11:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  const allSessions = [
+    'voena:0', 'voena:1', 'voena:2',
+    'drums:0', 'drums:1', 'drums:2',
+    'band:0', 'band:1', 'band:2',
+    'level-chinese:0', 'level-chinese:1',
+    'du-chinese:0', 'du-chinese:1',
+  ]
+
+  const sunday = store.loadState()
+  assert.equal(sunday.weekContext.headStart, true)
+  assert.equal(sunday.weekContext.weekId, '2026-10-05')
+  sunday.entered = true
+  sunday.optionalCompleted = allSessions.slice(0, 6)
+  const sundaySaved = store.saveState(sunday)
+  assert.equal(sundaySaved.optionalCompleted.length, 6)
+
+  clock.setWall('2026-10-05T15:00:00.000Z')
+  const monday = store.loadState()
+  assert.equal(monday.weekContext.weekId, '2026-10-05')
+  assert.equal(monday.weekContext.headStart, false)
+  assert.equal(monday.optionalCompleted.length, 6)
+  monday.optionalCompleted = allSessions
+  monday.requiredByDay.Monday = ['math']
+  assert.equal(store.saveState(monday).optionalCompleted.length, 13)
+
+  clock.setWall('2026-10-11T10:59:59.000Z')
+  assert.equal(store.loadState().optionalCompleted.length, 13)
+  clock.setWall('2026-10-11T11:00:00.000Z')
+  const nextWeek = store.loadState()
+  assert.equal(nextWeek.weekContext.weekId, '2026-10-12')
+  assert.equal(nextWeek.weekContext.headStart, true)
+  assert.equal(nextWeek.optionalCompleted.length, 0)
+  assert.deepEqual(nextWeek.requiredByDay.Monday, [])
+  assert.equal(nextWeek.entered, false)
+  assert.equal(
+    store.db.prepare('SELECT archived FROM weekly_plan WHERE week_id = ?').get('2026-10-05').archived,
+    1,
+  )
+  assert.equal(
+    store.db.prepare('SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?')
+      .get('2026-10-05').count,
+    13,
+  )
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'weekly_plan_rolled_over').length,
+    1,
+  )
+
+  assertServiceError(() => store.saveState(monday), 409, 'stale_week')
+
+  clock.setWall('2026-10-05T15:00:00.000Z')
+  const rollback = store.loadState()
+  assert.equal(rollback.weekContext.weekId, '2026-10-12')
+  assert.equal(rollback.weekContext.clockRollbackDetected, true)
+  assert.equal(rollback.optionalCompleted.length, 0)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'weekly_plan_rolled_over').length,
+    1,
+  )
+  store.close()
+})
+
+test('schema 7 migrates existing unscoped completions into the active week once', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-week-migration-'))
+  const filename = join(directory, 'homework.sqlite')
+  const legacy = new DatabaseSync(filename)
+  legacy.exec(`
+    CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE daily_completion (
+      day TEXT NOT NULL,
+      activity_id TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'browser',
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (day, activity_id)
+    );
+    CREATE TABLE optional_completion (
+      session_key TEXT PRIMARY KEY,
+      completed_at TEXT NOT NULL
+    );
+    INSERT INTO daily_completion VALUES ('Monday', 'math', 'browser', '2026-10-01T12:00:00.000Z');
+    INSERT INTO optional_completion VALUES ('voena:0', '2026-10-01T12:00:00.000Z');
+  `)
+  legacy.close()
+
+  try {
+    const clock = controlledClock()
+    const first = createStore(filename, clock.options())
+    assert.deepEqual(first.loadState().requiredByDay.Monday, ['math'])
+    assert.deepEqual(first.loadState().optionalCompleted, ['voena:0'])
+    first.close()
+
+    const reopened = createStore(filename, clock.options())
+    assert.deepEqual(reopened.loadState().requiredByDay.Monday, ['math'])
+    assert.deepEqual(reopened.loadState().optionalCompleted, ['voena:0'])
+    assert.equal(
+      reopened.db.prepare('SELECT count(*) AS count FROM weekly_optional_completion').get().count,
+      1,
+    )
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a Sunday upgrade archives legacy weekly data instead of carrying it into the new pool', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-sunday-migration-'))
+  const filename = join(directory, 'homework.sqlite')
+  const legacy = new DatabaseSync(filename)
+  legacy.exec(`
+    CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE weekly_plan (
+      week_id TEXT PRIMARY KEY,
+      optional_target INTEGER NOT NULL DEFAULT 13,
+      archived INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE daily_completion (
+      day TEXT NOT NULL,
+      activity_id TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'browser',
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (day, activity_id)
+    );
+    CREATE TABLE optional_completion (
+      session_key TEXT PRIMARY KEY,
+      completed_at TEXT NOT NULL
+    );
+    INSERT INTO settings VALUES ('entered', '1');
+    INSERT INTO weekly_plan VALUES ('2026-09-28', 13, 0, '2026-10-03T20:00:00.000Z');
+    INSERT INTO daily_completion VALUES ('Friday', 'math', 'browser', '2026-10-03T20:00:00.000Z');
+    INSERT INTO optional_completion VALUES ('voena:0', '2026-10-03T20:00:00.000Z');
+  `)
+  legacy.close()
+
+  try {
+    const clock = controlledClock('2026-10-04T11:00:00.000Z')
+    const store = createStore(filename, clock.options())
+    const state = store.loadState()
+    assert.equal(state.weekContext.weekId, '2026-10-05')
+    assert.equal(state.entered, false)
+    assert.deepEqual(state.requiredByDay.Friday, [])
+    assert.deepEqual(state.optionalCompleted, [])
+    assert.equal(
+      store.db.prepare('SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?')
+        .get('2026-09-28').count,
+      1,
+    )
+    assert.equal(
+      store.db.prepare('SELECT archived FROM weekly_plan WHERE week_id = ?').get('2026-09-28').archived,
+      1,
+    )
+    store.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a controlled session completed after rollover stays with the week where it started', () => {
+  const clock = controlledClock('2026-10-04T10:59:58.000Z')
+  const store = createStore(':memory:', clock.options())
+  const session = store.startSession({
+    kind: 'optional',
+    activityId: 'voena',
+    sessionKey: 'voena:0',
+    label: 'Voena · Session 1',
+    targetSeconds: 5,
+  })
+  assert.equal(session.weekId, '2026-09-28')
+
+  clock.advance(5_000)
+  assert.equal(store.heartbeatSession(session.id, true).status, 'completed')
+  const current = store.loadState()
+  assert.equal(current.weekContext.weekId, '2026-10-05')
+  assert.deepEqual(current.optionalCompleted, [])
+  assert.equal(
+    store.db.prepare(`
+      SELECT count(*) AS count FROM weekly_optional_completion
+      WHERE week_id = ? AND session_key = ?
+    `).get('2026-09-28', 'voena:0').count,
+    1,
+  )
   store.close()
 })

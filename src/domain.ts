@@ -1,5 +1,15 @@
 export const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
 export type DayName = (typeof DAYS)[number]
+export type LocalDayName = DayName | 'Saturday' | 'Sunday'
+
+export type WeekContext = {
+  weekId: string
+  fridayId: string
+  timeZone: string
+  localDay: LocalDayName
+  headStart: boolean
+  clockRollbackDetected: boolean
+}
 
 export type CompletionMethod = 'self' | 'timer' | 'verified' | 'coming-soon'
 
@@ -51,6 +61,7 @@ export type ActiveTimer = {
   kind: 'required' | 'optional' | 'reward'
   activityId: string
   sessionKey?: string
+  weekId?: string
   label: string
   totalSeconds: number
   remainingSeconds: number
@@ -75,6 +86,7 @@ export type GameSession = {
   id: string
   activityId: string
   day: DayName
+  weekId: string
   status: 'pending' | 'completed' | 'cancelled' | 'expired'
   createdAt: string
   expiresAt: string
@@ -120,6 +132,32 @@ export type AppState = {
   guardianConnected: boolean
   chromeConnected: boolean
   googleProof: GoogleProofState
+  weekContext: WeekContext
+}
+
+function dateId(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function shiftLocalDate(date: Date, days: number) {
+  const shifted = new Date(date)
+  shifted.setDate(shifted.getDate() + days)
+  return dateId(shifted)
+}
+
+export function getBrowserWeekContext(date = new Date()): WeekContext {
+  const dayIndex = date.getDay()
+  const headStart = dayIndex === 0 && date.getHours() >= 4
+  const mondayOffset = dayIndex === 0 ? (headStart ? 1 : -6) : 1 - dayIndex
+  const weekId = shiftLocalDate(date, mondayOffset)
+  return {
+    weekId,
+    fridayId: shiftLocalDate(new Date(`${weekId}T12:00:00`), 4),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    localDay: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayIndex] as LocalDayName,
+    headStart,
+    clockRollbackDetected: false,
+  }
 }
 
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
@@ -249,6 +287,7 @@ export const defaultState: AppState = {
     connectedAt: null,
     deliveries: [],
   },
+  weekContext: getBrowserWeekContext(),
 }
 
 export function activeRequiredActivities() {
@@ -290,15 +329,19 @@ export function getToday(): DayName {
   return DAYS.includes(current as DayName) ? (current as DayName) : 'Monday'
 }
 
-export function getWeekLabel() {
+export function getWeekLabel(weekId?: string) {
   const now = new Date()
-  const weekday = now.getDay()
-  const mondayOffset = weekday === 0 ? -6 : 1 - weekday
-  const monday = new Date(now)
-  monday.setDate(now.getDate() + mondayOffset)
+  const monday = weekId
+    ? new Date(`${weekId}T12:00:00.000Z`)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate() + (now.getDay() === 0 ? -6 : 1 - now.getDay()))
   const friday = new Date(monday)
-  friday.setDate(monday.getDate() + 4)
-  const format = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+  if (weekId) friday.setUTCDate(monday.getUTCDate() + 4)
+  else friday.setDate(monday.getDate() + 4)
+  const format = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(weekId ? { timeZone: 'UTC' } : {}),
+  })
   return `${format.format(monday)} – ${format.format(friday)}`
 }
 

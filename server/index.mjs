@@ -14,7 +14,8 @@ const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
 const googleProofDirectory = process.env.HOMEWORK_GOOGLE_PROOF_DIR || join(dataDirectory, 'google-proof')
 const distDirectory = join(projectRoot, 'dist')
-const store = createStore(databasePath)
+const timeZone = process.env.HOMEWORK_TIME_ZONE || 'America/Los_Angeles'
+const store = createStore(databasePath, { timeZone })
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
 const readingGameUrl = new URL(
   process.env.HOMEWORK_READING_GAME_URL || `${serviceOrigin}/reading-game-simulator.html`,
@@ -185,7 +186,7 @@ function sessionResponse() {
 
 function learningModeState() {
   const state = store.loadState()
-  const day = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date())
+  const day = state.weekContext.localDay
   const dailyCompleted = state.requiredByDay[day] ?? []
   const dailyReady = requiredActivityIds.every((activityId) => dailyCompleted.includes(activityId))
   const optionalReady = day in optionalTargets

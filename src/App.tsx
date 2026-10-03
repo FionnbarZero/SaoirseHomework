@@ -59,12 +59,17 @@ import {
   setDailyCompletion,
   startControlledSession,
   startReadingGame as startReadingGameSession,
+  ServiceRequestError,
   type ServiceMeta,
 } from './service'
 
 type View = 'path' | 'day' | 'options' | 'writing' | 'rewards' | 'parent' | 'session'
 
 const STORAGE_KEY = 'fionnbar-homework-v1'
+
+function isStaleWeekError(error: unknown) {
+  return error instanceof ServiceRequestError && error.code === 'stale_week'
+}
 
 function loadState(): AppState {
   try {
@@ -123,7 +128,19 @@ function App() {
     const timeout = window.setTimeout(() => {
       saveStateToService(state)
         .then(({ meta }) => setServiceMeta(meta))
-        .catch(() => setServiceStatus('offline'))
+        .catch((error) => {
+          if (isStaleWeekError(error)) {
+            loadStateFromService()
+              .then(({ state: storedState, meta }) => {
+                setState(storedState)
+                setServiceMeta(meta)
+                setServiceStatus('online')
+              })
+              .catch(() => setServiceStatus('offline'))
+            return
+          }
+          setServiceStatus('offline')
+        })
     }, 250)
     return () => window.clearTimeout(timeout)
   }, [state, hydrated, serviceStatus])
@@ -238,11 +255,23 @@ function App() {
     const completed = !latestState.current.requiredByDay[selectedDay].includes(activityId)
     if (serviceStatus === 'online') {
       try {
-        const response = await setDailyCompletion(selectedDay, activityId, completed, 'self-reported')
+        const response = await setDailyCompletion(
+          selectedDay,
+          activityId,
+          completed,
+          'self-reported',
+          latestState.current.weekContext.weekId,
+        )
         setState(response.state)
         setServiceMeta(response.meta)
         return
-      } catch {
+      } catch (error) {
+        if (isStaleWeekError(error)) {
+          const response = await loadStateFromService()
+          setState(response.state)
+          setServiceMeta(response.meta)
+          return
+        }
         setServiceStatus('offline')
       }
     }
@@ -381,7 +410,11 @@ function App() {
               <button onClick={() => setSessionError('')} aria-label="Dismiss message"><X size={16} /></button>
             </div>
           )}
-          {view === 'path' && <PathView state={state} selectedDay={selectedDay} openDay={openDay} />}
+          {view === 'path' && (
+            state.weekContext.headStart
+              ? <OptionalView state={state} startTimer={startTimer} headStart />
+              : <PathView state={state} selectedDay={selectedDay} openDay={openDay} />
+          )}
           {view === 'day' && (
             <DayView
               state={state}
@@ -486,8 +519,8 @@ function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'con
   return (
     <header className="topbar">
       <div>
-        <p className="topbar-label">WEEK OF</p>
-        <strong>{getWeekLabel()}</strong>
+        <p className="topbar-label">{state.weekContext.headStart ? 'UPCOMING WEEK' : 'WEEK OF'}</p>
+        <strong>{getWeekLabel(state.weekContext.weekId)}</strong>
       </div>
       <div className="topbar-actions">
         <span className={serviceStatus === 'online' ? 'connection connected' : 'connection'}>
@@ -648,15 +681,31 @@ function DayView({
   )
 }
 
-function OptionalView({ state, startTimer, onBack }: { state: AppState; startTimer: (timer: ActiveTimer) => void; onBack: () => void }) {
+function OptionalView({
+  state,
+  startTimer,
+  onBack,
+  headStart = false,
+}: {
+  state: AppState
+  startTimer: (timer: ActiveTimer) => void
+  onBack?: () => void
+  headStart?: boolean
+}) {
   return (
-    <section className="page">
-      <button className="text-button back-button" onClick={onBack}><ArrowLeft size={17} /> Back to week</button>
+    <section className={headStart ? 'page head-start-page' : 'page'}>
+      {!headStart && onBack && <button className="text-button back-button" onClick={onBack}><ArrowLeft size={17} /> Back to week</button>}
+      {headStart && (
+        <div className="head-start-note">
+          <span><Sparkles size={22} /></span>
+          <div><small>SUNDAY · AFTER 4:00 A.M.</small><strong>Your upcoming practice bank is open.</strong><p>Only optional practice is available today. Everything you finish counts toward next week.</p></div>
+        </div>
+      )}
       <div className="page-heading split-heading">
         <div>
-          <p className="eyebrow">PRACTICE BANK</p>
-          <h2>Choose your next session.</h2>
-          <p>Finish sessions early and they count toward the whole week.</p>
+          <p className="eyebrow">{headStart ? 'GET A HEAD START' : 'PRACTICE BANK'}</p>
+          <h2>{headStart ? 'Build momentum for Monday.' : 'Choose your next session.'}</h2>
+          <p>{headStart ? `These sessions are banked for the week of ${getWeekLabel(state.weekContext.weekId)}.` : 'Finish sessions early and they count toward the whole week.'}</p>
         </div>
         <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of 13<br />banked</span></div>
       </div>
@@ -923,10 +972,21 @@ function ParentView({
     const wasComplete = state.requiredByDay[day].includes(activityId)
     if (serviceStatus === 'online') {
       try {
-        const response = await setDailyCompletion(day, activityId, !wasComplete, 'parent-override')
+        const response = await setDailyCompletion(
+          day,
+          activityId,
+          !wasComplete,
+          'parent-override',
+          state.weekContext.weekId,
+        )
         setState(response.state)
         return
-      } catch {
+      } catch (error) {
+        if (isStaleWeekError(error)) {
+          const response = await loadStateFromService()
+          setState(response.state)
+          return
+        }
         // Keep the preview usable from browser storage if the service drops out.
       }
     }

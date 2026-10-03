@@ -47,6 +47,9 @@ npm run build
 - Persistent safe-mode Google connection and weekly delivery records
 - Duplicate-safe local document assembly, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
+- Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
+- Week-scoped daily and practice ledgers with archived rollover history
+- Stale-week and clock-rollback protection so a week cannot reset twice
 - Automatic migration from browser storage on the first service run
 - Parent action audit log and restart-safe timer records
 - Browser-cache fallback when the loopback service is unavailable
@@ -69,3 +72,5 @@ The session service verifies time reported by the browser, but the browser is no
 To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.
 
 The Parent screen's Google delivery proof is deliberately local. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`. Live mode must use Authorization Code with PKCE, macOS Keychain token storage, minimal Drive/Gmail scopes, and explicit Family Link approval before it can replace the simulator.
+
+Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

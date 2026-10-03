@@ -177,7 +177,11 @@ function App() {
       heartbeatInFlight.current = true
       try {
         const response = await heartbeatControlledSession(sessionId, active)
-        const intent = response.session?.status === 'completed' ? false : sessionWantsRunning.current
+        const intent = response.session?.managedChromeRequired
+          ? Boolean(response.session.running)
+          : response.session?.status === 'completed'
+            ? false
+            : sessionWantsRunning.current
         if (response.session?.status === 'completed') sessionWantsRunning.current = false
         setState({
           ...response.state,
@@ -187,7 +191,13 @@ function App() {
         })
         setServiceMeta(response.meta)
         setServiceStatus('online')
-        setSessionError('')
+        if (!response.session && timer.kind === 'reward') {
+          sessionWantsRunning.current = false
+          setView('rewards')
+          setSessionError('No video started within two minutes, so your reward credit was returned.')
+        } else {
+          setSessionError('')
+        }
       } catch (error) {
         setServiceStatus('offline')
         setSessionError(error instanceof Error ? error.message : 'The session service could not be reached.')
@@ -304,10 +314,11 @@ function App() {
     try {
       await saveStateToService({ ...latestState.current, activeTimer: null })
       const response = await startControlledSession(timer)
-      sessionWantsRunning.current = true
+      const wantsRunning = response.session?.managedChromeRequired ? Boolean(response.session.running) : true
+      sessionWantsRunning.current = wantsRunning
       setState({
         ...response.state,
-        activeTimer: response.session ? { ...response.session, running: true } : null,
+        activeTimer: response.session ? { ...response.session, running: wantsRunning } : null,
       })
       setServiceMeta(response.meta)
       setSessionError('')
@@ -942,6 +953,12 @@ function SessionView({
 }) {
   const serverRemaining = timer.phaseRemainingSeconds ?? timer.remainingSeconds
   const [displayRemaining, setDisplayRemaining] = useState(serverRemaining)
+  const selectionDeadline = timer.rewardSelectionDeadlineAt
+    ? new Date(timer.rewardSelectionDeadlineAt).getTime()
+    : null
+  const [selectionRemaining, setSelectionRemaining] = useState(() => selectionDeadline
+    ? Math.max(0, Math.ceil((selectionDeadline - Date.now()) / 1_000))
+    : 0)
   useEffect(() => {
     setDisplayRemaining(serverRemaining)
     if (!timer.running || timer.status !== 'active' || serverRemaining <= 0 || timer.waitingForVerification) return
@@ -951,13 +968,28 @@ function SessionView({
     return () => window.clearInterval(interval)
   }, [serverRemaining, timer.running, timer.status, timer.waitingForVerification, timer.phaseIndex])
 
+  useEffect(() => {
+    if (!selectionDeadline || timer.rewardPlaybackStarted || timer.status === 'completed') return
+    const update = () => setSelectionRemaining(Math.max(0, Math.ceil((selectionDeadline - Date.now()) / 1_000)))
+    update()
+    const interval = window.setInterval(update, 1_000)
+    return () => window.clearInterval(interval)
+  }, [selectionDeadline, timer.rewardPlaybackStarted, timer.status])
+
   const displayTotal = timer.phaseTotalSeconds ?? timer.totalSeconds
   const elapsed = Math.max(0, displayTotal - displayRemaining)
   const percent = displayTotal > 0 ? Math.min(100, (elapsed / displayTotal) * 100) : 0
   const done = timer.status === 'completed'
   const managed = timer.managedChromeRequired === true
+  const selectingReward = timer.kind === 'reward' && !timer.rewardPlaybackStarted && !done
   const statusLabel = done
     ? 'SESSION COMPLETE'
+    : selectingReward
+      ? 'CHOOSE A VIDEO'
+      : timer.kind === 'reward' && timer.rewardPlaybackActive
+        ? 'PLAYBACK TIME IS COUNTING'
+        : timer.kind === 'reward'
+          ? 'PLAYBACK PAUSED'
     : timer.waitingForVerification
       ? 'WAITING FOR CLEVER LOGIN'
       : timer.running
@@ -967,25 +999,27 @@ function SessionView({
           : 'SESSION PAUSED'
   const sessionCopy = done
     ? 'You did it. Your progress is ready to save.'
+    : selectingReward
+      ? 'Managed Chrome opened a separate YouTube window. Start a video before the selection window ends to use this credit.'
+      : timer.kind === 'reward'
+        ? 'Only visible video playback counts. Pauses, buffering, ads, and time outside the YouTube window do not use your credit.'
     : timer.waitingForVerification
       ? 'Sign in through Clever. The timer begins only after managed Chrome verifies Level Learning.'
       : managed
         ? 'Only active time on a parent-approved origin counts. Leaving that page pauses credit automatically.'
-        : timer.kind === 'reward'
-          ? 'The playback connection will be added with the managed Chrome guardian.'
-          : 'Keep this approved activity in front. Time pauses whenever you leave.'
+        : 'Keep this approved activity in front. Time pauses whenever you leave.'
   return (
     <section className="session-page">
       <div className="session-card">
         <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {statusLabel}</div>
         <div className="timer-ring" style={{ '--progress': `${percent * 3.6}deg` } as React.CSSProperties}>
-          <div><strong>{timer.waitingForVerification ? '—:—' : formatTimer(displayRemaining)}</strong><small>{timer.waitingForVerification ? 'login gate' : displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
+          <div><strong>{timer.waitingForVerification ? '—:—' : formatTimer(selectingReward ? selectionRemaining : displayRemaining)}</strong><small>{timer.waitingForVerification ? 'login gate' : selectingReward ? 'to choose' : displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
         </div>
         <p className="eyebrow">{timer.kind === 'reward' ? 'ENJOY YOUR REWARD' : 'CURRENT ACTIVITY'}</p>
         <h2>{timer.label}</h2>
         {timer.phaseCount && timer.phaseCount > 1 && <div className="phase-pill">STEP {(timer.phaseIndex ?? 0) + 1} OF {timer.phaseCount} · {timer.phaseLabel}</div>}
         <p className="session-copy">{sessionCopy}</p>
-        {!done && timer.launchUrl && (
+        {!done && timer.launchUrl && timer.kind !== 'reward' && (
           <a className="row-button session-launch" href={timer.launchUrl} target="_blank" rel="noreferrer">
             <Play size={16} fill="currentColor" /> Open {timer.phaseLabel ?? timer.label}
           </a>
@@ -998,7 +1032,7 @@ function SessionView({
         ) : (
           <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> {managed ? 'Managed Chrome verifies the approved origin every five seconds' : 'Server verified · checks focus every five seconds'}</div>
+        <div className="focus-note"><ShieldCheck size={17} /> {timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : 'Server verified · checks focus every five seconds'}</div>
       </div>
     </section>
   )

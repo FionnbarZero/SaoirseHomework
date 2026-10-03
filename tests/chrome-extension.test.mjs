@@ -4,6 +4,7 @@ import {
   MANAGED_RULE_START,
   buildDynamicRules,
   isAllowedUrl,
+  isYoutubeUrl,
   normalizeDomains,
   normalizeOrigins,
   originForUrl,
@@ -43,4 +44,12 @@ test('policy domains are normalized, deduplicated, and bounded', () => {
   assert.equal(normalizeDomains(Array.from({ length: 200 }, (_, index) => `d${index}.example`)).length, 99)
   assert.equal(originForUrl('chrome://extensions'), null)
   assert.equal(originForUrl('https://example.com/path'), 'https://example.com')
+})
+
+test('YouTube playback URLs reject lookalike and insecure hosts', () => {
+  assert.equal(isYoutubeUrl('https://www.youtube.com/watch?v=1'), true)
+  assert.equal(isYoutubeUrl('https://music.youtube.com/watch?v=1'), true)
+  assert.equal(isYoutubeUrl('https://youtu.be/example'), true)
+  assert.equal(isYoutubeUrl('http://www.youtube.com/watch?v=1'), false)
+  assert.equal(isYoutubeUrl('https://youtube.com.evil.example/watch?v=1'), false)
 })

@@ -23,7 +23,7 @@ const extensionId = [...digest]
 const expectedId = readFileSync(join(chromeRoot, 'extension-id.txt'), 'utf8').trim()
 if (extensionId !== expectedId) throw new Error(`Extension ID mismatch: expected ${expectedId}, received ${extensionId}`)
 
-for (const file of ['service-worker.js', 'popup.js', 'blocked.js']) {
+for (const file of ['service-worker.js', 'popup.js', 'blocked.js', 'youtube-playback.js']) {
   const source = readFileSync(join(sourceDirectory, file), 'utf8')
   if (/https?:\/\/[^'"`\s]+\.js/i.test(source)) throw new Error(`${file} references remote JavaScript`)
 }

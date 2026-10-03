@@ -24,6 +24,13 @@ const readingGameUrl = new URL(
 const readingGameOrigin = new URL(
   process.env.HOMEWORK_READING_GAME_ORIGIN || readingGameUrl.origin,
 ).origin
+const youtubeLaunchUrl = 'https://www.youtube.com/'
+const youtubePlaybackOrigins = [
+  'https://youtube.com',
+  'https://www.youtube.com',
+  'https://m.youtube.com',
+  'https://music.youtube.com',
+]
 if (readingGameUrl.origin !== readingGameOrigin) {
   throw new Error('HOMEWORK_READING_GAME_URL must use HOMEWORK_READING_GAME_ORIGIN')
 }
@@ -183,11 +190,30 @@ function resolveSessionRequest(body) {
   if (body.kind === 'reward') {
     const credit = store.getRewardCredit(body.activityId)
     if (!credit || credit.remainingSeconds <= 0) throw new Error('Reward credit not found')
+    if (!store.getChromeExtensionStatus().connected) {
+      const error = new Error('Managed Chrome must be connected before YouTube reward time can start')
+      error.status = 409
+      error.code = 'managed_chrome_required'
+      throw error
+    }
     return {
       kind: 'reward',
       activityId: credit.id,
       label: 'YouTube reward',
       targetSeconds: credit.remainingSeconds,
+      selectionSeconds: 2 * 60,
+      plan: {
+        phases: [{
+          id: 'youtube-playback',
+          label: 'YouTube playback',
+          targetSeconds: credit.remainingSeconds,
+          launchUrl: youtubeLaunchUrl,
+          allowedOrigins: youtubePlaybackOrigins,
+          creditOrigins: youtubePlaybackOrigins,
+          advanceOrigins: [],
+          verification: 'youtube-playback',
+        }],
+      },
     }
   }
 
@@ -227,7 +253,7 @@ function guardianResponse() {
 
 function chromeResponse() {
   const { state, mode, homeworkMode } = learningModeState()
-  const rewardActive = state.activeTimer?.kind === 'reward'
+  const rewardActive = state.activeTimer?.kind === 'reward' && state.activeTimer.status !== 'completed'
   const sessionOrigins = state.activeTimer?.allowedOrigins ?? []
   const gameOrigins = state.activeGameSession?.status === 'pending'
     ? [readingGameOrigin]
@@ -251,10 +277,14 @@ function chromeResponse() {
           phaseToken: `${state.activeTimer.id}:${state.activeTimer.phaseIndex ?? 0}`,
           launchUrl: state.activeTimer.launchUrl ?? null,
           navigateOnPhaseStart: state.activeTimer.navigateOnPhaseStart === true,
+          status: state.activeTimer.status,
+          rewardSelectionDeadlineAt: state.activeTimer.rewardSelectionDeadlineAt ?? null,
+          rewardPlaybackStarted: state.activeTimer.rewardPlaybackStarted === true,
+          rewardPlaybackActive: state.activeTimer.rewardPlaybackActive === true,
         }
       : null,
     policy: {
-      version: '2',
+      version: '3',
       restrictNavigation: homeworkMode,
       allowedDomains,
       allowedOrigins,

@@ -84,3 +84,16 @@ export function originForUrl(url) {
     return null
   }
 }
+
+export function isYoutubeUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' && (
+      parsed.hostname === 'youtu.be' ||
+      parsed.hostname === 'youtube.com' ||
+      parsed.hostname.endsWith('.youtube.com')
+    )
+  } catch {
+    return false
+  }
+}

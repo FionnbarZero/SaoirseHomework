@@ -7,7 +7,7 @@ import { emptyActivityConfiguration, normalizeActivityConfiguration } from './ac
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -251,7 +251,10 @@ export function createStore(filename, options = {}) {
       last_heartbeat_at TEXT,
       updated_at TEXT NOT NULL,
       completed_at TEXT,
-      acknowledged INTEGER NOT NULL DEFAULT 0
+      acknowledged INTEGER NOT NULL DEFAULT 0,
+      selection_deadline_at TEXT,
+      reward_started_at TEXT,
+      reward_playback_active INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS one_pending_activity_session
@@ -359,6 +362,9 @@ export function createStore(filename, options = {}) {
   ensureColumn('activity_session', 'plan_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('activity_session', 'phase_index', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('activity_session', 'phase_credited_ms', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('activity_session', 'selection_deadline_at', 'TEXT')
+  ensureColumn('activity_session', 'reward_started_at', 'TEXT')
+  ensureColumn('activity_session', 'reward_playback_active', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('game_session', 'week_id', 'TEXT')
 
   const setMeta = db.prepare(`
@@ -493,7 +499,8 @@ export function createStore(filename, options = {}) {
   // Restart recovery is fail-closed: elapsed downtime can never become credit.
   db.prepare(`
     UPDATE activity_session
-    SET status = 'paused', runtime_id = NULL, last_tick_ms = NULL, updated_at = ?
+    SET status = 'paused', runtime_id = NULL, last_tick_ms = NULL,
+        reward_playback_active = 0, updated_at = ?
     WHERE status = 'active'
   `).run(asIso(wallNow()))
 
@@ -579,12 +586,14 @@ export function createStore(filename, options = {}) {
     const phases = input.phases.map((phase, index) => {
       const phaseSeconds = Math.floor(Number(phase.targetSeconds))
       if (!Number.isFinite(phaseSeconds) || phaseSeconds < 0) throw new Error('Session phase duration is invalid')
-      const verification = phase.verification === 'managed-chrome' ? 'managed-chrome' : 'browser-focus'
+      const verification = ['managed-chrome', 'youtube-playback'].includes(phase.verification)
+        ? phase.verification
+        : 'browser-focus'
       const allowedOrigins = [...new Set(Array.isArray(phase.allowedOrigins) ? phase.allowedOrigins.map(String) : [])]
       const creditOrigins = [...new Set(Array.isArray(phase.creditOrigins) ? phase.creditOrigins.map(String) : [])]
       const advanceOrigins = [...new Set(Array.isArray(phase.advanceOrigins) ? phase.advanceOrigins.map(String) : [])]
       for (const origin of [...allowedOrigins, ...creditOrigins, ...advanceOrigins]) normalizeOrigin(origin)
-      if (verification === 'managed-chrome' && !allowedOrigins.length) {
+      if (['managed-chrome', 'youtube-playback'].includes(verification) && !allowedOrigins.length) {
         throw new Error('Managed Chrome phases need at least one approved origin')
       }
       if (creditOrigins.some((origin) => !allowedOrigins.includes(origin)) ||
@@ -652,9 +661,12 @@ export function createStore(filename, options = {}) {
       phaseRemainingSeconds: Math.ceil(Math.max(0, phaseTargetMs - phaseCreditedMs) / 1000),
       launchUrl: phase.launchUrl || undefined,
       allowedOrigins: phase.allowedOrigins,
-      managedChromeRequired: phase.verification === 'managed-chrome',
+      managedChromeRequired: ['managed-chrome', 'youtube-playback'].includes(phase.verification),
       waitingForVerification: Number(phase.targetSeconds) === 0,
       navigateOnPhaseStart: phase.navigateOnStart === true,
+      rewardSelectionDeadlineAt: row.selection_deadline_at ?? undefined,
+      rewardPlaybackStarted: Boolean(row.reward_started_at),
+      rewardPlaybackActive: Boolean(row.reward_playback_active),
     }
   }
 
@@ -1037,13 +1049,26 @@ export function createStore(filename, options = {}) {
     const now = asIso(wallNow())
     const weekId = ensureCurrentWeek().weekId
     const plan = normalizeSessionPlan(input.plan, targetSeconds, String(input.label))
-    const managedChrome = plan.phases[0].verification === 'managed-chrome'
+    const managedChrome = ['managed-chrome', 'youtube-playback'].includes(plan.phases[0].verification)
+    const selectionSeconds = input.kind === 'reward'
+      ? Math.floor(Number(input.selectionSeconds ?? 120))
+      : null
+    if (selectionSeconds !== null &&
+        (!Number.isFinite(selectionSeconds) || selectionSeconds < 1 || selectionSeconds > 10 * 60)) {
+      throw new Error('Reward selection time must be between 1 and 600 seconds')
+    }
     insertSession.run(
       id, makeId(), input.kind, String(input.activityId), input.sessionKey ? String(input.sessionKey) : null,
       weekId, String(input.label), JSON.stringify(plan), 0, 0, targetSeconds * 1000, 0,
       managedChrome ? 'paused' : 'active', managedChrome ? null : runtimeId,
       managedChrome ? null : monotonicNow(), now, now, now,
     )
+    if (selectionSeconds !== null) {
+      const selectionDeadlineAt = asIso(new Date(new Date(now).getTime() + selectionSeconds * 1000))
+      db.prepare(`
+        UPDATE activity_session SET selection_deadline_at = ?, updated_at = ? WHERE id = ?
+      `).run(selectionDeadlineAt, now, id)
+    }
     addAudit('session_started', {
       sessionId: id,
       kind: input.kind,
@@ -1095,20 +1120,34 @@ export function createStore(filename, options = {}) {
   function heartbeatSession(id, active, context = {}) {
     let row = getSessionRow(id)
     if (!row) throw new Error('Session not found')
-    if (row.status === 'cancelled' || row.acknowledged) throw new Error('Session is no longer active')
+    if (row.status === 'cancelled' || row.acknowledged) return null
     if (row.status === 'completed') return sessionFromRow(row)
 
     const now = asIso(wallNow())
+    if (row.kind === 'reward' && !row.reward_started_at && row.selection_deadline_at && now >= row.selection_deadline_at) {
+      db.prepare(`
+        UPDATE activity_session
+        SET status = 'cancelled', acknowledged = 1, runtime_id = NULL, last_tick_ms = NULL,
+            reward_playback_active = 0, last_heartbeat_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(now, now, row.id)
+      addAudit('reward_selection_expired', { sessionId: row.id, creditId: row.activity_id })
+      return null
+    }
     const tick = monotonicNow()
     const { plan, legacy } = planFromRow(row)
     let phaseIndex = Math.min(plan.phases.length - 1, Math.max(0, Number(row.phase_index) || 0))
     let phase = plan.phases[phaseIndex]
-    const managedChrome = phase.verification === 'managed-chrome'
+    const managedChrome = ['managed-chrome', 'youtube-playback'].includes(phase.verification)
     if (managedChrome && context.source !== 'managed-chrome') return sessionFromRow(row)
 
     const activeOrigin = context.activeOrigin ? String(context.activeOrigin) : ''
     let requestedActive = active === true
     if (managedChrome) requestedActive = requestedActive && phase.creditOrigins.includes(activeOrigin)
+    if (phase.verification === 'youtube-playback') requestedActive = requestedActive && context.playbackActive === true
+    const rewardStartedAt = row.kind === 'reward' && requestedActive && !row.reward_started_at
+      ? now
+      : row.reward_started_at
     let creditedMs = Number(row.credited_ms)
     let phaseCreditedMs = legacy ? creditedMs : Number(row.phase_credited_ms)
     let phaseAdvanced = false
@@ -1169,7 +1208,8 @@ export function createStore(filename, options = {}) {
       db.prepare(`
         UPDATE activity_session
         SET credited_ms = ?, phase_index = ?, phase_credited_ms = ?, status = ?, runtime_id = ?, last_tick_ms = ?,
-            last_heartbeat_at = ?, updated_at = ?, completed_at = ?
+            last_heartbeat_at = ?, updated_at = ?, completed_at = ?, reward_started_at = ?,
+            reward_playback_active = ?
         WHERE id = ?
       `).run(
         creditedMs,
@@ -1181,6 +1221,8 @@ export function createStore(filename, options = {}) {
         now,
         now,
         completed ? now : null,
+        rewardStartedAt,
+        requestedActive && !completed ? 1 : 0,
         row.id,
       )
       if (completed) applySessionCompletion({ ...row, credited_ms: creditedMs }, now)
@@ -1214,7 +1256,8 @@ export function createStore(filename, options = {}) {
       }
       db.prepare(`
         UPDATE activity_session
-        SET status = 'cancelled', acknowledged = 1, runtime_id = NULL, last_tick_ms = NULL, updated_at = ?
+        SET status = 'cancelled', acknowledged = 1, runtime_id = NULL, last_tick_ms = NULL,
+            reward_playback_active = 0, updated_at = ?
         WHERE id = ?
       `).run(now, row.id)
       db.exec('COMMIT')
@@ -1353,6 +1396,7 @@ export function createStore(filename, options = {}) {
       heartbeatSession(pendingSession.id, decision === 'allowed', {
         source: 'managed-chrome',
         activeOrigin,
+        playbackActive: input.playbackActive === true,
       })
     }
     return getChromeExtensionStatus()

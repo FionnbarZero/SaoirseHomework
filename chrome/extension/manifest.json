@@ -10,6 +10,13 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://youtube.com/*", "https://*.youtube.com/*"],
+      "js": ["youtube-playback.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_title": "Homework Guardian",
     "default_popup": "popup.html"

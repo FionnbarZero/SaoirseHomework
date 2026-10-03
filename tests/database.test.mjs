@@ -67,7 +67,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 9)
+    assert.equal(reopened.info().schemaVersion, 10)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -168,6 +168,124 @@ test('repeated completion heartbeats cannot duplicate optional credit or rewards
   assert.deepEqual(state.optionalCompleted, ['voena:0'])
   assert.equal(state.rewardCredits.length, 1)
   assert.equal(state.completionRecords.filter((record) => record.id === `session:${session.id}`).length, 1)
+  store.close()
+})
+
+test('YouTube rewards count only managed foreground content playback', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  store.saveState({
+    ...sampleState(),
+    activeTimer: null,
+    rewardCredits: [{ ...sampleState().rewardCredits[0], remainingSeconds: 10 }],
+  })
+  const session = store.startSession({
+    kind: 'reward',
+    activityId: 'credit-1',
+    label: 'YouTube reward',
+    targetSeconds: 10,
+    selectionSeconds: 120,
+    plan: {
+      phases: [{
+        id: 'youtube-playback',
+        label: 'YouTube playback',
+        targetSeconds: 10,
+        launchUrl: 'https://www.youtube.com/',
+        allowedOrigins: ['https://www.youtube.com'],
+        creditOrigins: ['https://www.youtube.com'],
+        verification: 'youtube-playback',
+      }],
+    },
+  })
+  const chromeHeartbeat = (playbackActive) => store.recordChromeExtensionHeartbeat({
+    extensionId: 'managed-extension',
+    version: '0.1.0',
+    mode: 'homework',
+    activeOrigin: 'https://www.youtube.com',
+    decision: 'allowed',
+    policyVersion: '3',
+    playbackActive,
+  })
+
+  assert.equal(session.status, 'paused')
+  assert.equal(session.managedChromeRequired, true)
+  clock.advance(5_000)
+  assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 0, 'browser focus is not playback proof')
+  chromeHeartbeat(false)
+  clock.advance(5_000)
+  chromeHeartbeat(false)
+  assert.equal(store.loadState().activeTimer.creditedSeconds, 0, 'paused, buffered, and ad time must not count')
+
+  chromeHeartbeat(true)
+  assert.equal(store.loadState().activeTimer.rewardPlaybackStarted, true)
+  clock.advance(5_000)
+  chromeHeartbeat(true)
+  assert.equal(store.loadState().activeTimer.creditedSeconds, 5)
+
+  clock.advance(5_000)
+  chromeHeartbeat(false)
+  assert.equal(store.loadState().activeTimer.creditedSeconds, 5)
+  store.cancelSession(session.id)
+  assert.equal(store.loadState().rewardCredits[0].remainingSeconds, 5)
+
+  const resumed = store.startSession({
+    kind: 'reward',
+    activityId: 'credit-1',
+    label: 'YouTube reward',
+    targetSeconds: 5,
+    selectionSeconds: 120,
+    plan: {
+      phases: [{
+        id: 'youtube-playback',
+        label: 'YouTube playback',
+        targetSeconds: 5,
+        launchUrl: 'https://www.youtube.com/',
+        allowedOrigins: ['https://www.youtube.com'],
+        creditOrigins: ['https://www.youtube.com'],
+        verification: 'youtube-playback',
+      }],
+    },
+  })
+  chromeHeartbeat(true)
+  clock.advance(5_000)
+  chromeHeartbeat(true)
+  assert.equal(store.loadState().activeTimer.status, 'completed')
+  assert.equal(store.loadState().rewardCredits.length, 0)
+  assert.equal(
+    store.loadState().completionRecords.find((record) => record.id === `session:${resumed.id}`).method,
+    'reward-playback',
+  )
+  store.close()
+})
+
+test('an unused YouTube selection window expires without spending its credit', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  store.saveState({ ...sampleState(), activeTimer: null })
+  const session = store.startSession({
+    kind: 'reward',
+    activityId: 'credit-1',
+    label: 'YouTube reward',
+    targetSeconds: 300,
+    selectionSeconds: 120,
+    plan: {
+      phases: [{
+        id: 'youtube-playback',
+        label: 'YouTube playback',
+        targetSeconds: 300,
+        launchUrl: 'https://www.youtube.com/',
+        allowedOrigins: ['https://www.youtube.com'],
+        creditOrigins: ['https://www.youtube.com'],
+        verification: 'youtube-playback',
+      }],
+    },
+  })
+
+  clock.advance(120_001)
+  assert.equal(store.heartbeatSession(session.id, false), null)
+  assert.equal(store.loadState().activeTimer, null)
+  assert.equal(store.loadState().rewardCredits[0].remainingSeconds, 300)
+  assert.equal(store.listAudit()[0].eventType, 'reward_selection_expired')
   store.close()
 })
 

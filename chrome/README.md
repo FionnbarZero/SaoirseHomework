@@ -10,6 +10,9 @@ This directory contains the safe, uninstalled prototype for keeping managed Chro
 - Gives approved domains higher-priority `allow` rules and redirects other HTTP(S) top-level navigation to a local extension page.
 - Reports extension health and the active origin to the local service.
 - Sends five-second active-origin heartbeats for configured activity timers and follows approved phase changes.
+- Opens YouTube rewards in a separate controlled window and restores the prior homework tab afterward.
+- Reports foreground video playback from an isolated content script while excluding pauses, buffering, and detected ads.
+- Closes all YouTube tabs when reward time ends or the two-minute selection window expires.
 - Leaves its last Homework-mode rules in place if the local service becomes unavailable.
 
 The approved list is generated from parent-reviewed activity configuration. Missing URLs fail closed and cannot start a tracked external session.

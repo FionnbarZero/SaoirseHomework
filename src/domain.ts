@@ -82,6 +82,9 @@ export type ActiveTimer = {
   managedChromeRequired?: boolean
   waitingForVerification?: boolean
   navigateOnPhaseStart?: boolean
+  rewardSelectionDeadlineAt?: string
+  rewardPlaybackStarted?: boolean
+  rewardPlaybackActive?: boolean
 }
 
 export type ActivityConfiguration = {

@@ -63,7 +63,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 3)
+    assert.equal(reopened.info().schemaVersion, 4)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -251,5 +251,32 @@ test('guardian heartbeats expire instead of leaving a false connected state', ()
   clock.advance(16_000)
   assert.equal(store.getGuardianStatus().connected, false)
   assert.equal(store.loadState().guardianConnected, false)
+  store.close()
+})
+
+test('Chrome extension heartbeats expire and deduplicate blocked-navigation audits', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const heartbeat = {
+    extensionId: 'mmpeglplfjkbefdgikaldkncikpfdend',
+    version: '0.1.0',
+    mode: 'homework',
+    activeOrigin: 'https://example.com',
+    decision: 'blocked',
+    policyVersion: '1',
+  }
+
+  store.recordChromeExtensionHeartbeat(heartbeat)
+  store.recordChromeExtensionHeartbeat(heartbeat)
+  assert.equal(store.getChromeExtensionStatus().connected, true)
+  assert.equal(store.loadState().chromeConnected, true)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'chrome_navigation_blocked').length,
+    1,
+  )
+
+  clock.advance(46_000)
+  assert.equal(store.getChromeExtensionStatus().connected, false)
+  assert.equal(store.loadState().chromeConnected, false)
   store.close()
 })

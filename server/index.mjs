@@ -12,6 +12,7 @@ const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
 const distDirectory = join(projectRoot, 'dist')
 const store = createStore(databasePath)
+const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
 
 const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
 const selfReportedActivities = new Set(['mandarin', 'math', 'english-packet'])
@@ -140,7 +141,7 @@ function sessionResponse() {
   return { session: state.activeTimer, state, meta: store.info() }
 }
 
-function guardianResponse() {
+function learningModeState() {
   const state = store.loadState()
   const day = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date())
   const dailyCompleted = state.requiredByDay[day] ?? []
@@ -153,15 +154,42 @@ function guardianResponse() {
     : dailyReady && optionalReady
       ? 'free'
       : 'homework'
+  return { state, mode, homeworkMode: mode === 'homework', day }
+}
+
+function guardianResponse() {
+  const { state, mode, homeworkMode, day } = learningModeState()
   return {
     mode,
-    homeworkMode: mode === 'homework',
+    homeworkMode,
     day,
     activeSession: state.activeTimer
       ? { id: state.activeTimer.id, kind: state.activeTimer.kind, activityId: state.activeTimer.activityId }
       : null,
     policy: guardianPolicy,
     guardian: store.getGuardianStatus(),
+    serviceTime: new Date().toISOString(),
+  }
+}
+
+function chromeResponse() {
+  const { state, mode, homeworkMode } = learningModeState()
+  const rewardActive = state.activeTimer?.kind === 'reward'
+  return {
+    mode,
+    homeworkMode,
+    activeSession: state.activeTimer
+      ? { id: state.activeTimer.id, kind: state.activeTimer.kind, activityId: state.activeTimer.activityId }
+      : null,
+    policy: {
+      version: '1',
+      restrictNavigation: homeworkMode,
+      allowedDomains: rewardActive
+        ? ['127.0.0.1', 'youtube.com', 'youtu.be']
+        : ['127.0.0.1'],
+      expectedExtensionId: expectedChromeExtensionId,
+    },
+    extension: store.getChromeExtensionStatus(),
     serviceTime: new Date().toISOString(),
   }
 }
@@ -195,6 +223,19 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request)
       const guardian = store.recordGuardianHeartbeat(body)
       return sendJson(response, 200, { guardian, status: guardianResponse() })
+    }
+
+    if (url.pathname === '/api/chrome/status' && request.method === 'GET') {
+      return sendJson(response, 200, chromeResponse())
+    }
+
+    if (url.pathname === '/api/chrome/heartbeat' && request.method === 'POST') {
+      const body = await readJson(request)
+      if (body.extensionId !== expectedChromeExtensionId) {
+        return sendJson(response, 403, { error: 'Unrecognized Chrome extension ID' })
+      }
+      const extension = store.recordChromeExtensionHeartbeat(body)
+      return sendJson(response, 200, { extension, status: chromeResponse() })
     }
 
     if (url.pathname === '/api/sessions' && request.method === 'POST') {

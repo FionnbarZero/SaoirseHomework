@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Fionnbar Homework Guardian",
+  "short_name": "Homework",
+  "description": "Keeps managed Chrome on the approved learning path during Homework mode.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzwq8Hiz6XIZ9o0DcURZ8EXmF7PfY7tWJqsUpQe8Ey2ynDvPtnXOyr7t0sWS+Y3o1n0w5ncmumLJcSkmjkv+50pUq/M8/R5IZFXjLoTcxlxuO7b+gcaYVvK30lfwIWvY3vV5nqL9vzyL48uwDWT1/lwDNDZuoT8oKMrx62pbiP9HXw3B+4ckfGLhJlTOwUgzdmWVSkVOi60L/6IM84cUcu13i8poFeSf+xgqXpFKD+/F0IfbpIYC7YGhiUrSQnRZl4DzW1ilVmoY24ep4QcmOt2OjPq2TSUs3PST3mcv7RurjmXgcu4s4/3GN/q2/WL1iy++DbIn9fVXXIOoLz1dhswIDAQAB",
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Homework Guardian",
+    "default_popup": "popup.html"
+  },
+  "incognito": "not_allowed",
+  "permissions": [
+    "alarms",
+    "declarativeNetRequest",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "blocked.css", "blocked.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

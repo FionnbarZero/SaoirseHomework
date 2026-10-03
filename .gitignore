@@ -4,3 +4,5 @@ data
 *.tsbuildinfo
 .DS_Store
 guardian/.build
+chrome/private
+chrome/build

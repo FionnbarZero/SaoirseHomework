@@ -80,6 +80,7 @@ export type AppState = {
   activeTimer: ActiveTimer | null
   completionRecords: CompletionRecord[]
   guardianConnected: boolean
+  chromeConnected: boolean
 }
 
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
@@ -200,6 +201,7 @@ export const defaultState: AppState = {
   activeTimer: null,
   completionRecords: [],
   guardianConnected: false,
+  chromeConnected: false,
 }
 
 export function activeRequiredActivities() {

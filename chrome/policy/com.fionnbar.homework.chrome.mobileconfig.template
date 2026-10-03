@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>com.google.Chrome</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>com.fionnbar.homework.chrome.settings</string>
+      <key>PayloadUUID</key>
+      <string>__CHROME_PAYLOAD_UUID__</string>
+      <key>PayloadDisplayName</key>
+      <string>Fionnbar Homework Chrome Settings</string>
+      <key>BrowserGuestModeEnabled</key>
+      <false/>
+      <key>IncognitoModeAvailability</key>
+      <integer>1</integer>
+      <key>DeveloperToolsAvailability</key>
+      <integer>2</integer>
+      <key>ExtensionSettings</key>
+      <dict>
+        <key>*</key>
+        <dict>
+          <key>installation_mode</key>
+          <string>blocked</string>
+          <key>blocked_install_message</key>
+          <string>Extensions are managed by a parent during Homework mode.</string>
+        </dict>
+        <key>__EXTENSION_ID__</key>
+        <dict>
+          <key>installation_mode</key>
+          <string>force_installed</string>
+          <key>update_url</key>
+          <string>https://clients2.google.com/service/update2/crx</string>
+        </dict>
+      </dict>
+    </dict>
+  </array>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>com.fionnbar.homework.chrome</string>
+  <key>PayloadUUID</key>
+  <string>__PROFILE_UUID__</string>
+  <key>PayloadDisplayName</key>
+  <string>Fionnbar Homework — Managed Chrome</string>
+  <key>PayloadDescription</key>
+  <string>Parent-managed Chrome restrictions for the Fionnbar Homework child account.</string>
+  <key>PayloadOrganization</key>
+  <string>Fionnbar Homework</string>
+  <key>PayloadRemovalDisallowed</key>
+  <true/>
+  <key>PayloadScope</key>
+  <string>User</string>
+</dict>
+</plist>

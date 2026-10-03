@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const MAX_HEARTBEAT_GAP_MS = 7_000
 
 function emptyState() {
@@ -18,6 +18,7 @@ function emptyState() {
     activeTimer: null,
     completionRecords: [],
     guardianConnected: false,
+    chromeConnected: false,
   }
 }
 
@@ -146,6 +147,17 @@ export function createStore(filename, options = {}) {
       active_bundle_id TEXT,
       decision TEXT NOT NULL,
       version TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chrome_extension_status (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      extension_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      active_origin TEXT,
+      decision TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     );
 
@@ -290,6 +302,7 @@ export function createStore(filename, options = {}) {
 
     state.entered = settings.entered === '1'
     state.guardianConnected = getGuardianStatus().connected
+    state.chromeConnected = getChromeExtensionStatus().connected
 
     for (const row of db.prepare('SELECT day, activity_id FROM daily_completion ORDER BY completed_at').all()) {
       if (DAYS.includes(row.day)) state.requiredByDay[row.day].push(row.activity_id)
@@ -614,6 +627,53 @@ export function createStore(filename, options = {}) {
     }
   }
 
+  function recordChromeExtensionHeartbeat(input) {
+    const extensionId = String(input.extensionId ?? '').trim().slice(0, 80)
+    const version = String(input.version ?? 'unknown').slice(0, 40)
+    const mode = String(input.mode ?? 'unknown').slice(0, 40)
+    const activeOrigin = input.activeOrigin ? String(input.activeOrigin).slice(0, 300) : null
+    const decision = String(input.decision ?? 'unknown').slice(0, 80)
+    const policyVersion = String(input.policyVersion ?? 'unknown').slice(0, 40)
+    if (!extensionId) throw new Error('extensionId is required')
+    const lastSeenAt = asIso(wallNow())
+    const previous = db.prepare(
+      'SELECT decision, active_origin FROM chrome_extension_status WHERE singleton = 1',
+    ).get()
+    db.prepare(`
+      INSERT INTO chrome_extension_status (
+        singleton, extension_id, version, mode, active_origin, decision, policy_version, last_seen_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(singleton) DO UPDATE SET
+        extension_id = excluded.extension_id,
+        version = excluded.version,
+        mode = excluded.mode,
+        active_origin = excluded.active_origin,
+        decision = excluded.decision,
+        policy_version = excluded.policy_version,
+        last_seen_at = excluded.last_seen_at
+    `).run(extensionId, version, mode, activeOrigin, decision, policyVersion, lastSeenAt)
+    if (decision === 'blocked' && (previous?.decision !== 'blocked' || previous?.active_origin !== activeOrigin)) {
+      addAudit('chrome_navigation_blocked', { extensionId, activeOrigin, policyVersion })
+    }
+    return getChromeExtensionStatus()
+  }
+
+  function getChromeExtensionStatus() {
+    const row = db.prepare('SELECT * FROM chrome_extension_status WHERE singleton = 1').get()
+    if (!row) return { connected: false, lastSeenAt: null }
+    const ageMs = new Date(asIso(wallNow())).getTime() - new Date(row.last_seen_at).getTime()
+    return {
+      connected: ageMs >= 0 && ageMs <= 45_000,
+      extensionId: row.extension_id,
+      version: row.version,
+      mode: row.mode,
+      activeOrigin: row.active_origin ?? null,
+      decision: row.decision,
+      policyVersion: row.policy_version,
+      lastSeenAt: row.last_seen_at,
+    }
+  }
+
   function isOptionalComplete(sessionKey) {
     return Boolean(db.prepare('SELECT 1 FROM optional_completion WHERE session_key = ?').get(String(sessionKey)))
   }
@@ -659,6 +719,8 @@ export function createStore(filename, options = {}) {
     isOptionalComplete,
     recordGuardianHeartbeat,
     getGuardianStatus,
+    recordChromeExtensionHeartbeat,
+    getChromeExtensionStatus,
     addAudit,
     listAudit,
     listCompletions,

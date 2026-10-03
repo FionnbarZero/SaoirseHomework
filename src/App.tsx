@@ -46,6 +46,7 @@ import {
   endControlledSession,
   heartbeatControlledSession,
   hydrateFromService,
+  loadStateFromService,
   recordAudit,
   saveStateToService,
   setDailyCompletion,
@@ -173,6 +174,20 @@ function App() {
       window.removeEventListener('blur', handleFocusChange)
     }
   }, [state.activeTimer?.id, state.activeTimer?.status])
+
+  useEffect(() => {
+    if (view !== 'parent' || serviceStatus !== 'online' || state.activeTimer) return
+    const refresh = () => {
+      loadStateFromService()
+        .then(({ state: storedState, meta }) => {
+          setState(storedState)
+          setServiceMeta(meta)
+        })
+        .catch(() => setServiceStatus('offline'))
+    }
+    const interval = window.setInterval(refresh, 5_000)
+    return () => window.clearInterval(interval)
+  }, [view, serviceStatus, state.activeTimer])
 
   const navigate = (next: View) => {
     if (state.activeTimer && next !== 'session') {
@@ -818,7 +833,7 @@ function ParentView({
         <div><small>WEEKLY PRACTICE</small><strong>{state.optionalCompleted.length}<span>/13</span></strong></div>
         <div><small>REWARD CREDITS</small><strong>{state.rewardCredits.length}</strong></div>
         <div><small>WRITING DRAFTS</small><strong>{state.drafts.length}</strong></div>
-        <div><small>GUARDIAN</small><strong className={state.guardianConnected ? 'status-good' : 'status-warn'}>{state.guardianConnected ? 'Demo on' : 'Not linked'}</strong></div>
+        <div><small>GUARDIAN</small><strong className={state.guardianConnected ? 'status-good' : 'status-warn'}>{state.guardianConnected ? 'Connected' : 'Not linked'}</strong></div>
         <div><small>STORAGE</small><strong className={serviceStatus === 'online' ? 'status-good' : 'status-warn'}>{serviceStatus === 'online' ? 'SQLite' : 'Browser'}</strong></div>
       </div>
       <div className="parent-grid">
@@ -834,7 +849,7 @@ function ParentView({
         <div className="parent-panel integration-panel">
           <div className="panel-heading"><div><h3>System connections</h3><p>Feasibility work still required.</p></div></div>
           <div className="connection-row"><span className={serviceStatus === 'online' ? 'dot good' : 'dot'} /><div><strong>Local data service</strong><small>{serviceStatus === 'online' ? `SQLite schema ${serviceMeta?.schemaVersion ?? 1} · restart-safe` : 'Using browser backup storage'}</small></div>{serviceStatus === 'online' ? <b>Connected</b> : <button onClick={reconnectService}>Retry</button>}</div>
-          <div className="connection-row"><span className={state.guardianConnected ? 'dot good' : 'dot'} /><div><strong>macOS guardian</strong><small>{state.guardianConnected ? 'Preview status enabled' : 'Not installed'}</small></div><button onClick={() => setState((current) => ({ ...current, guardianConnected: !current.guardianConnected }))}>{state.guardianConnected ? 'Turn off demo' : 'Demo status'}</button></div>
+          <div className="connection-row"><span className={state.guardianConnected ? 'dot good' : 'dot'} /><div><strong>macOS guardian</strong><small>{state.guardianConnected ? 'Heartbeat received within 15 seconds' : 'No live guardian heartbeat'}</small></div><b>{state.guardianConnected ? 'Connected' : 'Pending'}</b></div>
           <div className="connection-row"><span className="dot" /><div><strong>Managed Chrome</strong><small>Policy not installed</small></div><b>Pending</b></div>
           <div className="connection-row"><span className="dot" /><div><strong>Google delivery</strong><small>OAuth not authorized</small></div><b>Pending</b></div>
           <div className="connection-row"><span className="dot" /><div><strong>Reading game</strong><small>Completion origin needed</small></div><b>Pending</b></div>

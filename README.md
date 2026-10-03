@@ -37,6 +37,8 @@ npm run build
 - Fail-closed pause and recovery after focus loss, long heartbeat gaps, or service restart
 - Atomic completion records with self-reported, parent-override, and time-in-session sources
 - Duplicate-safe optional completion and reward-credit creation
+- Native Swift macOS guardian prototype with a live service heartbeat
+- Safe-by-default dry-run app-policy checks and an uninstalled LaunchAgent template
 - Automatic migration from browser storage on the first service run
 - Parent action audit log and restart-safe timer records
 - Browser-cache fallback when the loopback service is unavailable
@@ -46,7 +48,7 @@ npm run build
 
 The UI labels the following honestly as pending because they require external inputs or privileged installation:
 
-- macOS guardian service and LaunchAgent
+- Parent-authorized guardian installation and enforcement on the second Mac
 - Managed Chrome extension and policy profile
 - Reading Strategies completion contract and game origin
 - Google OAuth, Drive/Docs/Gmail delivery, and Family Link approval

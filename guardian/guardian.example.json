@@ -1,0 +1,6 @@
+{
+  "guardianId": "fionnbar-child-mac",
+  "serviceBaseURL": "http://127.0.0.1:4179",
+  "heartbeatIntervalSeconds": 5,
+  "allowEnforcement": false
+}

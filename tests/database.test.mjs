@@ -63,7 +63,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 2)
+    assert.equal(reopened.info().schemaVersion, 3)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -217,5 +217,39 @@ test('completion records identify self reports without duplicating repeated requ
   assert.deepEqual(state.requiredByDay.Wednesday, ['math'])
   assert.equal(state.completionRecords.length, 1)
   assert.equal(state.completionRecords[0].method, 'self-reported')
+  store.close()
+})
+
+test('guardian heartbeats expire instead of leaving a false connected state', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+
+  const current = store.recordGuardianHeartbeat({
+    guardianId: 'child-mac',
+    mode: 'dry-run',
+    activeBundleId: 'com.google.Chrome',
+    decision: 'allowed',
+    version: '0.1.0',
+  })
+  assert.equal(current.connected, true)
+  assert.equal(store.loadState().guardianConnected, true)
+
+  const blockedHeartbeat = {
+    guardianId: 'child-mac',
+    mode: 'dry-run',
+    activeBundleId: 'com.apple.Terminal',
+    decision: 'blocked',
+    version: '0.1.0',
+  }
+  store.recordGuardianHeartbeat(blockedHeartbeat)
+  store.recordGuardianHeartbeat(blockedHeartbeat)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'guardian_blocked_app_observed').length,
+    1,
+  )
+
+  clock.advance(16_000)
+  assert.equal(store.getGuardianStatus().connected, false)
+  assert.equal(store.loadState().guardianConnected, false)
   store.close()
 })

@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 const MAX_HEARTBEAT_GAP_MS = 7_000
 
 function emptyState() {
@@ -137,6 +137,16 @@ export function createStore(filename, options = {}) {
       session_id TEXT UNIQUE,
       completed_at TEXT NOT NULL,
       details_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS guardian_status (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      guardian_id TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('dry-run', 'enforcing')),
+      active_bundle_id TEXT,
+      decision TEXT NOT NULL,
+      version TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -279,7 +289,7 @@ export function createStore(filename, options = {}) {
     )
 
     state.entered = settings.entered === '1'
-    state.guardianConnected = settings.guardian_connected === '1'
+    state.guardianConnected = getGuardianStatus().connected
 
     for (const row of db.prepare('SELECT day, activity_id FROM daily_completion ORDER BY completed_at').all()) {
       if (DAYS.includes(row.day)) state.requiredByDay[row.day].push(row.activity_id)
@@ -562,6 +572,48 @@ export function createStore(filename, options = {}) {
     } : null
   }
 
+  function recordGuardianHeartbeat(input) {
+    const guardianId = String(input.guardianId ?? '').trim().slice(0, 120)
+    const mode = input.mode === 'enforcing' ? 'enforcing' : 'dry-run'
+    const activeBundleId = input.activeBundleId ? String(input.activeBundleId).slice(0, 200) : null
+    const decision = String(input.decision ?? 'unknown').slice(0, 80)
+    const version = String(input.version ?? 'unknown').slice(0, 40)
+    if (!guardianId) throw new Error('guardianId is required')
+    const lastSeenAt = asIso(wallNow())
+    const previous = db.prepare('SELECT decision, active_bundle_id FROM guardian_status WHERE singleton = 1').get()
+    db.prepare(`
+      INSERT INTO guardian_status (
+        singleton, guardian_id, mode, active_bundle_id, decision, version, last_seen_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(singleton) DO UPDATE SET
+        guardian_id = excluded.guardian_id,
+        mode = excluded.mode,
+        active_bundle_id = excluded.active_bundle_id,
+        decision = excluded.decision,
+        version = excluded.version,
+        last_seen_at = excluded.last_seen_at
+    `).run(guardianId, mode, activeBundleId, decision, version, lastSeenAt)
+    if (decision === 'blocked' && (previous?.decision !== 'blocked' || previous?.active_bundle_id !== activeBundleId)) {
+      addAudit('guardian_blocked_app_observed', { guardianId, mode, activeBundleId })
+    }
+    return getGuardianStatus()
+  }
+
+  function getGuardianStatus() {
+    const row = db.prepare('SELECT * FROM guardian_status WHERE singleton = 1').get()
+    if (!row) return { connected: false, lastSeenAt: null }
+    const ageMs = new Date(asIso(wallNow())).getTime() - new Date(row.last_seen_at).getTime()
+    return {
+      connected: ageMs >= 0 && ageMs <= 15_000,
+      guardianId: row.guardian_id,
+      mode: row.mode,
+      activeBundleId: row.active_bundle_id ?? null,
+      decision: row.decision,
+      version: row.version,
+      lastSeenAt: row.last_seen_at,
+    }
+  }
+
   function isOptionalComplete(sessionKey) {
     return Boolean(db.prepare('SELECT 1 FROM optional_completion WHERE session_key = ?').get(String(sessionKey)))
   }
@@ -605,6 +657,8 @@ export function createStore(filename, options = {}) {
     setDailyCompletion,
     getRewardCredit,
     isOptionalComplete,
+    recordGuardianHeartbeat,
+    getGuardianStatus,
     addAudit,
     listAudit,
     listCompletions,

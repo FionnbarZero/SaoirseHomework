@@ -35,6 +35,10 @@ export async function hydrateFromService(browserState: AppState): Promise<StateR
   return saveStateToService(browserState)
 }
 
+export function loadStateFromService() {
+  return request<StateResponse>('/api/state')
+}
+
 export function saveStateToService(state: AppState) {
   return request<StateResponse>('/api/state', {
     method: 'PUT',

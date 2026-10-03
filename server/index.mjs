@@ -23,6 +23,22 @@ const optionalActivities = new Map([
   ['level-chinese', { label: 'Level Chinese', sessions: 2, targetSeconds: 20 * 60 }],
   ['du-chinese', { label: 'Du Chinese', sessions: 2, targetSeconds: 20 * 60 }],
 ])
+const requiredActivityIds = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
+const optionalTargets = { Monday: 3, Tuesday: 6, Wednesday: 9, Thursday: 11, Friday: 13 }
+const guardianPolicy = {
+  version: '1',
+  blockedBundleIds: [
+    'com.apple.Safari',
+    'com.apple.Terminal',
+    'com.googlecode.iterm2',
+    'com.roblox.Roblox',
+    'com.roblox.RobloxPlayer',
+    'org.mozilla.firefox',
+    'com.microsoft.edgemac',
+    'company.thebrowser.Browser',
+    'com.brave.Browser',
+  ],
+}
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -124,6 +140,32 @@ function sessionResponse() {
   return { session: state.activeTimer, state, meta: store.info() }
 }
 
+function guardianResponse() {
+  const state = store.loadState()
+  const day = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date())
+  const dailyCompleted = state.requiredByDay[day] ?? []
+  const dailyReady = requiredActivityIds.every((activityId) => dailyCompleted.includes(activityId))
+  const optionalReady = day in optionalTargets
+    ? state.optionalCompleted.length >= optionalTargets[day]
+    : false
+  const mode = !state.entered
+    ? 'inactive'
+    : dailyReady && optionalReady
+      ? 'free'
+      : 'homework'
+  return {
+    mode,
+    homeworkMode: mode === 'homework',
+    day,
+    activeSession: state.activeTimer
+      ? { id: state.activeTimer.id, kind: state.activeTimer.kind, activityId: state.activeTimer.activityId }
+      : null,
+    policy: guardianPolicy,
+    guardian: store.getGuardianStatus(),
+    serviceTime: new Date().toISOString(),
+  }
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || '/', `http://${host}:${port}`)
@@ -143,6 +185,16 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request)
       const state = store.saveState(body.state ?? body)
       return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/guardian/status' && request.method === 'GET') {
+      return sendJson(response, 200, guardianResponse())
+    }
+
+    if (url.pathname === '/api/guardian/heartbeat' && request.method === 'POST') {
+      const body = await readJson(request)
+      const guardian = store.recordGuardianHeartbeat(body)
+      return sendJson(response, 200, { guardian, status: guardianResponse() })
     }
 
     if (url.pathname === '/api/sessions' && request.method === 'POST') {

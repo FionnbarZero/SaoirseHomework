@@ -3,3 +3,4 @@ dist
 data
 *.tsbuildinfo
 .DS_Store
+guardian/.build

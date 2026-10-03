@@ -1,6 +1,6 @@
 # Fionnbar Homework App
 
-A local-first browser prototype for Fionnbar's weekly homework path. The product plan is in `PROJECT_PLAN.md`.
+A local-first homework application for Fionnbar's weekly path. The product plan is in `PROJECT_PLAN.md`.
 
 ## Run locally
 
@@ -10,6 +10,10 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:4180`.
+
+`npm run dev` starts both the Vite interface and the loopback data service. The service listens only on `127.0.0.1:4179` and stores its SQLite database in `data/homework.sqlite`.
+
+After `npm run build`, `npm start` serves the production build and API together from `http://127.0.0.1:4179`.
 
 ## Checks
 
@@ -27,7 +31,11 @@ npm run build
 - Local reward-credit ledger and reward timer
 - Local writing draft with deterministic capitalization and punctuation checks
 - Parent preview dashboard and completion overrides
-- Local browser persistence, responsive layout, and reduced-motion support
+- SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
+- Automatic migration from browser storage on the first service run
+- Parent action audit log and restart-safe timer records
+- Browser-cache fallback when the loopback service is unavailable
+- Responsive layout and reduced-motion support
 
 ## Integration boundaries
 

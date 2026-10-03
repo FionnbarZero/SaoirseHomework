@@ -286,7 +286,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .admin-pill { border-color: #d5c59a; color: #755c23; background: #f3ead1; }
 .admin-pill small { color: #98804b; }
-.parent-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 19px; }
+.parent-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 19px; }
 .parent-stats > div { min-height: 93px; padding: 15px 17px; border: 1px solid var(--line); border-radius: 15px; background: rgba(251,249,244,.9); }
 .parent-stats small { display: block; color: #909591; font-size: 8px; font-weight: 900; letter-spacing: .1em; }
 .parent-stats strong { display: block; margin-top: 10px; font-family: Georgia, serif; font-size: 28px; }
@@ -335,6 +335,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .today-illustration { grid-row: span 5; margin: 0; height: 100%; min-height: 180px; }
   .practice-grid { grid-template-columns: repeat(2, 1fr); }
   .reward-content, .parent-grid { grid-template-columns: 1fr; }
+  .parent-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {

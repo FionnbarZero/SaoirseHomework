@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   BookOpen,
@@ -41,6 +41,12 @@ import {
   type DayName,
   type Draft,
 } from './domain'
+import {
+  hydrateFromService,
+  recordAudit,
+  saveStateToService,
+  type ServiceMeta,
+} from './service'
 
 type View = 'path' | 'day' | 'options' | 'writing' | 'rewards' | 'parent' | 'session'
 
@@ -65,10 +71,54 @@ function App() {
   const [state, setState] = useState<AppState>(loadState)
   const [view, setView] = useState<View>(state.activeTimer ? 'session' : 'path')
   const [selectedDay, setSelectedDay] = useState<DayName>(getToday)
+  const [serviceStatus, setServiceStatus] = useState<'connecting' | 'online' | 'offline'>('connecting')
+  const [serviceMeta, setServiceMeta] = useState<ServiceMeta | null>(null)
+  const [hydrated, setHydrated] = useState(false)
+  const latestState = useRef(state)
+
+  useEffect(() => {
+    latestState.current = state
+  }, [state])
+
+  useEffect(() => {
+    let cancelled = false
+    hydrateFromService(latestState.current)
+      .then(({ state: storedState, meta }) => {
+        if (cancelled) return
+        setState(storedState)
+        if (storedState.activeTimer) setView('session')
+        setServiceMeta(meta)
+        setServiceStatus('online')
+        setHydrated(true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setServiceStatus('offline')
+        setHydrated(true)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [state])
+    if (!hydrated || serviceStatus !== 'online') return
+    const timeout = window.setTimeout(() => {
+      saveStateToService(state)
+        .then(({ meta }) => setServiceMeta(meta))
+        .catch(() => setServiceStatus('offline'))
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [state, hydrated, serviceStatus])
+
+  const reconnectService = () => {
+    setServiceStatus('connecting')
+    saveStateToService(latestState.current)
+      .then(({ meta }) => {
+        setServiceMeta(meta)
+        setServiceStatus('online')
+      })
+      .catch(() => setServiceStatus('offline'))
+  }
 
   useEffect(() => {
     if (!state.activeTimer?.running || state.activeTimer.remainingSeconds <= 0) return
@@ -207,7 +257,7 @@ function App() {
     <div className="app-shell">
       <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} />
       <main className="main-shell">
-        <Topbar state={state} />
+        <Topbar state={state} serviceStatus={serviceStatus} />
         <div className="page-wrap">
           {view === 'path' && <PathView state={state} selectedDay={selectedDay} openDay={openDay} />}
           {view === 'day' && (
@@ -231,6 +281,9 @@ function App() {
               setState={setState}
               day={selectedDay}
               setDay={setSelectedDay}
+              serviceStatus={serviceStatus}
+              serviceMeta={serviceMeta}
+              reconnectService={reconnectService}
             />
           )}
           {view === 'session' && state.activeTimer && (
@@ -305,7 +358,7 @@ function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view:
   )
 }
 
-function Topbar({ state }: { state: AppState }) {
+function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'connecting' | 'online' | 'offline' }) {
   const completedDays = DAYS.filter((day) => dayIsComplete(state, day)).length
   return (
     <header className="topbar">
@@ -314,8 +367,8 @@ function Topbar({ state }: { state: AppState }) {
         <strong>{getWeekLabel()}</strong>
       </div>
       <div className="topbar-actions">
-        <span className={state.guardianConnected ? 'connection connected' : 'connection'}>
-          <span /> {state.guardianConnected ? 'Guardian connected' : 'Preview mode'}
+        <span className={serviceStatus === 'online' ? 'connection connected' : 'connection'}>
+          <span /> {serviceStatus === 'online' ? 'SQLite connected' : serviceStatus === 'connecting' ? 'Connecting…' : 'Browser backup'}
         </span>
         <div className="week-score"><Trophy size={18} /> {completedDays}/5 days</div>
         <button className="avatar" aria-label="Fionnbar’s profile">F</button>
@@ -649,13 +702,20 @@ function ParentView({
   setState,
   day,
   setDay,
+  serviceStatus,
+  serviceMeta,
+  reconnectService,
 }: {
   state: AppState
   setState: React.Dispatch<React.SetStateAction<AppState>>
   day: DayName
   setDay: (day: DayName) => void
+  serviceStatus: 'connecting' | 'online' | 'offline'
+  serviceMeta: ServiceMeta | null
+  reconnectService: () => void
 }) {
   const toggleOverride = (activityId: string) => {
+    const wasComplete = state.requiredByDay[day].includes(activityId)
     setState((current) => {
       const completed = current.requiredByDay[day]
       return {
@@ -666,13 +726,19 @@ function ParentView({
         },
       }
     })
+    void recordAudit('parent_completion_override', { day, activityId, completed: !wasComplete }).catch(() => {})
   }
-  const addCredit = () => setState((current) => ({
-    ...current,
-    rewardCredits: [...current.rewardCredits, { id: crypto.randomUUID(), source: 'Parent-added credit', remainingSeconds: 300, earnedAt: new Date().toISOString() }],
-  }))
+  const addCredit = () => {
+    const creditId = crypto.randomUUID()
+    setState((current) => ({
+      ...current,
+      rewardCredits: [...current.rewardCredits, { id: creditId, source: 'Parent-added credit', remainingSeconds: 300, earnedAt: new Date().toISOString() }],
+    }))
+    void recordAudit('parent_reward_credit_added', { creditId, seconds: 300 }).catch(() => {})
+  }
   const reset = () => {
     if (!window.confirm('Reset all preview progress on this Mac? This cannot be undone.')) return
+    void recordAudit('parent_preview_reset', { previousDrafts: state.drafts.length }).catch(() => {})
     setState({ ...defaultState, entered: true })
   }
   return (
@@ -686,6 +752,7 @@ function ParentView({
         <div><small>REWARD CREDITS</small><strong>{state.rewardCredits.length}</strong></div>
         <div><small>WRITING DRAFTS</small><strong>{state.drafts.length}</strong></div>
         <div><small>GUARDIAN</small><strong className={state.guardianConnected ? 'status-good' : 'status-warn'}>{state.guardianConnected ? 'Demo on' : 'Not linked'}</strong></div>
+        <div><small>STORAGE</small><strong className={serviceStatus === 'online' ? 'status-good' : 'status-warn'}>{serviceStatus === 'online' ? 'SQLite' : 'Browser'}</strong></div>
       </div>
       <div className="parent-grid">
         <div className="parent-panel">
@@ -699,6 +766,7 @@ function ParentView({
         </div>
         <div className="parent-panel integration-panel">
           <div className="panel-heading"><div><h3>System connections</h3><p>Feasibility work still required.</p></div></div>
+          <div className="connection-row"><span className={serviceStatus === 'online' ? 'dot good' : 'dot'} /><div><strong>Local data service</strong><small>{serviceStatus === 'online' ? `SQLite schema ${serviceMeta?.schemaVersion ?? 1} · restart-safe` : 'Using browser backup storage'}</small></div>{serviceStatus === 'online' ? <b>Connected</b> : <button onClick={reconnectService}>Retry</button>}</div>
           <div className="connection-row"><span className={state.guardianConnected ? 'dot good' : 'dot'} /><div><strong>macOS guardian</strong><small>{state.guardianConnected ? 'Preview status enabled' : 'Not installed'}</small></div><button onClick={() => setState((current) => ({ ...current, guardianConnected: !current.guardianConnected }))}>{state.guardianConnected ? 'Turn off demo' : 'Demo status'}</button></div>
           <div className="connection-row"><span className="dot" /><div><strong>Managed Chrome</strong><small>Policy not installed</small></div><b>Pending</b></div>
           <div className="connection-row"><span className="dot" /><div><strong>Google delivery</strong><small>OAuth not authorized</small></div><b>Pending</b></div>

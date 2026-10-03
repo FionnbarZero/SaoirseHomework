@@ -9,9 +9,10 @@ This directory contains the safe, uninstalled prototype for keeping managed Chro
 - Installs dynamic navigation rules only while Homework mode is active.
 - Gives approved domains higher-priority `allow` rules and redirects other HTTP(S) top-level navigation to a local extension page.
 - Reports extension health and the active origin to the local service.
+- Sends five-second active-origin heartbeats for configured activity timers and follows approved phase changes.
 - Leaves its last Homework-mode rules in place if the local service becomes unavailable.
 
-The current approved list is intentionally narrow because the school activity URLs and login redirects have not been supplied yet.
+The approved list is generated from parent-reviewed activity configuration. Missing URLs fail closed and cannot start a tracked external session.
 
 ## Build and test
 

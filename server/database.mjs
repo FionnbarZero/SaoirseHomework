@@ -3,10 +3,11 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
+import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -38,6 +39,7 @@ function emptyState(weekContext = emptyWeekContext()) {
     completionRecords: [],
     guardianConnected: false,
     chromeConnected: false,
+    activityConfiguration: emptyActivityConfiguration(),
     googleProof: {
       mode: 'mock',
       connected: false,
@@ -237,6 +239,9 @@ export function createStore(filename, options = {}) {
       activity_id TEXT NOT NULL,
       session_key TEXT,
       label TEXT NOT NULL,
+      plan_json TEXT NOT NULL DEFAULT '{}',
+      phase_index INTEGER NOT NULL DEFAULT 0,
+      phase_credited_ms INTEGER NOT NULL DEFAULT 0,
       target_ms INTEGER NOT NULL CHECK (target_ms > 0),
       credited_ms INTEGER NOT NULL DEFAULT 0 CHECK (credited_ms >= 0),
       status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
@@ -351,6 +356,9 @@ export function createStore(filename, options = {}) {
   }
 
   ensureColumn('activity_session', 'week_id', 'TEXT')
+  ensureColumn('activity_session', 'plan_json', "TEXT NOT NULL DEFAULT '{}'")
+  ensureColumn('activity_session', 'phase_index', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('activity_session', 'phase_credited_ms', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('game_session', 'week_id', 'TEXT')
 
   const setMeta = db.prepare(`
@@ -385,9 +393,10 @@ export function createStore(filename, options = {}) {
   `)
   const insertSession = db.prepare(`
     INSERT INTO activity_session (
-      id, nonce, kind, activity_id, session_key, week_id, label, target_ms, credited_ms,
-      status, runtime_id, last_tick_ms, created_at, last_heartbeat_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, nonce, kind, activity_id, session_key, week_id, label, plan_json, phase_index,
+      phase_credited_ms, target_ms, credited_ms, status, runtime_id, last_tick_ms,
+      created_at, last_heartbeat_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertCompletion = db.prepare(`
     INSERT OR IGNORE INTO completion_record (
@@ -503,11 +512,13 @@ export function createStore(filename, options = {}) {
   if (legacyTimer && !pendingSession) {
     const now = asIso(wallNow())
     const weekId = ensureCurrentWeek().weekId
+    const creditedMs = Math.max(0, Number(legacyTimer.total_seconds - legacyTimer.remaining_seconds)) * 1000
     insertSession.run(
       makeId(), makeId(), legacyTimer.kind, legacyTimer.activity_id,
       legacyTimer.session_key ?? null, weekId, legacyTimer.label,
+      '{}', 0, creditedMs,
       Number(legacyTimer.total_seconds) * 1000,
-      Math.max(0, Number(legacyTimer.total_seconds - legacyTimer.remaining_seconds)) * 1000,
+      creditedMs,
       'paused', null, null, now, null, now,
     )
   }
@@ -517,8 +528,106 @@ export function createStore(filename, options = {}) {
     return db.prepare(`SELECT value FROM app_meta WHERE key = 'initialized'`).get()?.value === '1'
   }
 
+  function getActivityConfiguration() {
+    const saved = db.prepare(`SELECT value FROM settings WHERE key = 'activity_configuration'`).get()?.value
+    return normalizeActivityConfiguration(saved ? safeJson(saved, {}) : {})
+  }
+
+  function setActivityConfiguration(input) {
+    const configuration = normalizeActivityConfiguration(input)
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      setSetting.run('activity_configuration', JSON.stringify(configuration))
+      insertAudit.run(
+        'activity_configuration_updated',
+        JSON.stringify({
+          ninjaDojoReady: configuration.ninjaDojo.ready,
+          duChineseReady: configuration.duChinese.ready,
+          levelChineseReady: configuration.levelChinese.ready,
+        }),
+        now,
+      )
+      setMeta.run('last_write_at', now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return configuration
+  }
+
+  function normalizeSessionPlan(input, targetSeconds, label) {
+    if (!input?.phases) {
+      return {
+        phases: [{
+          id: 'focus',
+          label,
+          targetSeconds,
+          launchUrl: '',
+          allowedOrigins: [],
+          creditOrigins: [],
+          advanceOrigins: [],
+          verification: 'browser-focus',
+          navigateOnStart: false,
+        }],
+      }
+    }
+    if (!Array.isArray(input.phases) || input.phases.length < 1 || input.phases.length > 5) {
+      throw new Error('A session plan needs between one and five phases')
+    }
+    const phases = input.phases.map((phase, index) => {
+      const phaseSeconds = Math.floor(Number(phase.targetSeconds))
+      if (!Number.isFinite(phaseSeconds) || phaseSeconds < 0) throw new Error('Session phase duration is invalid')
+      const verification = phase.verification === 'managed-chrome' ? 'managed-chrome' : 'browser-focus'
+      const allowedOrigins = [...new Set(Array.isArray(phase.allowedOrigins) ? phase.allowedOrigins.map(String) : [])]
+      const creditOrigins = [...new Set(Array.isArray(phase.creditOrigins) ? phase.creditOrigins.map(String) : [])]
+      const advanceOrigins = [...new Set(Array.isArray(phase.advanceOrigins) ? phase.advanceOrigins.map(String) : [])]
+      for (const origin of [...allowedOrigins, ...creditOrigins, ...advanceOrigins]) normalizeOrigin(origin)
+      if (verification === 'managed-chrome' && !allowedOrigins.length) {
+        throw new Error('Managed Chrome phases need at least one approved origin')
+      }
+      if (creditOrigins.some((origin) => !allowedOrigins.includes(origin)) ||
+          advanceOrigins.some((origin) => !allowedOrigins.includes(origin))) {
+        throw new Error('Credit and transition origins must be approved for the phase')
+      }
+      return {
+        id: String(phase.id || `phase-${index + 1}`).slice(0, 80),
+        label: String(phase.label || `Phase ${index + 1}`).slice(0, 120),
+        targetSeconds: phaseSeconds,
+        launchUrl: phase.launchUrl ? String(phase.launchUrl) : '',
+        allowedOrigins,
+        creditOrigins,
+        advanceOrigins,
+        verification,
+        navigateOnStart: phase.navigateOnStart === true,
+      }
+    })
+    if (phases.reduce((total, phase) => total + phase.targetSeconds, 0) !== targetSeconds) {
+      throw new Error('Session phase durations must equal the total duration')
+    }
+    if (phases.some((phase, index) => phase.targetSeconds === 0 && index === phases.length - 1)) {
+      throw new Error('A verification-only phase cannot finish a session')
+    }
+    return { phases }
+  }
+
+  function planFromRow(row) {
+    const parsed = safeJson(row.plan_json, {})
+    if (Array.isArray(parsed.phases) && parsed.phases.length) return { plan: parsed, legacy: false }
+    return {
+      legacy: true,
+      plan: normalizeSessionPlan(null, Math.ceil(Number(row.target_ms) / 1000), row.label),
+    }
+  }
+
   function sessionFromRow(row) {
     if (!row) return null
+    const { plan, legacy } = planFromRow(row)
+    const phaseIndex = Math.min(plan.phases.length - 1, Math.max(0, Number(row.phase_index) || 0))
+    const phase = plan.phases[phaseIndex]
+    const phaseTargetMs = Number(phase.targetSeconds) * 1000
+    const phaseCreditedMs = legacy ? Number(row.credited_ms) : Number(row.phase_credited_ms)
     const remainingMs = Math.max(0, Number(row.target_ms) - Number(row.credited_ms))
     return {
       id: row.id,
@@ -535,6 +644,17 @@ export function createStore(filename, options = {}) {
       startedAt: row.created_at,
       lastHeartbeatAt: row.last_heartbeat_at ?? null,
       serverControlled: true,
+      phaseId: phase.id,
+      phaseLabel: phase.label,
+      phaseIndex,
+      phaseCount: plan.phases.length,
+      phaseTotalSeconds: Number(phase.targetSeconds),
+      phaseRemainingSeconds: Math.ceil(Math.max(0, phaseTargetMs - phaseCreditedMs) / 1000),
+      launchUrl: phase.launchUrl || undefined,
+      allowedOrigins: phase.allowedOrigins,
+      managedChromeRequired: phase.verification === 'managed-chrome',
+      waitingForVerification: Number(phase.targetSeconds) === 0,
+      navigateOnPhaseStart: phase.navigateOnStart === true,
     }
   }
 
@@ -647,6 +767,7 @@ export function createStore(filename, options = {}) {
     state.entered = settings.entered === '1'
     state.guardianConnected = getGuardianStatus().connected
     state.chromeConnected = getChromeExtensionStatus().connected
+    state.activityConfiguration = getActivityConfiguration()
     state.googleProof = getGoogleProofState()
 
     for (const row of db.prepare(`
@@ -701,7 +822,8 @@ export function createStore(filename, options = {}) {
     const remainingSeconds = Math.max(0, Math.min(totalSeconds, Number(timer.remainingSeconds) || 0))
     insertSession.run(
       makeId(), makeId(), String(timer.kind), String(timer.activityId), timer.sessionKey ? String(timer.sessionKey) : null,
-      weekId, String(timer.label), totalSeconds * 1000, (totalSeconds - remainingSeconds) * 1000,
+      weekId, String(timer.label), '{}', 0, (totalSeconds - remainingSeconds) * 1000,
+      totalSeconds * 1000, (totalSeconds - remainingSeconds) * 1000,
       remainingSeconds === 0 ? 'completed' : 'paused', null, null, now, null, now,
     )
   }
@@ -914,9 +1036,13 @@ export function createStore(filename, options = {}) {
     const id = makeId()
     const now = asIso(wallNow())
     const weekId = ensureCurrentWeek().weekId
+    const plan = normalizeSessionPlan(input.plan, targetSeconds, String(input.label))
+    const managedChrome = plan.phases[0].verification === 'managed-chrome'
     insertSession.run(
       id, makeId(), input.kind, String(input.activityId), input.sessionKey ? String(input.sessionKey) : null,
-      weekId, String(input.label), targetSeconds * 1000, 0, 'active', runtimeId, monotonicNow(), now, now, now,
+      weekId, String(input.label), JSON.stringify(plan), 0, 0, targetSeconds * 1000, 0,
+      managedChrome ? 'paused' : 'active', managedChrome ? null : runtimeId,
+      managedChrome ? null : monotonicNow(), now, now, now,
     )
     addAudit('session_started', {
       sessionId: id,
@@ -924,6 +1050,8 @@ export function createStore(filename, options = {}) {
       activityId: input.activityId,
       sessionKey: input.sessionKey,
       weekId,
+      phases: plan.phases.map((phase) => phase.id),
+      verification: plan.phases[0].verification,
     })
     return sessionFromRow(getSessionRow(id))
   }
@@ -964,37 +1092,92 @@ export function createStore(filename, options = {}) {
     return true
   }
 
-  function heartbeatSession(id, active) {
-    const row = getSessionRow(id)
+  function heartbeatSession(id, active, context = {}) {
+    let row = getSessionRow(id)
     if (!row) throw new Error('Session not found')
     if (row.status === 'cancelled' || row.acknowledged) throw new Error('Session is no longer active')
     if (row.status === 'completed') return sessionFromRow(row)
 
     const now = asIso(wallNow())
     const tick = monotonicNow()
-    const requestedActive = active === true
+    const { plan, legacy } = planFromRow(row)
+    let phaseIndex = Math.min(plan.phases.length - 1, Math.max(0, Number(row.phase_index) || 0))
+    let phase = plan.phases[phaseIndex]
+    const managedChrome = phase.verification === 'managed-chrome'
+    if (managedChrome && context.source !== 'managed-chrome') return sessionFromRow(row)
+
+    const activeOrigin = context.activeOrigin ? String(context.activeOrigin) : ''
+    let requestedActive = active === true
+    if (managedChrome) requestedActive = requestedActive && phase.creditOrigins.includes(activeOrigin)
     let creditedMs = Number(row.credited_ms)
+    let phaseCreditedMs = legacy ? creditedMs : Number(row.phase_credited_ms)
+    let phaseAdvanced = false
+
+    if (Number(phase.targetSeconds) === 0) {
+      const canAdvance = active === true && phase.advanceOrigins.includes(activeOrigin)
+      if (!canAdvance) {
+        db.prepare(`
+          UPDATE activity_session
+          SET status = 'paused', runtime_id = NULL, last_tick_ms = NULL,
+              last_heartbeat_at = ?, updated_at = ?
+          WHERE id = ?
+        `).run(now, now, row.id)
+        return sessionFromRow(getSessionRow(row.id))
+      }
+      phaseIndex += 1
+      phase = plan.phases[phaseIndex]
+      phaseCreditedMs = 0
+      db.prepare(`
+        UPDATE activity_session
+        SET phase_index = ?, phase_credited_ms = 0, status = 'active', runtime_id = ?,
+            last_tick_ms = ?, last_heartbeat_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(phaseIndex, runtimeId, tick, now, now, row.id)
+      addAudit('session_phase_advanced', {
+        sessionId: row.id,
+        activityId: row.activity_id,
+        phase: phase.id,
+        verifiedOrigin: activeOrigin,
+      })
+      return sessionFromRow(getSessionRow(row.id))
+    }
 
     if (requestedActive && row.status === 'active' && row.runtime_id === runtimeId && row.last_tick_ms != null) {
       const elapsed = tick - Number(row.last_tick_ms)
-      if (elapsed >= 0 && elapsed <= MAX_HEARTBEAT_GAP_MS) creditedMs += elapsed
+      if (elapsed >= 0 && elapsed <= MAX_HEARTBEAT_GAP_MS) {
+        const remainingInPhase = Math.max(0, Number(phase.targetSeconds) * 1000 - phaseCreditedMs)
+        const awarded = Math.min(elapsed, remainingInPhase)
+        creditedMs += awarded
+        phaseCreditedMs += awarded
+      }
     }
 
     creditedMs = Math.min(Number(row.target_ms), Math.max(0, Math.floor(creditedMs)))
-    const completed = creditedMs >= Number(row.target_ms)
+    phaseCreditedMs = Math.max(0, Math.floor(phaseCreditedMs))
+    const phaseComplete = phaseCreditedMs >= Number(phase.targetSeconds) * 1000
+    const completed = phaseComplete && phaseIndex === plan.phases.length - 1
+    if (phaseComplete && !completed) {
+      phaseIndex += 1
+      phase = plan.phases[phaseIndex]
+      phaseCreditedMs = 0
+      phaseAdvanced = true
+      requestedActive = false
+    }
 
     db.exec('BEGIN IMMEDIATE')
     try {
       db.prepare(`
         UPDATE activity_session
-        SET credited_ms = ?, status = ?, runtime_id = ?, last_tick_ms = ?,
+        SET credited_ms = ?, phase_index = ?, phase_credited_ms = ?, status = ?, runtime_id = ?, last_tick_ms = ?,
             last_heartbeat_at = ?, updated_at = ?, completed_at = ?
         WHERE id = ?
       `).run(
         creditedMs,
-        completed ? 'completed' : requestedActive ? 'active' : 'paused',
-        completed || !requestedActive ? null : runtimeId,
-        completed || !requestedActive ? null : tick,
+        phaseIndex,
+        phaseCreditedMs,
+        completed ? 'completed' : phaseAdvanced ? 'paused' : requestedActive ? 'active' : 'paused',
+        completed || phaseAdvanced || !requestedActive ? null : runtimeId,
+        completed || phaseAdvanced || !requestedActive ? null : tick,
         now,
         now,
         completed ? now : null,
@@ -1007,6 +1190,11 @@ export function createStore(filename, options = {}) {
       throw error
     }
 
+    if (phaseAdvanced) addAudit('session_phase_advanced', {
+      sessionId: row.id,
+      activityId: row.activity_id,
+      phase: phase.id,
+    })
     if (completed) addAudit('session_completed', { sessionId: row.id, kind: row.kind, activityId: row.activity_id })
     return sessionFromRow(getSessionRow(row.id))
   }
@@ -1159,6 +1347,13 @@ export function createStore(filename, options = {}) {
     `).run(extensionId, version, mode, activeOrigin, decision, policyVersion, lastSeenAt)
     if (decision === 'blocked' && (previous?.decision !== 'blocked' || previous?.active_origin !== activeOrigin)) {
       addAudit('chrome_navigation_blocked', { extensionId, activeOrigin, policyVersion })
+    }
+    const pendingSession = getPendingSessionRow()
+    if (pendingSession && pendingSession.status !== 'completed' && sessionFromRow(pendingSession).managedChromeRequired) {
+      heartbeatSession(pendingSession.id, decision === 'allowed', {
+        source: 'managed-chrome',
+        activeOrigin,
+      })
     }
     return getChromeExtensionStatus()
   }
@@ -1466,6 +1661,8 @@ export function createStore(filename, options = {}) {
     getGuardianStatus,
     recordChromeExtensionHeartbeat,
     getChromeExtensionStatus,
+    getActivityConfiguration,
+    setActivityConfiguration,
     connectMockGoogle,
     disconnectMockGoogle,
     getGoogleProofState,

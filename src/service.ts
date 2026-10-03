@@ -1,4 +1,4 @@
-import type { ActiveTimer, AppState, DayName, GameSession, GoogleDelivery, GoogleProofState } from './domain'
+import type { ActivityConfiguration, ActiveTimer, AppState, DayName, GameSession, GoogleDelivery, GoogleProofState } from './domain'
 
 export type ServiceMeta = {
   database: string
@@ -76,6 +76,13 @@ export function saveStateToService(state: AppState) {
   return request<StateResponse>('/api/state', {
     method: 'PUT',
     body: JSON.stringify({ state }),
+  })
+}
+
+export function saveActivityConfiguration(configuration: ActivityConfiguration) {
+  return request<StateResponse>('/api/activity-configuration', {
+    method: 'PUT',
+    body: JSON.stringify({ configuration }),
   })
 }
 

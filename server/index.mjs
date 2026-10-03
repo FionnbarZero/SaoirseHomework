@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildActivitySessionPlan } from './activity-config.mjs'
 import { createStore } from './database.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 
@@ -135,12 +136,20 @@ function resolveSessionRequest(body) {
     if (body.activityId !== 'ninja-dojo' || !days.has(body.sessionKey)) {
       throw new Error('Unsupported required activity session')
     }
+    const plan = buildActivitySessionPlan('ninja-dojo', store.getActivityConfiguration())
+    if (!store.getChromeExtensionStatus().connected) {
+      const error = new Error('Managed Chrome must be connected before Ninja Dojo can start')
+      error.status = 409
+      error.code = 'managed_chrome_required'
+      throw error
+    }
     return {
       kind: 'required',
       activityId: 'ninja-dojo',
       sessionKey: body.sessionKey,
       label: 'Ninja Dojo',
-      targetSeconds: 17 * 60,
+      targetSeconds: plan.targetSeconds,
+      plan,
     }
   }
 
@@ -154,12 +163,20 @@ function resolveSessionRequest(body) {
       throw new Error('Unsupported optional activity session')
     }
     if (store.isOptionalComplete(body.sessionKey)) throw new Error('That practice session is already complete')
+    const plan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
+    if (plan && !store.getChromeExtensionStatus().connected) {
+      const error = new Error(`Managed Chrome must be connected before ${activity.label} can start`)
+      error.status = 409
+      error.code = 'managed_chrome_required'
+      throw error
+    }
     return {
       kind: 'optional',
       activityId: body.activityId,
       sessionKey: body.sessionKey,
       label: `${activity.label} · Session ${sessionIndex + 1}`,
-      targetSeconds: activity.targetSeconds,
+      targetSeconds: plan?.targetSeconds ?? activity.targetSeconds,
+      ...(plan ? { plan } : {}),
     }
   }
 
@@ -211,18 +228,36 @@ function guardianResponse() {
 function chromeResponse() {
   const { state, mode, homeworkMode } = learningModeState()
   const rewardActive = state.activeTimer?.kind === 'reward'
+  const sessionOrigins = state.activeTimer?.allowedOrigins ?? []
+  const gameOrigins = state.activeGameSession?.status === 'pending'
+    ? [readingGameOrigin]
+    : []
+  const allowedDomains = rewardActive
+    ? ['127.0.0.1', 'youtube.com', 'youtu.be']
+    : ['127.0.0.1']
+  const allowedOrigins = rewardActive
+    ? []
+    : [...new Set([...sessionOrigins, ...gameOrigins])]
   return {
     mode,
     homeworkMode,
     activeSession: state.activeTimer
-      ? { id: state.activeTimer.id, kind: state.activeTimer.kind, activityId: state.activeTimer.activityId }
+      ? {
+          id: state.activeTimer.id,
+          kind: state.activeTimer.kind,
+          activityId: state.activeTimer.activityId,
+          phaseId: state.activeTimer.phaseId,
+          phaseIndex: state.activeTimer.phaseIndex,
+          phaseToken: `${state.activeTimer.id}:${state.activeTimer.phaseIndex ?? 0}`,
+          launchUrl: state.activeTimer.launchUrl ?? null,
+          navigateOnPhaseStart: state.activeTimer.navigateOnPhaseStart === true,
+        }
       : null,
     policy: {
-      version: '1',
+      version: '2',
       restrictNavigation: homeworkMode,
-      allowedDomains: rewardActive
-        ? ['127.0.0.1', 'youtube.com', 'youtu.be']
-        : ['127.0.0.1'],
+      allowedDomains,
+      allowedOrigins,
       expectedExtensionId: expectedChromeExtensionId,
     },
     extension: store.getChromeExtensionStatus(),
@@ -248,6 +283,12 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request)
       const state = store.saveState(body.state ?? body)
       return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/activity-configuration' && request.method === 'PUT') {
+      const body = await readJson(request)
+      store.setActivityConfiguration(body.configuration ?? body)
+      return sendJson(response, 200, { state: store.loadState(), meta: store.info() })
     }
 
     if (url.pathname === '/api/guardian/status' && request.method === 'GET') {

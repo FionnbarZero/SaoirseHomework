@@ -106,6 +106,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .secondary-button:hover { background: #f4f1e9; }
 .row-button { background: #2f756b; color: white; border-radius: 10px; padding: 10px 13px; white-space: nowrap; }
 .row-button:hover { background: #255f57; }
+.row-button:disabled { opacity: .48; cursor: not-allowed; }
 .text-button { padding: 7px 0; background: none; color: var(--teal); }
 .text-button.danger { color: #a74f45; }
 .back-button { margin-bottom: 24px; }
@@ -327,6 +328,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .timer-ring small { color: #929793; font-size: 9px; text-transform: uppercase; letter-spacing: .13em; }
 .session-card h2 { margin: 8px 0; font-family: Georgia, serif; font-size: 32px; }
 .session-copy { max-width: 430px; margin: 0 auto; color: #7f8682; font-size: 12px; line-height: 1.6; }
+.phase-pill { width: fit-content; margin: 12px auto; padding: 6px 10px; border-radius: 999px; color: #336d64; background: #e1eeea; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+.session-launch { width: fit-content; margin: 21px auto 0; text-decoration: none; }
 .session-actions { margin-top: 23px; display: flex; justify-content: center; align-items: center; gap: 18px; }
 .session-card > .primary-button { margin-top: 22px; }
 .focus-note { margin-top: 26px; padding-top: 17px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 7px; color: #929793; font-size: 9px; }
@@ -365,6 +368,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connection-row b, .connection-row button { border: 0; background: none; color: #9b8147; font-size: 8px; font-weight: 900; text-transform: uppercase; }
 .connection-row button { color: var(--teal); cursor: pointer; }
 .integration-panel > .secondary-button { width: calc(100% - 32px); margin: 15px 16px 0; }
+.activity-configuration-panel { margin-top: 18px; }
+.activity-config-grid { padding: 17px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
+.activity-config-grid fieldset { min-width: 0; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 14px; background: #f8f5ee; }
+.activity-config-grid legend { width: 100%; padding: 0 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: Georgia, serif; font-size: 14px; font-weight: 700; }
+.activity-config-grid legend b { border-radius: 999px; padding: 5px 7px; color: #8d6d2e; background: #f2e7ca; font-family: Inter, ui-rounded, sans-serif; font-size: 7px; letter-spacing: .06em; text-transform: uppercase; }
+.activity-config-grid legend b.ready { color: #2f6b62; background: #dcece7; }
+.activity-config-grid label { display: grid; gap: 5px; margin-top: 9px; }
+.activity-config-grid label > span { color: #747b77; font-size: 8px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.activity-config-grid input, .activity-config-grid textarea { width: 100%; border: 1px solid #d6d0c5; border-radius: 9px; padding: 9px 10px; resize: vertical; color: var(--ink); background: white; font: inherit; font-size: 9px; line-height: 1.4; }
+.activity-config-grid fieldset > small { display: block; margin-top: 11px; color: #8e938f; font-size: 8px; line-height: 1.45; }
+.configuration-actions { padding: 0 17px 17px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.configuration-actions p { margin: 0; color: #8b918d; font-size: 9px; line-height: 1.45; }
+.configuration-actions button { flex: 0 0 auto; }
+.configuration-message { margin: 0 17px 17px; }
 .google-proof-panel { margin-top: 18px; }
 .mock-badge { flex: 0 0 auto; border-radius: 999px; padding: 7px 10px; color: #775a22; background: #f3e8c9; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
 .google-proof-content { display: grid; grid-template-columns: minmax(230px, .65fr) minmax(360px, 1.35fr); }
@@ -425,6 +442,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .practice-grid { grid-template-columns: repeat(2, 1fr); }
   .friday-summary { grid-template-columns: repeat(2, 1fr); }
   .reward-content, .parent-grid, .google-proof-content { grid-template-columns: 1fr; }
+  .activity-config-grid { grid-template-columns: 1fr; }
   .google-proof-form { border-right: 0; border-bottom: 1px solid var(--line); }
   .parent-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -468,6 +486,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .reward-ticket { flex-wrap: wrap; }
   .reward-ticket .row-button { margin-left: auto; }
   .parent-stats { grid-template-columns: repeat(2, 1fr); }
+  .configuration-actions { align-items: stretch; flex-direction: column; }
+  .configuration-actions button { justify-content: center; }
   .delivery-row { align-items: flex-start; }
   .delivery-actions { grid-column: 2 / 4; justify-content: flex-start; }
   .session-page { min-height: calc(100vh - 66px); padding: 18px; }

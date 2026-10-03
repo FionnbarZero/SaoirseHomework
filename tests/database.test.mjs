@@ -67,7 +67,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 8)
+    assert.equal(reopened.info().schemaVersion, 9)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -203,6 +203,166 @@ test('a service restart recovers an incomplete session paused without adding dow
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('managed Du Chinese phases reject browser credit and survive restart', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-du-phases-'))
+  const filename = join(directory, 'homework.sqlite')
+  const clock = controlledClock()
+  const plan = {
+    phases: [
+      {
+        id: 'reading',
+        label: 'Reading',
+        targetSeconds: 5,
+        launchUrl: 'https://read.example/story',
+        allowedOrigins: ['https://read.example', 'https://cards.example'],
+        creditOrigins: ['https://read.example'],
+        verification: 'managed-chrome',
+      },
+      {
+        id: 'flashcards',
+        label: 'Flashcards',
+        targetSeconds: 5,
+        launchUrl: 'https://cards.example/review',
+        allowedOrigins: ['https://read.example', 'https://cards.example'],
+        creditOrigins: ['https://cards.example'],
+        verification: 'managed-chrome',
+        navigateOnStart: true,
+      },
+    ],
+  }
+
+  try {
+    const first = createStore(filename, clock.options('du-runtime-one'))
+    const session = first.startSession({
+      kind: 'optional',
+      activityId: 'du-chinese',
+      sessionKey: 'du-chinese:0',
+      label: 'Du Chinese · Session 1',
+      targetSeconds: 10,
+      plan,
+    })
+    assert.equal(session.status, 'paused')
+    assert.equal(session.phaseId, 'reading')
+    assert.equal(session.managedChromeRequired, true)
+
+    clock.advance(5_000)
+    assert.equal(first.heartbeatSession(session.id, true).creditedSeconds, 0)
+    first.heartbeatSession(session.id, true, {
+      source: 'managed-chrome',
+      activeOrigin: 'https://read.example',
+    })
+    clock.advance(5_000)
+    const flashcards = first.heartbeatSession(session.id, true, {
+      source: 'managed-chrome',
+      activeOrigin: 'https://read.example',
+    })
+    assert.equal(flashcards.phaseId, 'flashcards')
+    assert.equal(flashcards.creditedSeconds, 5)
+    assert.equal(flashcards.status, 'paused')
+    first.close()
+
+    const reopened = createStore(filename, clock.options('du-runtime-two'))
+    assert.equal(reopened.loadState().activeTimer.phaseId, 'flashcards')
+    reopened.heartbeatSession(session.id, true, {
+      source: 'managed-chrome',
+      activeOrigin: 'https://read.example',
+    })
+    assert.equal(reopened.loadState().activeTimer.creditedSeconds, 5)
+    reopened.heartbeatSession(session.id, true, {
+      source: 'managed-chrome',
+      activeOrigin: 'https://cards.example',
+    })
+    clock.advance(5_000)
+    const completed = reopened.heartbeatSession(session.id, true, {
+      source: 'managed-chrome',
+      activeOrigin: 'https://cards.example',
+    })
+    assert.equal(completed.status, 'completed')
+    assert.deepEqual(reopened.loadState().optionalCompleted, ['du-chinese:0'])
+    assert.equal(reopened.loadState().rewardCredits.length, 1)
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('Level Chinese waits for an exact managed-Chrome learning origin', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const session = store.startSession({
+    kind: 'optional',
+    activityId: 'level-chinese',
+    sessionKey: 'level-chinese:0',
+    label: 'Level Chinese · Session 1',
+    targetSeconds: 5,
+    plan: {
+      phases: [
+        {
+          id: 'clever-login',
+          label: 'Log in through Clever',
+          targetSeconds: 0,
+          launchUrl: 'https://clever.example/login',
+          allowedOrigins: ['https://clever.example', 'https://level.example'],
+          creditOrigins: [],
+          advanceOrigins: ['https://level.example'],
+          verification: 'managed-chrome',
+        },
+        {
+          id: 'level-learning',
+          label: 'Level Learning',
+          targetSeconds: 5,
+          launchUrl: 'https://level.example/learn',
+          allowedOrigins: ['https://clever.example', 'https://level.example'],
+          creditOrigins: ['https://level.example'],
+          verification: 'managed-chrome',
+        },
+      ],
+    },
+  })
+
+  const heartbeat = (activeOrigin) => store.recordChromeExtensionHeartbeat({
+    extensionId: 'managed-extension',
+    version: '0.1.0',
+    mode: 'homework',
+    activeOrigin,
+    decision: 'allowed',
+    policyVersion: '2',
+  })
+
+  heartbeat('https://clever.example')
+  assert.equal(store.loadState().activeTimer.phaseId, 'clever-login')
+  heartbeat('https://level.example.evil.test')
+  assert.equal(store.loadState().activeTimer.phaseId, 'clever-login')
+  heartbeat('https://level.example')
+  assert.equal(store.loadState().activeTimer.phaseId, 'level-learning')
+  clock.advance(5_000)
+  heartbeat('https://level.example')
+  assert.equal(store.loadState().activeTimer.status, 'completed')
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'session_phase_advanced').length,
+    1,
+  )
+  assert.equal(session.phaseId, 'clever-login')
+  store.close()
+})
+
+test('parent activity configuration persists with readiness and an audit event', () => {
+  const store = createStore(':memory:')
+  const saved = store.setActivityConfiguration({
+    ninjaDojo: { launchUrl: 'https://hub.example.edu/grade-5', allowedOrigins: [] },
+    duChinese: { readingUrl: '', flashcardUrl: '', allowedOrigins: [] },
+    levelChinese: { cleverUrl: '', learningUrl: '', allowedOrigins: [] },
+  })
+
+  assert.equal(saved.ninjaDojo.ready, true)
+  assert.equal(store.loadState().activityConfiguration.ninjaDojo.launchUrl, 'https://hub.example.edu/grade-5')
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'activity_configuration_updated').length,
+    1,
+  )
+  store.close()
 })
 
 test('completion records identify self reports without duplicating repeated requests', () => {

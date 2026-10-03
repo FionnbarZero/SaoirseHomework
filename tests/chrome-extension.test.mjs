@@ -5,15 +5,16 @@ import {
   buildDynamicRules,
   isAllowedUrl,
   normalizeDomains,
+  normalizeOrigins,
   originForUrl,
 } from '../chrome/extension/rules.js'
 
-test('Chrome navigation rules allow approved domains over the catch-all redirect', () => {
-  const rules = buildDynamicRules(true, ['127.0.0.1', 'youtube.com'])
+test('Chrome navigation rules allow approved domains and origins over the catch-all redirect', () => {
+  const rules = buildDynamicRules(true, ['127.0.0.1', 'youtube.com'], ['https://school.example:8443'])
   assert.equal(rules[0].id, MANAGED_RULE_START)
   assert.equal(rules[0].action.type, 'redirect')
   assert.equal(rules[0].priority, 1)
-  assert.deepEqual(rules.slice(1).map((rule) => rule.action.type), ['allow', 'allow'])
+  assert.deepEqual(rules.slice(1).map((rule) => rule.action.type), ['allow', 'allow', 'allow'])
   assert.equal(rules.every((rule, index) => index === 0 || rule.priority === 2), true)
 })
 
@@ -26,6 +27,15 @@ test('domain matching rejects lookalikes while allowing subdomains', () => {
   assert.equal(isAllowedUrl('https://www.youtube.com/watch?v=1', ['youtube.com']), true)
   assert.equal(isAllowedUrl('https://youtube.com.evil.example/', ['youtube.com']), false)
   assert.equal(isAllowedUrl('https://example.com/', ['youtube.com']), false)
+})
+
+test('exact origins reject alternate schemes, ports, and subdomains', () => {
+  const origins = ['https://school.example:8443']
+  assert.equal(isAllowedUrl('https://school.example:8443/lesson', [], origins), true)
+  assert.equal(isAllowedUrl('https://school.example/lesson', [], origins), false)
+  assert.equal(isAllowedUrl('http://school.example:8443/lesson', [], origins), false)
+  assert.equal(isAllowedUrl('https://child.school.example:8443/lesson', [], origins), false)
+  assert.deepEqual(normalizeOrigins(['https://school.example:8443/path']), origins)
 })
 
 test('policy domains are normalized, deduplicated, and bounded', () => {

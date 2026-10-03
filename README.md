@@ -49,6 +49,9 @@ npm run build
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
 - Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock
+- Parent-reviewed URL and exact-origin configuration for Ninja Dojo, Du Chinese, and Level Chinese
+- Managed-Chrome activity phases: 17-minute Ninja, 13+7-minute Du Chinese, and Clever-gated Level Learning
+- Dynamic activity allowlists, five-second origin heartbeats, fail-closed launch gates, and restart-safe phase recovery
 - Week-scoped daily and practice ledgers with archived rollover history
 - Stale-week and clock-rollback protection so a week cannot reset twice
 - Automatic migration from browser storage on the first service run
@@ -69,6 +72,8 @@ The UI labels the following honestly as pending because they require external in
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
 
 The session service verifies time reported by the browser, but the browser is not yet an enforcement boundary. The future macOS guardian and managed Chrome extension will supply approved-window, approved-origin, and application-blocking signals.
+
+Configure tracked school activities from the Parent screen. Launch URLs must use HTTPS (loopback HTTP is accepted for local testing), and any login or redirect origins must be entered explicitly. A configured external activity still cannot start until the managed Chrome extension is connected.
 
 To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.
 

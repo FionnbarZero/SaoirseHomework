@@ -41,6 +41,7 @@ import {
   optionalSessionKey,
   progressForDay,
   type ActiveTimer,
+  type ActivityConfiguration,
   type AppState,
   type DayName,
   type Draft,
@@ -56,6 +57,7 @@ import {
   loadStateFromService,
   recordAudit,
   runMockGoogleDelivery,
+  saveActivityConfiguration,
   saveStateToService,
   setDailyCompletion,
   startControlledSession,
@@ -77,11 +79,17 @@ function loadState(): AppState {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return defaultState
     const parsed = JSON.parse(saved) as Partial<AppState>
+    const savedConfiguration = parsed.activityConfiguration
     return {
       ...defaultState,
       ...parsed,
       requiredByDay: { ...defaultState.requiredByDay, ...parsed.requiredByDay },
       freeModeByDay: { ...defaultState.freeModeByDay, ...parsed.freeModeByDay },
+      activityConfiguration: {
+        ninjaDojo: { ...defaultState.activityConfiguration.ninjaDojo, ...savedConfiguration?.ninjaDojo },
+        duChinese: { ...defaultState.activityConfiguration.duChinese, ...savedConfiguration?.duChinese },
+        levelChinese: { ...defaultState.activityConfiguration.levelChinese, ...savedConfiguration?.levelChinese },
+      },
     }
   } catch {
     return defaultState
@@ -642,6 +650,9 @@ function DayView({
         {REQUIRED_ACTIVITIES.map((activity) => {
           const done = completed.includes(activity.id)
           const self = activity.method === 'self'
+          const needsExternalSetup = activity.id === 'ninja-dojo'
+          const externalReady = !needsExternalSetup || state.activityConfiguration.ninjaDojo.ready
+          const canStartTimer = externalReady
           const gamePending = activity.id === 'reading-strategies' &&
             state.activeGameSession?.day === day &&
             state.activeGameSession.status === 'pending'
@@ -664,10 +675,10 @@ function DayView({
                 </button>
               )}
               {activity.method === 'timer' && !done && (
-                <button className="row-button" onClick={() => startTimer({
+                <button className="row-button" disabled={!canStartTimer} title={!externalReady ? 'Parent setup is required' : needsExternalSetup && !state.chromeConnected ? 'Managed Chrome is checked when the session starts' : undefined} onClick={() => startTimer({
                   kind: 'required', activityId: activity.id, sessionKey: day, label: activity.title,
                   totalSeconds: (activity.minutes ?? 0) * 60, remainingSeconds: (activity.minutes ?? 0) * 60, running: true,
-                })}>Start <Play size={15} fill="currentColor" /></button>
+                })}>{!externalReady ? 'Setup needed' : 'Start'} {canStartTimer && <Play size={15} fill="currentColor" />}</button>
               )}
               {activity.method === 'timer' && done && <span className="verified-check"><Check size={20} /></span>}
               {activity.method === 'verified' && !done && (
@@ -785,6 +796,12 @@ function OptionalView({
       <div className="practice-grid">
         {OPTIONAL_ACTIVITIES.map((activity) => {
           const completedCount = Array.from({ length: activity.sessions }).filter((_, index) => state.optionalCompleted.includes(optionalSessionKey(activity.id, index))).length
+          const configuration = activity.id === 'du-chinese'
+            ? state.activityConfiguration.duChinese
+            : activity.id === 'level-chinese'
+              ? state.activityConfiguration.levelChinese
+              : null
+          const canStart = !configuration || configuration.ready
           return (
             <article className={`practice-card practice-${activity.id}`} key={activity.id}>
               <div className="practice-top"><span className="large-activity-icon">{activity.icon}</span><span className="duration"><Clock3 size={14} /> {activity.minutes} min</span></div>
@@ -795,7 +812,7 @@ function OptionalView({
                   const key = optionalSessionKey(activity.id, index)
                   const done = state.optionalCompleted.includes(key)
                   return (
-                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done} onClick={() => startTimer({
+                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done || !canStart} title={!configuration?.ready ? 'Parent setup is required' : configuration && !state.chromeConnected ? 'Managed Chrome is checked when the session starts' : undefined} onClick={() => startTimer({
                       kind: 'optional', activityId: activity.id, sessionKey: key,
                       label: `${activity.title} · Session ${index + 1}`,
                       totalSeconds: activity.minutes * 60, remainingSeconds: activity.minutes * 60, running: true,
@@ -805,7 +822,7 @@ function OptionalView({
                   )
                 })}
               </div>
-              <small className="card-foot">{completedCount === activity.sessions ? 'All sessions banked' : `${activity.sessions - completedCount} left this week`}</small>
+              <small className="card-foot">{completedCount === activity.sessions ? 'All sessions banked' : !configuration ? `${activity.sessions - completedCount} left this week` : !configuration.ready ? 'Parent setup required' : !state.chromeConnected ? 'Managed Chrome required at launch' : `${activity.sessions - completedCount} left this week`}</small>
             </article>
           )
         })}
@@ -923,38 +940,65 @@ function SessionView({
   complete: () => void
   cancel: () => void
 }) {
-  const [displayRemaining, setDisplayRemaining] = useState(timer.remainingSeconds)
+  const serverRemaining = timer.phaseRemainingSeconds ?? timer.remainingSeconds
+  const [displayRemaining, setDisplayRemaining] = useState(serverRemaining)
   useEffect(() => {
-    setDisplayRemaining(timer.remainingSeconds)
-    if (!timer.running || timer.status !== 'active' || timer.remainingSeconds <= 0) return
+    setDisplayRemaining(serverRemaining)
+    if (!timer.running || timer.status !== 'active' || serverRemaining <= 0 || timer.waitingForVerification) return
     const interval = window.setInterval(() => {
       setDisplayRemaining((current) => Math.max(0, current - 1))
     }, 1_000)
     return () => window.clearInterval(interval)
-  }, [timer.remainingSeconds, timer.running, timer.status])
+  }, [serverRemaining, timer.running, timer.status, timer.waitingForVerification, timer.phaseIndex])
 
-  const elapsed = timer.totalSeconds - displayRemaining
-  const percent = Math.min(100, (elapsed / timer.totalSeconds) * 100)
+  const displayTotal = timer.phaseTotalSeconds ?? timer.totalSeconds
+  const elapsed = Math.max(0, displayTotal - displayRemaining)
+  const percent = displayTotal > 0 ? Math.min(100, (elapsed / displayTotal) * 100) : 0
   const done = timer.status === 'completed'
+  const managed = timer.managedChromeRequired === true
+  const statusLabel = done
+    ? 'SESSION COMPLETE'
+    : timer.waitingForVerification
+      ? 'WAITING FOR CLEVER LOGIN'
+      : timer.running
+        ? 'ACTIVE FOCUS TIME'
+        : managed
+          ? 'APPROVED PAGE REQUIRED'
+          : 'SESSION PAUSED'
+  const sessionCopy = done
+    ? 'You did it. Your progress is ready to save.'
+    : timer.waitingForVerification
+      ? 'Sign in through Clever. The timer begins only after managed Chrome verifies Level Learning.'
+      : managed
+        ? 'Only active time on a parent-approved origin counts. Leaving that page pauses credit automatically.'
+        : timer.kind === 'reward'
+          ? 'The playback connection will be added with the managed Chrome guardian.'
+          : 'Keep this approved activity in front. Time pauses whenever you leave.'
   return (
     <section className="session-page">
       <div className="session-card">
-        <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {done ? 'SESSION COMPLETE' : timer.running ? 'ACTIVE FOCUS TIME' : 'SESSION PAUSED'}</div>
+        <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {statusLabel}</div>
         <div className="timer-ring" style={{ '--progress': `${percent * 3.6}deg` } as React.CSSProperties}>
-          <div><strong>{formatTimer(displayRemaining)}</strong><small>{displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
+          <div><strong>{timer.waitingForVerification ? '—:—' : formatTimer(displayRemaining)}</strong><small>{timer.waitingForVerification ? 'login gate' : displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
         </div>
         <p className="eyebrow">{timer.kind === 'reward' ? 'ENJOY YOUR REWARD' : 'CURRENT ACTIVITY'}</p>
         <h2>{timer.label}</h2>
-        <p className="session-copy">{done ? 'You did it. Your progress is ready to save.' : timer.kind === 'reward' ? 'The playback connection will be added with the managed Chrome guardian.' : 'Keep this approved activity in front. Time pauses whenever you leave.'}</p>
+        {timer.phaseCount && timer.phaseCount > 1 && <div className="phase-pill">STEP {(timer.phaseIndex ?? 0) + 1} OF {timer.phaseCount} · {timer.phaseLabel}</div>}
+        <p className="session-copy">{sessionCopy}</p>
+        {!done && timer.launchUrl && (
+          <a className="row-button session-launch" href={timer.launchUrl} target="_blank" rel="noreferrer">
+            <Play size={16} fill="currentColor" /> Open {timer.phaseLabel ?? timer.label}
+          </a>
+        )}
         {!done ? (
           <div className="session-actions">
-            <button className="secondary-button" onClick={toggle}>{timer.running ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}{timer.running ? 'Pause' : 'Resume'}</button>
+            {!managed && <button className="secondary-button" onClick={toggle}>{timer.running ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}{timer.running ? 'Pause' : 'Resume'}</button>}
             <button className="text-button danger" onClick={cancel}><X size={17} /> End session</button>
           </div>
         ) : (
           <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> Server verified · checks focus every five seconds</div>
+        <div className="focus-note"><ShieldCheck size={17} /> {managed ? 'Managed Chrome verifies the approved origin every five seconds' : 'Server verified · checks focus every five seconds'}</div>
       </div>
     </section>
   )
@@ -983,6 +1027,30 @@ function ParentView({
   )
   const [googleBusy, setGoogleBusy] = useState(false)
   const [googleMessage, setGoogleMessage] = useState('')
+  const [activityConfig, setActivityConfig] = useState<ActivityConfiguration>(() => structuredClone(state.activityConfiguration))
+  const [configurationBusy, setConfigurationBusy] = useState(false)
+  const [configurationMessage, setConfigurationMessage] = useState('')
+
+  const parseOrigins = (value: string) => value.split(/[\n,]+/).map((origin) => origin.trim()).filter(Boolean)
+
+  const saveConfiguration = async () => {
+    if (serviceStatus !== 'online') {
+      setConfigurationMessage('Reconnect the local service before saving activity URLs.')
+      return
+    }
+    setConfigurationBusy(true)
+    setConfigurationMessage('')
+    try {
+      const response = await saveActivityConfiguration(activityConfig)
+      setState(response.state)
+      setActivityConfig(structuredClone(response.state.activityConfiguration))
+      setConfigurationMessage('Activity URLs and exact approved origins were saved locally.')
+    } catch (error) {
+      setConfigurationMessage(error instanceof Error ? error.message : 'The activity configuration could not be saved.')
+    } finally {
+      setConfigurationBusy(false)
+    }
+  }
 
   const connectGoogleProof = async () => {
     if (serviceStatus !== 'online') {
@@ -1085,7 +1153,12 @@ function ParentView({
   const reset = () => {
     if (!window.confirm('Reset all preview progress on this Mac? This cannot be undone.')) return
     void recordAudit('parent_preview_reset', { previousDrafts: state.drafts.length }).catch(() => {})
-    setState({ ...defaultState, entered: true })
+    setState({
+      ...structuredClone(defaultState),
+      entered: true,
+      activityConfiguration: state.activityConfiguration,
+      weekContext: state.weekContext,
+    })
   }
   return (
     <section className="page parent-page">
@@ -1119,6 +1192,39 @@ function ParentView({
           <div className="connection-row"><span className="dot good" /><div><strong>Reading game contract</strong><small>Local simulator and verified completion are ready</small></div><b>Test ready</b></div>
           <button className="secondary-button full-button" onClick={addCredit}><Plus size={17} /> Add a 5-minute credit</button>
         </div>
+      </div>
+      <div className="parent-panel activity-configuration-panel">
+        <div className="panel-heading">
+          <div><h3>Controlled activity setup</h3><p>Enter only parent-reviewed school URLs. Missing or invalid configuration fails closed.</p></div>
+          <span className="mock-badge">LOCAL CONFIGURATION</span>
+        </div>
+        <div className="activity-config-grid">
+          <fieldset>
+            <legend><span>Ninja Dojo</span><b className={activityConfig.ninjaDojo.ready ? 'ready' : ''}>{activityConfig.ninjaDojo.ready ? 'Ready' : 'Needs URL'}</b></legend>
+            <label><span>5th Grade Learning Hub URL</span><input type="url" placeholder="https://…" value={activityConfig.ninjaDojo.launchUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, ninjaDojo: { ...current.ninjaDojo, launchUrl: event.target.value, ready: false } }))} /></label>
+            <label><span>Additional approved origins</span><textarea rows={3} placeholder="https://login.example.org" value={activityConfig.ninjaDojo.redirectOrigins.join('\n')} onChange={(event) => setActivityConfig((current) => ({ ...current, ninjaDojo: { ...current.ninjaDojo, redirectOrigins: parseOrigins(event.target.value), ready: false } }))} /></label>
+            <small>17 active minutes on an approved origin.</small>
+          </fieldset>
+          <fieldset>
+            <legend><span>Du Chinese</span><b className={activityConfig.duChinese.ready ? 'ready' : ''}>{activityConfig.duChinese.ready ? 'Ready' : 'Needs URLs'}</b></legend>
+            <label><span>Reading URL</span><input type="url" placeholder="https://…" value={activityConfig.duChinese.readingUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, duChinese: { ...current.duChinese, readingUrl: event.target.value, ready: false } }))} /></label>
+            <label><span>Flashcard URL</span><input type="url" placeholder="https://…" value={activityConfig.duChinese.flashcardUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, duChinese: { ...current.duChinese, flashcardUrl: event.target.value, ready: false } }))} /></label>
+            <label><span>Additional approved origins</span><textarea rows={3} placeholder="https://login.example.org" value={activityConfig.duChinese.redirectOrigins.join('\n')} onChange={(event) => setActivityConfig((current) => ({ ...current, duChinese: { ...current.duChinese, redirectOrigins: parseOrigins(event.target.value), ready: false } }))} /></label>
+            <small>13 minutes reading, then 7 minutes of flashcards.</small>
+          </fieldset>
+          <fieldset>
+            <legend><span>Level Chinese</span><b className={activityConfig.levelChinese.ready ? 'ready' : ''}>{activityConfig.levelChinese.ready ? 'Ready' : 'Needs URLs'}</b></legend>
+            <label><span>Clever login URL</span><input type="url" placeholder="https://…" value={activityConfig.levelChinese.cleverUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, levelChinese: { ...current.levelChinese, cleverUrl: event.target.value, ready: false } }))} /></label>
+            <label><span>Level Learning URL</span><input type="url" placeholder="https://…" value={activityConfig.levelChinese.learningUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, levelChinese: { ...current.levelChinese, learningUrl: event.target.value, ready: false } }))} /></label>
+            <label><span>Additional approved origins</span><textarea rows={3} placeholder="https://district-login.example.org" value={activityConfig.levelChinese.redirectOrigins.join('\n')} onChange={(event) => setActivityConfig((current) => ({ ...current, levelChinese: { ...current.levelChinese, redirectOrigins: parseOrigins(event.target.value), ready: false } }))} /></label>
+            <small>The timer waits for managed Chrome to verify Level Learning.</small>
+          </fieldset>
+        </div>
+        <div className="configuration-actions">
+          <p>Launch origins are added automatically. Extra origins are for reviewed login and redirect steps only.</p>
+          <button className="primary-button" onClick={saveConfiguration} disabled={configurationBusy || serviceStatus !== 'online'}><ShieldCheck size={16} /> {configurationBusy ? 'Saving…' : 'Save activity setup'}</button>
+        </div>
+        {configurationMessage && <p className="google-proof-message configuration-message" role="status">{configurationMessage}</p>}
       </div>
       <div className="parent-panel google-proof-panel">
         <div className="panel-heading">

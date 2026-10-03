@@ -71,6 +71,40 @@ export type ActiveTimer = {
   startedAt?: string
   lastHeartbeatAt?: string | null
   serverControlled?: boolean
+  phaseId?: string
+  phaseLabel?: string
+  phaseIndex?: number
+  phaseCount?: number
+  phaseTotalSeconds?: number
+  phaseRemainingSeconds?: number
+  launchUrl?: string
+  allowedOrigins?: string[]
+  managedChromeRequired?: boolean
+  waitingForVerification?: boolean
+  navigateOnPhaseStart?: boolean
+}
+
+export type ActivityConfiguration = {
+  ninjaDojo: {
+    launchUrl: string
+    redirectOrigins: string[]
+    allowedOrigins: string[]
+    ready: boolean
+  }
+  duChinese: {
+    readingUrl: string
+    flashcardUrl: string
+    redirectOrigins: string[]
+    allowedOrigins: string[]
+    ready: boolean
+  }
+  levelChinese: {
+    cleverUrl: string
+    learningUrl: string
+    redirectOrigins: string[]
+    allowedOrigins: string[]
+    ready: boolean
+  }
 }
 
 export type CompletionRecord = {
@@ -132,6 +166,7 @@ export type AppState = {
   completionRecords: CompletionRecord[]
   guardianConnected: boolean
   chromeConnected: boolean
+  activityConfiguration: ActivityConfiguration
   googleProof: GoogleProofState
   weekContext: WeekContext
 }
@@ -282,6 +317,11 @@ export const defaultState: AppState = {
   completionRecords: [],
   guardianConnected: false,
   chromeConnected: false,
+  activityConfiguration: {
+    ninjaDojo: { launchUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    duChinese: { readingUrl: '', flashcardUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    levelChinese: { cleverUrl: '', learningUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+  },
   googleProof: {
     mode: 'mock',
     connected: false,

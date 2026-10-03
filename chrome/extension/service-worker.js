@@ -30,7 +30,11 @@ async function setBadge(mode, healthy) {
 }
 
 async function postHeartbeat(status, tab) {
-  const allowed = !status.policy.restrictNavigation || isAllowedUrl(tab?.url ?? '', status.policy.allowedDomains)
+  const allowed = !status.policy.restrictNavigation || isAllowedUrl(
+    tab?.url ?? '',
+    status.policy.allowedDomains,
+    status.policy.allowedOrigins,
+  )
   const decision = tab?.url ? (allowed ? 'allowed' : 'blocked') : 'unavailable'
   await fetch(`${SERVICE_BASE}/api/chrome/heartbeat`, {
     method: 'POST',
@@ -49,7 +53,7 @@ async function postHeartbeat(status, tab) {
 
 async function reportBlockedNavigation(url) {
   const saved = (await chrome.storage.local.get(STATUS_KEY))[STATUS_KEY]
-  if (!saved?.homeworkMode || isAllowedUrl(url, saved.allowedDomains)) return
+  if (!saved?.homeworkMode || isAllowedUrl(url, saved.allowedDomains, saved.allowedOrigins)) return
   try {
     await fetch(`${SERVICE_BASE}/api/chrome/heartbeat`, {
       method: 'POST',
@@ -73,9 +77,25 @@ async function syncPolicy(trigger = 'scheduled') {
     const response = await fetch(`${SERVICE_BASE}/api/chrome/status`, { cache: 'no-store' })
     if (!response.ok) throw new Error(`Service returned ${response.status}`)
     const status = await response.json()
-    const rules = buildDynamicRules(status.policy.restrictNavigation, status.policy.allowedDomains)
+    const rules = buildDynamicRules(
+      status.policy.restrictNavigation,
+      status.policy.allowedDomains,
+      status.policy.allowedOrigins,
+    )
     await replaceManagedRules(rules)
-    const tab = await activeTab()
+    const previous = (await chrome.storage.local.get(STATUS_KEY))[STATUS_KEY] ?? {}
+    let tab = await activeTab()
+    const shouldNavigatePhase = Boolean(
+      status.activeSession?.navigateOnPhaseStart &&
+      status.activeSession?.launchUrl &&
+      previous.activeSessionPhaseToken &&
+      previous.activeSessionPhaseToken !== status.activeSession.phaseToken &&
+      tab?.id,
+    )
+    if (shouldNavigatePhase) {
+      await chrome.tabs.update(tab.id, { url: status.activeSession.launchUrl })
+      tab = { ...tab, url: status.activeSession.launchUrl }
+    }
     const decision = await postHeartbeat(status, tab)
     const saved = {
       connected: true,
@@ -84,7 +104,9 @@ async function syncPolicy(trigger = 'scheduled') {
       homeworkMode: status.homeworkMode,
       policyVersion: status.policy.version,
       allowedDomains: status.policy.allowedDomains,
+      allowedOrigins: status.policy.allowedOrigins,
       activeOrigin: originForUrl(tab?.url),
+      activeSessionPhaseToken: status.activeSession?.phaseToken ?? null,
       decision,
       lastCheckedAt: new Date().toISOString(),
       error: null,
@@ -126,6 +148,7 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
   if (changeInfo.url || changeInfo.status === 'complete') void syncPolicy('tab-updated')
 })
 chrome.windows.onFocusChanged.addListener(() => { void syncPolicy('window-focus') })
+setInterval(() => { void syncPolicy('five-second-heartbeat') }, 5_000)
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId === 0) void reportBlockedNavigation(details.url)
 })

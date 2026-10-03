@@ -34,6 +34,7 @@ import {
   dayIsComplete,
   defaultState,
   formatTimer,
+  getFridayFunSummary,
   getToday,
   getWeekLabel,
   inspectDraft,
@@ -80,6 +81,7 @@ function loadState(): AppState {
       ...defaultState,
       ...parsed,
       requiredByDay: { ...defaultState.requiredByDay, ...parsed.requiredByDay },
+      freeModeByDay: { ...defaultState.freeModeByDay, ...parsed.freeModeByDay },
     }
   } catch {
     return defaultState
@@ -424,6 +426,8 @@ function App() {
               startTimer={startTimer}
               startReadingGame={startReadingGame}
               openOptions={() => setView('options')}
+              openPath={() => setView('path')}
+              openRewards={() => setView('rewards')}
             />
           )}
           {view === 'options' && (
@@ -566,7 +570,7 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
                   {complete ? <Check size={24} strokeWidth={3} /> : day === 'Friday' ? <Star size={24} fill="currentColor" /> : index + 1}
                 </span>
                 <span className="day-copy">
-                  <span className="day-title-row"><strong>{day}</strong>{isToday && <b>TODAY</b>}</span>
+                  <span className="day-title-row"><strong>{day === 'Friday' ? 'Friday Fun!' : day}</strong>{isToday && <b>TODAY</b>}</span>
                   <small>{complete ? 'Quest complete!' : `${progress.percent}% complete · ${progress.optional}/${progress.optionalTarget} practice`}</small>
                   <span className="mini-progress"><span style={{ width: `${progress.percent}%` }} /></span>
                 </span>
@@ -597,6 +601,8 @@ function DayView({
   startTimer,
   startReadingGame,
   openOptions,
+  openPath,
+  openRewards,
 }: {
   state: AppState
   day: DayName
@@ -605,10 +611,15 @@ function DayView({
   startTimer: (timer: ActiveTimer) => void
   startReadingGame: (day: DayName) => void
   openOptions: () => void
+  openPath: () => void
+  openRewards: () => void
 }) {
   const completed = state.requiredByDay[day]
   const progress = progressForDay(state, day)
   const free = dayIsComplete(state, day)
+  if (day === 'Friday' && free) {
+    return <FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} />
+  }
   return (
     <section className="page">
       <div className="day-tabs" role="tablist" aria-label="Choose a weekday">
@@ -677,6 +688,68 @@ function DayView({
         <span className="banner-progress"><span style={{ width: `${(state.optionalCompleted.length / 13) * 100}%` }} /></span>
         <ChevronRight />
       </button>
+    </section>
+  )
+}
+
+function FridayFunView({
+  state,
+  setDay,
+  openPath,
+  openRewards,
+}: {
+  state: AppState
+  setDay: (day: DayName) => void
+  openPath: () => void
+  openRewards: () => void
+}) {
+  const summary = getFridayFunSummary(state)
+  return (
+    <section className="page friday-fun-page">
+      <div className="day-tabs" role="tablist" aria-label="Choose a weekday">
+        {DAYS.map((item) => (
+          <button key={item} className={item === 'Friday' ? 'active' : ''} onClick={() => setDay(item)}>
+            {item.slice(0, 3)}
+          </button>
+        ))}
+      </div>
+
+      <div className="friday-hero">
+        <div className="friday-sparkles" aria-hidden="true"><span>✦</span><span>★</span><span>✦</span></div>
+        <div className="friday-trophy"><Trophy size={58} strokeWidth={1.8} /></div>
+        <p className="eyebrow">FRIDAY FUN!</p>
+        <h2>You finished the quest.</h2>
+        <p>Friday’s work is complete, all 13 practice sessions are banked, and Free Mode is unlocked.</p>
+        <div className="friday-actions">
+          <button className="secondary-button" onClick={openPath}><ArrowLeft size={17} /> See the week</button>
+          <button className="primary-button" onClick={openRewards}>View saved rewards <Gift size={17} /></button>
+        </div>
+      </div>
+
+      <div className="friday-summary" aria-label="Weekly achievement summary">
+        <article><span className="summary-icon"><Check size={23} /></span><small>DAILY ACTIVITIES</small><strong>{summary.requiredCompleted}<em>/{summary.requiredTotal}</em></strong><p>completed this week</p></article>
+        <article><span className="summary-icon"><Music2 size={23} /></span><small>PRACTICE BANK</small><strong>{summary.optionalCompleted}<em>/{summary.optionalTotal}</em></strong><p>sessions completed</p></article>
+        <article><span className="summary-icon"><BookOpen size={23} /></span><small>WRITING</small><strong>{summary.writingDrafts}</strong><p>{summary.writingWords} {summary.writingWords === 1 ? 'word' : 'words'} saved</p></article>
+        <article><span className="summary-icon"><Gift size={23} /></span><small>REWARDS EARNED</small><strong>{summary.rewardsEarned}</strong><p>{summary.rewardsAvailable} still available</p></article>
+      </div>
+
+      <div className="friday-days">
+        <div className="section-label"><span>YOUR WEEK AT A GLANCE</span><span>{summary.days.filter((day) => day.questComplete).length}/5 QUESTS</span></div>
+        <div className="friday-day-grid">
+          {summary.days.map((day) => (
+            <button key={day.day} className={day.questComplete ? 'complete' : ''} onClick={() => setDay(day.day)}>
+              <span>{day.questComplete ? <Check size={18} strokeWidth={3} /> : day.day.slice(0, 1)}</span>
+              <strong>{day.day}</strong>
+              <small>{day.completed}/{day.total} daily</small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="free-mode-note">
+        <Sparkles size={22} />
+        <div><strong>Free Mode is ready.</strong><p>This celebration records the unlock only. It does not add screen time or create extra reward credits.</p></div>
+      </div>
     </section>
   )
 }

@@ -48,6 +48,7 @@ npm run build
 - Duplicate-safe local document assembly, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
+- Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock
 - Week-scoped daily and practice ledgers with archived rollover history
 - Stale-week and clock-rollback protection so a week cannot reset twice
 - Automatic migration from browser storage on the first service run

@@ -67,7 +67,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 7)
+    assert.equal(reopened.info().schemaVersion, 8)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -687,6 +687,73 @@ test('a controlled session completed after rollover stays with the week where it
       SELECT count(*) AS count FROM weekly_optional_completion
       WHERE week_id = ? AND session_key = ?
     `).get('2026-09-28', 'voena:0').count,
+    1,
+  )
+  store.close()
+})
+
+test('Friday Free Mode unlocks once, relocks after a correction, and resets on rollover', () => {
+  const clock = controlledClock('2026-10-09T16:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  const required = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
+  const optional = [
+    'voena:0', 'voena:1', 'voena:2',
+    'drums:0', 'drums:1', 'drums:2',
+    'band:0', 'band:1', 'band:2',
+    'level-chinese:0', 'level-chinese:1',
+    'du-chinese:0', 'du-chinese:1',
+  ]
+
+  for (const activityId of required) {
+    store.setDailyCompletion({
+      day: 'Friday',
+      activityId,
+      completed: true,
+      method: 'parent-override',
+    })
+  }
+  const locked = store.loadState()
+  assert.equal(locked.freeModeByDay.Friday, undefined)
+
+  locked.optionalCompleted = optional
+  const unlocked = store.saveState(locked)
+  assert.match(unlocked.freeModeByDay.Friday, /^2026-10-09T/)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'free_mode_unlocked').length,
+    1,
+  )
+  store.loadState()
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'free_mode_unlocked').length,
+    1,
+  )
+
+  const relocked = store.setDailyCompletion({
+    day: 'Friday',
+    activityId: 'math',
+    completed: false,
+    method: 'parent-override',
+  })
+  assert.equal(relocked.freeModeByDay.Friday, undefined)
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'free_mode_relocked').length,
+    1,
+  )
+
+  store.setDailyCompletion({
+    day: 'Friday',
+    activityId: 'math',
+    completed: true,
+    method: 'parent-override',
+  })
+  assert.ok(store.loadState().freeModeByDay.Friday)
+
+  clock.setWall('2026-10-11T11:00:00.000Z')
+  const nextWeek = store.loadState()
+  assert.deepEqual(nextWeek.freeModeByDay, {})
+  assert.equal(
+    store.db.prepare('SELECT count(*) AS count FROM free_mode_unlock WHERE week_id = ?')
+      .get('2026-10-05').count,
     1,
   )
   store.close()

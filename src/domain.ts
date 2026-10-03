@@ -124,6 +124,7 @@ export type AppState = {
   entered: boolean
   requiredByDay: Record<DayName, string[]>
   optionalCompleted: string[]
+  freeModeByDay: Partial<Record<DayName, string>>
   rewardCredits: RewardCredit[]
   drafts: Draft[]
   activeTimer: ActiveTimer | null
@@ -273,6 +274,7 @@ export const defaultState: AppState = {
     Friday: [],
   },
   optionalCompleted: [],
+  freeModeByDay: {},
   rewardCredits: [],
   drafts: [],
   activeTimer: null,
@@ -321,6 +323,38 @@ export function progressForDay(state: AppState, day: DayName) {
     optional,
     optionalTarget: OPTIONAL_TARGETS[day],
     percent: Math.round(((required + optional) / (requiredTotal + OPTIONAL_TARGETS[day])) * 100),
+  }
+}
+
+export function getFridayFunSummary(state: AppState) {
+  const requiredActivities = activeRequiredActivities()
+  const days = DAYS.map((day) => {
+    const completed = completedRequiredCount(state, day)
+    return {
+      day,
+      completed,
+      total: requiredActivities.length,
+      questComplete: dayIsComplete(state, day),
+    }
+  })
+  const writingDrafts = state.drafts.filter((draft) => draft.body.trim().length > 0)
+  const writingWords = writingDrafts.reduce((total, draft) => {
+    const words = draft.body.trim().match(/\S+/g)?.length ?? 0
+    return total + words
+  }, 0)
+
+  return {
+    unlocked: dayIsComplete(state, 'Friday'),
+    unlockedAt: state.freeModeByDay.Friday ?? null,
+    days,
+    requiredCompleted: days.reduce((total, day) => total + day.completed, 0),
+    requiredTotal: requiredActivities.length * DAYS.length,
+    optionalCompleted: Math.min(state.optionalCompleted.length, OPTIONAL_TARGETS.Friday),
+    optionalTotal: OPTIONAL_TARGETS.Friday,
+    writingDrafts: writingDrafts.length,
+    writingWords,
+    rewardsEarned: Math.min(state.optionalCompleted.length, OPTIONAL_TARGETS.Friday),
+    rewardsAvailable: state.rewardCredits.length,
   }
 }
 

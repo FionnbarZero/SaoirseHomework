@@ -37,8 +37,6 @@ const optionalActivities = new Map([
   ['level-chinese', { label: 'Level Chinese', sessions: 2, targetSeconds: 20 * 60 }],
   ['du-chinese', { label: 'Du Chinese', sessions: 2, targetSeconds: 20 * 60 }],
 ])
-const requiredActivityIds = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
-const optionalTargets = { Monday: 3, Tuesday: 6, Wednesday: 9, Thursday: 11, Friday: 13 }
 const guardianPolicy = {
   version: '1',
   blockedBundleIds: [
@@ -187,14 +185,9 @@ function sessionResponse() {
 function learningModeState() {
   const state = store.loadState()
   const day = state.weekContext.localDay
-  const dailyCompleted = state.requiredByDay[day] ?? []
-  const dailyReady = requiredActivityIds.every((activityId) => dailyCompleted.includes(activityId))
-  const optionalReady = day in optionalTargets
-    ? state.optionalCompleted.length >= optionalTargets[day]
-    : false
   const mode = !state.entered
     ? 'inactive'
-    : dailyReady && optionalReady
+    : Boolean(state.freeModeByDay[day])
       ? 'free'
       : 'homework'
   return { state, mode, homeworkMode: mode === 'homework', day }

@@ -6,10 +6,12 @@ import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 7
+const SCHEMA_VERSION = 8
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
+const REQUIRED_ACTIVITY_IDS = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
+const OPTIONAL_TARGETS = { Monday: 3, Tuesday: 6, Wednesday: 9, Thursday: 11, Friday: 13 }
 const DEFAULT_TIME_ZONE = 'America/Los_Angeles'
 
 function emptyWeekContext() {
@@ -28,6 +30,7 @@ function emptyState(weekContext = emptyWeekContext()) {
     entered: false,
     requiredByDay: Object.fromEntries(DAYS.map((day) => [day, []])),
     optionalCompleted: [],
+    freeModeByDay: {},
     rewardCredits: [],
     drafts: [],
     activeTimer: null,
@@ -193,6 +196,13 @@ export function createStore(filename, options = {}) {
     CREATE INDEX IF NOT EXISTS weekly_optional_completion_date
       ON weekly_optional_completion (week_id, completed_at);
 
+    CREATE TABLE IF NOT EXISTS free_mode_unlock (
+      week_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      unlocked_at TEXT NOT NULL,
+      PRIMARY KEY (week_id, day)
+    );
+
     CREATE TABLE IF NOT EXISTS reward_credit (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
@@ -357,7 +367,7 @@ export function createStore(filename, options = {}) {
     ON CONFLICT(week_id) DO UPDATE SET archived = 0, updated_at = excluded.updated_at
   `)
   const insertRequired = db.prepare(`
-    INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+    INSERT OR IGNORE INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
     VALUES (?, ?, ?, ?, ?)
   `)
   const insertOptional = db.prepare(`
@@ -591,8 +601,44 @@ export function createStore(filename, options = {}) {
     }))
   }
 
+  function reconcileFreeMode(weekId, now = asIso(wallNow())) {
+    const optionalCompleted = Number(db.prepare(`
+      SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?
+    `).get(weekId).count)
+
+    for (const day of DAYS) {
+      const completed = new Set(db.prepare(`
+        SELECT activity_id FROM weekly_daily_completion WHERE week_id = ? AND day = ?
+      `).all(weekId, day).map((row) => row.activity_id))
+      const eligible = REQUIRED_ACTIVITY_IDS.every((activityId) => completed.has(activityId)) &&
+        optionalCompleted >= OPTIONAL_TARGETS[day]
+      const existing = db.prepare(`
+        SELECT unlocked_at FROM free_mode_unlock WHERE week_id = ? AND day = ?
+      `).get(weekId, day)
+
+      if (eligible && !existing) {
+        db.prepare(`
+          INSERT INTO free_mode_unlock (week_id, day, unlocked_at) VALUES (?, ?, ?)
+        `).run(weekId, day, now)
+        insertAudit.run(
+          'free_mode_unlocked',
+          JSON.stringify({ weekId, day, requiredCompleted: REQUIRED_ACTIVITY_IDS.length, optionalCompleted }),
+          now,
+        )
+      } else if (!eligible && existing) {
+        db.prepare('DELETE FROM free_mode_unlock WHERE week_id = ? AND day = ?').run(weekId, day)
+        insertAudit.run(
+          'free_mode_relocked',
+          JSON.stringify({ weekId, day, requiredCompleted: completed.size, optionalCompleted }),
+          now,
+        )
+      }
+    }
+  }
+
   function loadState() {
     const weekContext = ensureCurrentWeek()
+    reconcileFreeMode(weekContext.weekId)
     const state = emptyState(weekContext)
     const settings = Object.fromEntries(
       db.prepare('SELECT key, value FROM settings').all().map((row) => [row.key, row.value]),
@@ -617,6 +663,10 @@ export function createStore(filename, options = {}) {
       `)
       .all(weekContext.weekId)
       .map((row) => row.session_key)
+
+    state.freeModeByDay = Object.fromEntries(db.prepare(`
+      SELECT day, unlocked_at FROM free_mode_unlock WHERE week_id = ? ORDER BY unlocked_at
+    `).all(weekContext.weekId).map((row) => [row.day, row.unlocked_at]))
 
     state.rewardCredits = db
       .prepare('SELECT id, source, remaining_seconds, earned_at FROM reward_credit ORDER BY earned_at')

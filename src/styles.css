@@ -179,6 +179,43 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .banner-progress { height: 6px; border-radius: 3px; background: rgba(255,255,255,.15); overflow: hidden; }
 .banner-progress span { height: 100%; display: block; border-radius: inherit; background: var(--gold); }
 
+.friday-fun-page { max-width: 1080px; }
+.friday-hero { position: relative; overflow: hidden; padding: 46px 32px 38px; border: 1px solid #dfc06f; border-radius: 26px; text-align: center; background: radial-gradient(circle at 50% 0, #fffdf4 0, #fff6d9 48%, #f4df9e 100%); box-shadow: 0 22px 60px rgba(118,87,24,.13); }
+.friday-hero .eyebrow { color: #996b13; }
+.friday-hero h2 { margin: 8px 0 9px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(40px, 6vw, 66px); line-height: .95; letter-spacing: -.055em; font-weight: 600; color: #3b3527; }
+.friday-hero > p:not(.eyebrow) { max-width: 590px; margin: 0 auto; color: #756747; font-size: 14px; line-height: 1.6; }
+.friday-trophy { width: 94px; height: 94px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 50%; color: #8b6110; background: #efc75f; box-shadow: 0 0 0 12px rgba(255,255,255,.42), 0 14px 32px rgba(122,85,13,.17); animation: friday-trophy-arrive .7s ease-out both; }
+.friday-sparkles span { position: absolute; color: #d29a28; animation: friday-sparkle 2.4s ease-in-out infinite; }
+.friday-sparkles span:nth-child(1) { left: 12%; top: 24%; font-size: 28px; }
+.friday-sparkles span:nth-child(2) { right: 12%; top: 19%; font-size: 37px; animation-delay: -.8s; }
+.friday-sparkles span:nth-child(3) { right: 22%; bottom: 20%; font-size: 20px; animation-delay: -1.5s; }
+.friday-actions { margin-top: 25px; display: flex; justify-content: center; gap: 10px; }
+.friday-summary { margin-top: 20px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.friday-summary article { min-height: 170px; padding: 20px; border: 1px solid var(--line); border-radius: 19px; background: rgba(251,249,244,.94); box-shadow: 0 10px 32px rgba(63,58,44,.04); }
+.summary-icon { width: 43px; height: 43px; margin-bottom: 18px; display: grid; place-items: center; border-radius: 13px; color: #8a6115; background: #f5e4b0; }
+.friday-summary article:nth-child(2) .summary-icon { color: #2e6e64; background: #dcece7; }
+.friday-summary article:nth-child(3) .summary-icon { color: #8f4938; background: #efdcd4; }
+.friday-summary article:nth-child(4) .summary-icon { color: #4e6490; background: #e0e6ef; }
+.friday-summary small, .friday-summary strong { display: block; }
+.friday-summary small { color: #929792; font-size: 8px; font-weight: 900; letter-spacing: .12em; }
+.friday-summary strong { margin-top: 6px; font-family: Georgia, serif; font-size: 32px; }
+.friday-summary strong em { color: #9ba09c; font-family: inherit; font-size: 15px; font-style: normal; }
+.friday-summary p { margin: 3px 0 0; color: #898f8b; font-size: 10px; }
+.friday-days { margin-top: 30px; }
+.friday-day-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+.friday-day-grid button { min-height: 110px; padding: 14px 9px; border: 1px solid var(--line); border-radius: 15px; color: #767d79; background: rgba(251,249,244,.88); cursor: pointer; }
+.friday-day-grid button > span { width: 32px; height: 32px; margin: 0 auto 10px; display: grid; place-items: center; border-radius: 50%; color: #7f8581; background: #eae5db; font-family: Georgia, serif; font-weight: 800; }
+.friday-day-grid button.complete { border-color: #bdd7cf; color: #28665c; background: #f0f8f5; }
+.friday-day-grid button.complete > span { color: white; background: var(--teal); }
+.friday-day-grid strong, .friday-day-grid small { display: block; }
+.friday-day-grid strong { font-size: 12px; }
+.friday-day-grid small { margin-top: 4px; color: #969b97; font-size: 8px; }
+.free-mode-note { margin-top: 20px; padding: 17px 19px; display: flex; align-items: center; gap: 13px; border-radius: 16px; color: #2b665d; background: #deeee9; }
+.free-mode-note strong { display: block; font-size: 12px; }
+.free-mode-note p { margin: 3px 0 0; color: #64847d; font-size: 10px; }
+@keyframes friday-trophy-arrive { from { opacity: 0; transform: translateY(12px) scale(.82) rotate(-8deg); } to { opacity: 1; transform: none; } }
+@keyframes friday-sparkle { 0%, 100% { opacity: .45; transform: scale(.8) rotate(-8deg); } 50% { opacity: 1; transform: scale(1.15) rotate(8deg); } }
+
 .big-score { width: 130px; height: 82px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 20px; color: #2e6159; background: #dbeae5; }
 .big-score strong { font-family: Georgia, serif; font-size: 38px; }
 .big-score span { font-size: 10px; line-height: 1.2; font-weight: 800; text-transform: uppercase; }
@@ -386,6 +423,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .today-card { display: grid; grid-template-columns: 110px 1fr; column-gap: 20px; }
   .today-illustration { grid-row: span 5; margin: 0; height: 100%; min-height: 180px; }
   .practice-grid { grid-template-columns: repeat(2, 1fr); }
+  .friday-summary { grid-template-columns: repeat(2, 1fr); }
   .reward-content, .parent-grid, .google-proof-content { grid-template-columns: 1fr; }
   .google-proof-form { border-right: 0; border-bottom: 1px solid var(--line); }
   .parent-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -417,6 +455,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .practice-banner { grid-template-columns: auto 1fr auto; }
   .banner-progress { grid-column: 2 / 4; }
   .practice-grid { grid-template-columns: 1fr; }
+  .friday-actions { flex-direction: column; }
+  .friday-actions > button { width: 100%; justify-content: center; }
+  .friday-summary { grid-template-columns: 1fr 1fr; }
+  .friday-day-grid { grid-template-columns: 1fr; }
+  .friday-day-grid button { min-height: 68px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; text-align: left; }
+  .friday-day-grid button > span { margin: 0; }
+  .friday-day-grid small { margin: 0; }
   .editor-card textarea { min-height: 310px; }
   .rewards-hero { display: block; padding: 24px; }
   .ticket-count { margin-top: 22px; width: 150px; }

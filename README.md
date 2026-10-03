@@ -32,6 +32,11 @@ npm run build
 - Local writing draft with deterministic capitalization and punctuation checks
 - Parent preview dashboard and completion overrides
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
+- Server-owned controlled sessions with unique IDs and fixed activity durations
+- Five-second focus heartbeats using monotonic elapsed time
+- Fail-closed pause and recovery after focus loss, long heartbeat gaps, or service restart
+- Atomic completion records with self-reported, parent-override, and time-in-session sources
+- Duplicate-safe optional completion and reward-credit creation
 - Automatic migration from browser storage on the first service run
 - Parent action audit log and restart-safe timer records
 - Browser-cache fallback when the loopback service is unavailable
@@ -48,3 +53,5 @@ The UI labels the following honestly as pending because they require external in
 - Existing spelling-practice module
 
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
+
+The session service verifies time reported by the browser, but the browser is not yet an enforcement boundary. The future macOS guardian and managed Chrome extension will supply approved-window, approved-origin, and application-blocking signals.

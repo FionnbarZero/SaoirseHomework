@@ -269,6 +269,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .future-rewards span { border-radius: 7px; padding: 6px 8px; background: #ddd7cc; color: #8e928f; font-size: 9px; font-weight: 800; }
 
 .session-page { min-height: calc(100vh - 80px); display: grid; place-items: center; padding: 40px; background: #eee8dc; }
+.session-error { position: fixed; z-index: 20; top: 92px; left: 50%; width: min(560px, calc(100vw - 36px)); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid #d7b4ad; border-radius: 13px; color: #7d3f37; background: #fff4f1; box-shadow: 0 10px 30px rgba(89,48,41,.14); font-size: 11px; font-weight: 700; }
+.session-error span { flex: 1; }
+.session-error button { border: 0; padding: 3px; display: grid; place-items: center; color: inherit; background: transparent; cursor: pointer; }
 .session-card { width: min(570px, 100%); border-radius: 26px; padding: 35px; background: var(--paper); text-align: center; box-shadow: var(--shadow); }
 .session-status { display: inline-flex; align-items: center; gap: 7px; color: #75807c; font-size: 9px; font-weight: 900; letter-spacing: .13em; }
 .session-status > span { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); }
@@ -318,6 +321,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connection-row b, .connection-row button { border: 0; background: none; color: #9b8147; font-size: 8px; font-weight: 900; text-transform: uppercase; }
 .connection-row button { color: var(--teal); cursor: pointer; }
 .integration-panel > .secondary-button { width: calc(100% - 32px); margin: 15px 16px 0; }
+.completion-panel { margin-top: 18px; }
+.completion-panel .panel-heading > svg { color: var(--teal); }
+.completion-list { display: grid; }
+.completion-row { min-height: 61px; padding: 11px 17px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; border-bottom: 1px solid #ebe6dc; }
+.completion-row:last-child { border-bottom: 0; }
+.completion-row strong, .completion-row small { display: block; }
+.completion-row strong { font-size: 11px; }
+.completion-row small { margin-top: 3px; color: #999d99; font-size: 8px; }
+.completion-row b { border-radius: 999px; padding: 6px 9px; color: #34736a; background: #e2efeb; font-size: 8px; text-transform: uppercase; letter-spacing: .06em; }
+.completion-empty { padding: 24px; color: #8f9490; font-size: 10px; text-align: center; }
 .danger-zone { margin-top: 18px; border: 1px solid #dfc4bf; border-radius: 14px; padding: 13px 16px; display: flex; justify-content: space-between; align-items: center; background: #f6eae7; }
 .danger-zone strong { color: #8d443b; font-size: 11px; }
 .danger-zone p { margin: 2px 0 0; color: #a0726c; font-size: 9px; }

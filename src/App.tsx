@@ -42,9 +42,14 @@ import {
   type Draft,
 } from './domain'
 import {
+  acknowledgeControlledSession,
+  endControlledSession,
+  heartbeatControlledSession,
   hydrateFromService,
   recordAudit,
   saveStateToService,
+  setDailyCompletion,
+  startControlledSession,
   type ServiceMeta,
 } from './service'
 
@@ -74,7 +79,10 @@ function App() {
   const [serviceStatus, setServiceStatus] = useState<'connecting' | 'online' | 'offline'>('connecting')
   const [serviceMeta, setServiceMeta] = useState<ServiceMeta | null>(null)
   const [hydrated, setHydrated] = useState(false)
+  const [sessionError, setSessionError] = useState('')
   const latestState = useRef(state)
+  const heartbeatInFlight = useRef(false)
+  const sessionWantsRunning = useRef(Boolean(state.activeTimer?.running))
 
   useEffect(() => {
     latestState.current = state
@@ -85,6 +93,7 @@ function App() {
     hydrateFromService(latestState.current)
       .then(({ state: storedState, meta }) => {
         if (cancelled) return
+        sessionWantsRunning.current = Boolean(storedState.activeTimer?.running)
         setState(storedState)
         if (storedState.activeTimer) setView('session')
         setServiceMeta(meta)
@@ -101,7 +110,7 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-    if (!hydrated || serviceStatus !== 'online') return
+    if (!hydrated || serviceStatus !== 'online' || state.activeTimer) return
     const timeout = window.setTimeout(() => {
       saveStateToService(state)
         .then(({ meta }) => setServiceMeta(meta))
@@ -121,37 +130,49 @@ function App() {
   }
 
   useEffect(() => {
-    if (!state.activeTimer?.running || state.activeTimer.remainingSeconds <= 0) return
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') return
-      setState((current) => {
-        if (!current.activeTimer?.running) return current
-        return {
-          ...current,
-          activeTimer: {
-            ...current.activeTimer,
-            remainingSeconds: Math.max(0, current.activeTimer.remainingSeconds - 1),
-            running: current.activeTimer.remainingSeconds > 1,
-          },
-        }
-      })
-    }, 1000)
-    return () => window.clearInterval(interval)
-  }, [state.activeTimer?.running, state.activeTimer?.remainingSeconds])
+    const sessionId = state.activeTimer?.id
+    if (!sessionId || state.activeTimer?.status === 'completed') return
 
-  useEffect(() => {
-    const pauseWhenHidden = () => {
-      if (document.visibilityState === 'hidden') {
-        setState((current) =>
-          current.activeTimer
-            ? { ...current, activeTimer: { ...current.activeTimer, running: false } }
-            : current,
-        )
+    const reportFocus = async () => {
+      if (heartbeatInFlight.current) return
+      const timer = latestState.current.activeTimer
+      if (!timer?.id || timer.id !== sessionId || timer.status === 'completed') return
+      const active = sessionWantsRunning.current && document.visibilityState === 'visible' && document.hasFocus()
+      heartbeatInFlight.current = true
+      try {
+        const response = await heartbeatControlledSession(sessionId, active)
+        const intent = response.session?.status === 'completed' ? false : sessionWantsRunning.current
+        if (response.session?.status === 'completed') sessionWantsRunning.current = false
+        setState({
+          ...response.state,
+          activeTimer: response.state.activeTimer
+            ? { ...response.state.activeTimer, running: intent }
+            : null,
+        })
+        setServiceMeta(response.meta)
+        setServiceStatus('online')
+        setSessionError('')
+      } catch (error) {
+        setServiceStatus('offline')
+        setSessionError(error instanceof Error ? error.message : 'The session service could not be reached.')
+      } finally {
+        heartbeatInFlight.current = false
       }
     }
-    document.addEventListener('visibilitychange', pauseWhenHidden)
-    return () => document.removeEventListener('visibilitychange', pauseWhenHidden)
-  }, [])
+
+    const handleFocusChange = () => { void reportFocus() }
+    const interval = window.setInterval(reportFocus, 5_000)
+    document.addEventListener('visibilitychange', handleFocusChange)
+    window.addEventListener('focus', handleFocusChange)
+    window.addEventListener('blur', handleFocusChange)
+    void reportFocus()
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleFocusChange)
+      window.removeEventListener('focus', handleFocusChange)
+      window.removeEventListener('blur', handleFocusChange)
+    }
+  }, [state.activeTimer?.id, state.activeTimer?.status])
 
   const navigate = (next: View) => {
     if (state.activeTimer && next !== 'session') {
@@ -166,80 +187,103 @@ function App() {
     setView('day')
   }
 
-  const toggleSelfReported = (activityId: string) => {
-    setState((current) => {
-      const completed = current.requiredByDay[selectedDay]
-      const next = completed.includes(activityId)
-        ? completed.filter((id) => id !== activityId)
-        : [...completed, activityId]
-      return {
-        ...current,
-        requiredByDay: { ...current.requiredByDay, [selectedDay]: next },
+  const toggleSelfReported = async (activityId: string) => {
+    const completed = !latestState.current.requiredByDay[selectedDay].includes(activityId)
+    if (serviceStatus === 'online') {
+      try {
+        const response = await setDailyCompletion(selectedDay, activityId, completed, 'self-reported')
+        setState(response.state)
+        setServiceMeta(response.meta)
+        return
+      } catch {
+        setServiceStatus('offline')
       }
-    })
+    }
+    setState((current) => ({
+      ...current,
+      requiredByDay: {
+        ...current.requiredByDay,
+        [selectedDay]: completed
+          ? [...current.requiredByDay[selectedDay], activityId]
+          : current.requiredByDay[selectedDay].filter((id) => id !== activityId),
+      },
+    }))
   }
 
-  const startTimer = (timer: ActiveTimer) => {
-    setState((current) => ({ ...current, activeTimer: timer }))
-    setView('session')
+  const startTimer = async (timer: ActiveTimer) => {
+    if (serviceStatus !== 'online') {
+      setSessionError('Controlled sessions need the local SQLite service. Reconnect it from the Parent screen.')
+      return
+    }
+    try {
+      await saveStateToService({ ...latestState.current, activeTimer: null })
+      const response = await startControlledSession(timer)
+      sessionWantsRunning.current = true
+      setState({
+        ...response.state,
+        activeTimer: response.session ? { ...response.session, running: true } : null,
+      })
+      setServiceMeta(response.meta)
+      setSessionError('')
+      setView('session')
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'The controlled session could not start.')
+    }
   }
 
-  const completeTimer = () => {
-    setState((current) => {
-      const timer = current.activeTimer
-      if (!timer || timer.remainingSeconds > 0) return current
-
-      if (timer.kind === 'required') {
-        const day = timer.sessionKey as DayName
-        const completed = current.requiredByDay[day]
-        return {
-          ...current,
-          activeTimer: null,
-          requiredByDay: {
-            ...current.requiredByDay,
-            [day]: completed.includes(timer.activityId) ? completed : [...completed, timer.activityId],
-          },
-        }
-      }
-
-      if (timer.kind === 'optional' && timer.sessionKey) {
-        const alreadyComplete = current.optionalCompleted.includes(timer.sessionKey)
-        return {
-          ...current,
-          activeTimer: null,
-          optionalCompleted: alreadyComplete
-            ? current.optionalCompleted
-            : [...current.optionalCompleted, timer.sessionKey],
-          rewardCredits: alreadyComplete
-            ? current.rewardCredits
-            : [
-                ...current.rewardCredits,
-                {
-                  id: crypto.randomUUID(),
-                  source: timer.label,
-                  remainingSeconds: 300,
-                  earnedAt: new Date().toISOString(),
-                },
-              ],
-        }
-      }
-
-      if (timer.kind === 'reward') {
-        return {
-          ...current,
-          activeTimer: null,
-          rewardCredits: current.rewardCredits.filter((credit) => credit.id !== timer.activityId),
-        }
-      }
-
-      return { ...current, activeTimer: null }
-    })
-    setView(state.activeTimer?.kind === 'optional' ? 'options' : 'day')
+  const completeTimer = async () => {
+    const timer = latestState.current.activeTimer
+    if (!timer?.id || timer.status !== 'completed') return
+    try {
+      const response = await acknowledgeControlledSession(timer.id)
+      setState(response.state)
+      setServiceMeta(response.meta)
+      setSessionError('')
+      setView(timer.kind === 'optional' ? 'options' : timer.kind === 'reward' ? 'rewards' : 'day')
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'The completion could not be closed.')
+    }
   }
 
-  const cancelTimer = () => {
-    setState((current) => ({ ...current, activeTimer: null }))
-    setView('path')
+  const cancelTimer = async () => {
+    const timer = latestState.current.activeTimer
+    if (!timer?.id) return
+    try {
+      const response = await endControlledSession(timer.id)
+      sessionWantsRunning.current = false
+      setState(response.state)
+      setServiceMeta(response.meta)
+      setSessionError('')
+      setView(timer.kind === 'optional' ? 'options' : timer.kind === 'reward' ? 'rewards' : 'day')
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'The session could not be ended.')
+    }
+  }
+
+  const toggleTimer = async () => {
+    const timer = latestState.current.activeTimer
+    if (!timer?.id || timer.status === 'completed') return
+    const wantsRunning = !timer.running
+    sessionWantsRunning.current = wantsRunning
+    setState((current) => current.activeTimer
+      ? { ...current, activeTimer: { ...current.activeTimer, running: wantsRunning } }
+      : current)
+    try {
+      const active = wantsRunning && document.visibilityState === 'visible' && document.hasFocus()
+      const response = await heartbeatControlledSession(timer.id, active)
+      setState({
+        ...response.state,
+        activeTimer: response.state.activeTimer
+          ? { ...response.state.activeTimer, running: wantsRunning }
+          : null,
+      })
+      setServiceMeta(response.meta)
+      setServiceStatus('online')
+      setSessionError('')
+    } catch (error) {
+      setServiceStatus('offline')
+      setSessionError(error instanceof Error ? error.message : 'The timer could not be updated.')
+    }
   }
 
   if (!state.entered) {
@@ -259,6 +303,12 @@ function App() {
       <main className="main-shell">
         <Topbar state={state} serviceStatus={serviceStatus} />
         <div className="page-wrap">
+          {sessionError && (
+            <div className="session-error" role="alert">
+              <ShieldCheck size={17} /> <span>{sessionError}</span>
+              <button onClick={() => setSessionError('')} aria-label="Dismiss message"><X size={16} /></button>
+            </div>
+          )}
           {view === 'path' && <PathView state={state} selectedDay={selectedDay} openDay={openDay} />}
           {view === 'day' && (
             <DayView
@@ -289,7 +339,7 @@ function App() {
           {view === 'session' && state.activeTimer && (
             <SessionView
               timer={state.activeTimer}
-              setState={setState}
+              toggle={toggleTimer}
               complete={completeTimer}
               cancel={cancelTimer}
             />
@@ -660,25 +710,34 @@ function RewardsView({ state, startTimer }: { state: AppState; startTimer: (time
 
 function SessionView({
   timer,
-  setState,
+  toggle,
   complete,
   cancel,
 }: {
   timer: ActiveTimer
-  setState: React.Dispatch<React.SetStateAction<AppState>>
+  toggle: () => void
   complete: () => void
   cancel: () => void
 }) {
-  const elapsed = timer.totalSeconds - timer.remainingSeconds
+  const [displayRemaining, setDisplayRemaining] = useState(timer.remainingSeconds)
+  useEffect(() => {
+    setDisplayRemaining(timer.remainingSeconds)
+    if (!timer.running || timer.status !== 'active' || timer.remainingSeconds <= 0) return
+    const interval = window.setInterval(() => {
+      setDisplayRemaining((current) => Math.max(0, current - 1))
+    }, 1_000)
+    return () => window.clearInterval(interval)
+  }, [timer.remainingSeconds, timer.running, timer.status])
+
+  const elapsed = timer.totalSeconds - displayRemaining
   const percent = Math.min(100, (elapsed / timer.totalSeconds) * 100)
-  const done = timer.remainingSeconds === 0
-  const toggle = () => setState((current) => current.activeTimer ? { ...current, activeTimer: { ...current.activeTimer, running: !current.activeTimer.running } } : current)
+  const done = timer.status === 'completed'
   return (
     <section className="session-page">
       <div className="session-card">
         <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {done ? 'SESSION COMPLETE' : timer.running ? 'ACTIVE FOCUS TIME' : 'SESSION PAUSED'}</div>
         <div className="timer-ring" style={{ '--progress': `${percent * 3.6}deg` } as React.CSSProperties}>
-          <div><strong>{formatTimer(timer.remainingSeconds)}</strong><small>remaining</small></div>
+          <div><strong>{formatTimer(displayRemaining)}</strong><small>{displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
         </div>
         <p className="eyebrow">{timer.kind === 'reward' ? 'ENJOY YOUR REWARD' : 'CURRENT ACTIVITY'}</p>
         <h2>{timer.label}</h2>
@@ -689,9 +748,9 @@ function SessionView({
             <button className="text-button danger" onClick={cancel}><X size={17} /> End session</button>
           </div>
         ) : (
-          <button className="primary-button" onClick={complete}><Check size={19} /> Save completion</button>
+          <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> Preview timer pauses when this tab is hidden</div>
+        <div className="focus-note"><ShieldCheck size={17} /> Server verified · checks focus every five seconds</div>
       </div>
     </section>
   )
@@ -714,8 +773,17 @@ function ParentView({
   serviceMeta: ServiceMeta | null
   reconnectService: () => void
 }) {
-  const toggleOverride = (activityId: string) => {
+  const toggleOverride = async (activityId: string) => {
     const wasComplete = state.requiredByDay[day].includes(activityId)
+    if (serviceStatus === 'online') {
+      try {
+        const response = await setDailyCompletion(day, activityId, !wasComplete, 'parent-override')
+        setState(response.state)
+        return
+      } catch {
+        // Keep the preview usable from browser storage if the service drops out.
+      }
+    }
     setState((current) => {
       const completed = current.requiredByDay[day]
       return {
@@ -726,7 +794,6 @@ function ParentView({
         },
       }
     })
-    void recordAudit('parent_completion_override', { day, activityId, completed: !wasComplete }).catch(() => {})
   }
   const addCredit = () => {
     const creditId = crypto.randomUUID()
@@ -773,6 +840,36 @@ function ParentView({
           <div className="connection-row"><span className="dot" /><div><strong>Reading game</strong><small>Completion origin needed</small></div><b>Pending</b></div>
           <button className="secondary-button full-button" onClick={addCredit}><Plus size={17} /> Add a 5-minute credit</button>
         </div>
+      </div>
+      <div className="parent-panel completion-panel">
+        <div className="panel-heading"><div><h3>Verified completion history</h3><p>How the service accepted each finished activity.</p></div><ShieldCheck size={20} /></div>
+        {state.completionRecords.length === 0 ? (
+          <div className="completion-empty">Completed controlled sessions will appear here with their verification source.</div>
+        ) : (
+          <div className="completion-list">
+            {state.completionRecords.slice(0, 8).map((record) => {
+              const activity = [...REQUIRED_ACTIVITIES, ...OPTIONAL_ACTIVITIES].find((item) => item.id === record.activityId)
+              const method = record.method === 'time-in-session'
+                ? 'Time-in-session'
+                : record.method === 'self-reported'
+                  ? 'Self-reported'
+                  : record.method === 'parent-override'
+                    ? 'Parent override'
+                    : record.method === 'reward-playback'
+                      ? 'Reward playback'
+                    : record.method === 'game-verified'
+                      ? 'Game-verified'
+                      : 'Imported'
+              return (
+                <div className="completion-row" key={record.id}>
+                  <span className="verified-check"><ShieldCheck size={17} /></span>
+                  <span><strong>{activity?.title ?? (record.activityId.startsWith('session:') ? 'Reward time' : record.activityId)}</strong><small>{record.sessionKey ? `${record.sessionKey} · ` : ''}{new Date(record.completedAt).toLocaleString()}</small></span>
+                  <b>{method}</b>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
       <div className="danger-zone"><div><strong>Preview data</strong><p>Clear local progress and return to a fresh week.</p></div><button className="danger-button" onClick={reset}><RotateCcw size={16} /> Reset preview</button></div>
     </section>

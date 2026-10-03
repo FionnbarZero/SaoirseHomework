@@ -44,7 +44,10 @@ export type RewardCredit = {
   earnedAt: string
 }
 
+export type SessionStatus = 'active' | 'paused' | 'completed'
+
 export type ActiveTimer = {
+  id?: string
   kind: 'required' | 'optional' | 'reward'
   activityId: string
   sessionKey?: string
@@ -52,6 +55,20 @@ export type ActiveTimer = {
   totalSeconds: number
   remainingSeconds: number
   running: boolean
+  status?: SessionStatus
+  creditedSeconds?: number
+  startedAt?: string
+  lastHeartbeatAt?: string | null
+  serverControlled?: boolean
+}
+
+export type CompletionRecord = {
+  id: string
+  activityId: string
+  sessionKey?: string
+  method: 'self-reported' | 'time-in-session' | 'game-verified' | 'parent-override' | 'reward-playback' | 'imported'
+  source: string
+  completedAt: string
 }
 
 export type AppState = {
@@ -61,6 +78,7 @@ export type AppState = {
   rewardCredits: RewardCredit[]
   drafts: Draft[]
   activeTimer: ActiveTimer | null
+  completionRecords: CompletionRecord[]
   guardianConnected: boolean
 }
 
@@ -180,6 +198,7 @@ export const defaultState: AppState = {
   rewardCredits: [],
   drafts: [],
   activeTimer: null,
+  completionRecords: [],
   guardianConnected: false,
 }
 

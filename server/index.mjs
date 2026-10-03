@@ -13,6 +13,17 @@ const databasePath = join(dataDirectory, 'homework.sqlite')
 const distDirectory = join(projectRoot, 'dist')
 const store = createStore(databasePath)
 
+const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
+const selfReportedActivities = new Set(['mandarin', 'math', 'english-packet'])
+const parentOverrideActivities = new Set(['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo'])
+const optionalActivities = new Map([
+  ['voena', { label: 'Voena', sessions: 3, targetSeconds: 20 * 60 }],
+  ['drums', { label: 'Drum Drills', sessions: 3, targetSeconds: 20 * 60 }],
+  ['band', { label: 'Band Practice', sessions: 3, targetSeconds: 20 * 60 }],
+  ['level-chinese', { label: 'Level Chinese', sessions: 2, targetSeconds: 20 * 60 }],
+  ['du-chinese', { label: 'Du Chinese', sessions: 2, targetSeconds: 20 * 60 }],
+])
+
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -61,6 +72,58 @@ function serveStatic(pathname, response) {
   return true
 }
 
+function resolveSessionRequest(body) {
+  if (body.kind === 'required') {
+    if (body.activityId !== 'ninja-dojo' || !days.has(body.sessionKey)) {
+      throw new Error('Unsupported required activity session')
+    }
+    return {
+      kind: 'required',
+      activityId: 'ninja-dojo',
+      sessionKey: body.sessionKey,
+      label: 'Ninja Dojo',
+      targetSeconds: 17 * 60,
+    }
+  }
+
+  if (body.kind === 'optional') {
+    const activity = optionalActivities.get(body.activityId)
+    const match = typeof body.sessionKey === 'string'
+      ? body.sessionKey.match(/^([^:]+):(\d+)$/)
+      : null
+    const sessionIndex = match ? Number(match[2]) : -1
+    if (!activity || match?.[1] !== body.activityId || sessionIndex < 0 || sessionIndex >= activity.sessions) {
+      throw new Error('Unsupported optional activity session')
+    }
+    if (store.isOptionalComplete(body.sessionKey)) throw new Error('That practice session is already complete')
+    return {
+      kind: 'optional',
+      activityId: body.activityId,
+      sessionKey: body.sessionKey,
+      label: `${activity.label} · Session ${sessionIndex + 1}`,
+      targetSeconds: activity.targetSeconds,
+    }
+  }
+
+  if (body.kind === 'reward') {
+    const credit = store.getRewardCredit(body.activityId)
+    if (!credit || credit.remainingSeconds <= 0) throw new Error('Reward credit not found')
+    return {
+      kind: 'reward',
+      activityId: credit.id,
+      label: 'YouTube reward',
+      targetSeconds: credit.remainingSeconds,
+    }
+  }
+
+  throw new Error('Unsupported session kind')
+}
+
+function sessionResponse() {
+  const state = store.loadState()
+  return { session: state.activeTimer, state, meta: store.info() }
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || '/', `http://${host}:${port}`)
@@ -79,6 +142,42 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/state' && request.method === 'PUT') {
       const body = await readJson(request)
       const state = store.saveState(body.state ?? body)
+      return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/sessions' && request.method === 'POST') {
+      const body = await readJson(request)
+      const session = store.startSession(resolveSessionRequest(body))
+      const state = store.loadState()
+      return sendJson(response, 201, { session, state, meta: store.info() })
+    }
+
+    const heartbeatMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/heartbeat$/)
+    if (heartbeatMatch && request.method === 'POST') {
+      const body = await readJson(request)
+      store.heartbeatSession(decodeURIComponent(heartbeatMatch[1]), body.active === true)
+      return sendJson(response, 200, sessionResponse())
+    }
+
+    const cancelMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/cancel$/)
+    if (cancelMatch && request.method === 'POST') {
+      store.cancelSession(decodeURIComponent(cancelMatch[1]))
+      return sendJson(response, 200, sessionResponse())
+    }
+
+    const acknowledgeMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/acknowledge$/)
+    if (acknowledgeMatch && request.method === 'POST') {
+      store.acknowledgeSession(decodeURIComponent(acknowledgeMatch[1]))
+      return sendJson(response, 200, sessionResponse())
+    }
+
+    if (url.pathname === '/api/completions' && request.method === 'POST') {
+      const body = await readJson(request)
+      const allowedActivities = body.method === 'self-reported' ? selfReportedActivities : parentOverrideActivities
+      if (!allowedActivities.has(body.activityId)) {
+        return sendJson(response, 400, { error: 'That activity cannot use this completion method' })
+      }
+      const state = store.setDailyCompletion(body)
       return sendJson(response, 200, { state, meta: store.info() })
     }
 

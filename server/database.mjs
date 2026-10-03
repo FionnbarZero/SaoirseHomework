@@ -1,12 +1,14 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 const MAX_HEARTBEAT_GAP_MS = 7_000
+const GAME_ACTIVITY_ID = 'reading-strategies'
+const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
 
 function emptyState() {
   return {
@@ -16,6 +18,7 @@ function emptyState() {
     rewardCredits: [],
     drafts: [],
     activeTimer: null,
+    activeGameSession: null,
     completionRecords: [],
     guardianConnected: false,
     chromeConnected: false,
@@ -42,12 +45,34 @@ function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 }
 
+function serviceError(message, status = 400, code = 'invalid_request') {
+  const error = new Error(message)
+  error.status = status
+  error.code = code
+  return error
+}
+
+function hashNonce(value) {
+  return createHash('sha256').update(String(value)).digest()
+}
+
+function normalizeOrigin(value) {
+  try {
+    const url = new URL(String(value))
+    if (!['http:', 'https:'].includes(url.protocol) || url.origin === 'null') throw new Error()
+    return url.origin
+  } catch {
+    throw serviceError('A valid HTTP game origin is required')
+  }
+}
+
 export function createStore(filename, options = {}) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true })
 
   const wallNow = options.wallNow ?? (() => new Date())
   const monotonicNow = options.monotonicNow ?? (() => performance.now())
   const makeId = options.makeId ?? (() => randomUUID())
+  const makeNonce = options.makeNonce ?? (() => randomBytes(32).toString('base64url'))
   const runtimeId = options.runtimeId ?? randomUUID()
   const db = new DatabaseSync(filename)
   db.exec('PRAGMA foreign_keys = ON')
@@ -140,6 +165,21 @@ export function createStore(filename, options = {}) {
       details_json TEXT NOT NULL DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS game_session (
+      id TEXT PRIMARY KEY,
+      activity_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      nonce_hash TEXT NOT NULL,
+      expected_origin TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'cancelled', 'expired')),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS game_session_lookup
+      ON game_session (activity_id, day, status);
+
     CREATE TABLE IF NOT EXISTS guardian_status (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       guardian_id TEXT NOT NULL,
@@ -215,6 +255,11 @@ export function createStore(filename, options = {}) {
       id, activity_id, session_key, method, source, session_id, completed_at, details_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const insertGameSession = db.prepare(`
+    INSERT INTO game_session (
+      id, activity_id, day, nonce_hash, expected_origin, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+  `)
 
   setMeta.run('schema_version', String(SCHEMA_VERSION))
 
@@ -279,6 +324,41 @@ export function createStore(filename, options = {}) {
     `).get()
   }
 
+  function gameSessionFromRow(row) {
+    if (!row) return null
+    return {
+      id: row.id,
+      activityId: row.activity_id,
+      day: row.day,
+      status: row.status,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      completedAt: row.completed_at ?? null,
+    }
+  }
+
+  function expireGameSessions() {
+    db.prepare(`
+      UPDATE game_session
+      SET status = 'expired'
+      WHERE status = 'pending' AND expires_at <= ?
+    `).run(asIso(wallNow()))
+  }
+
+  function getGameSessionRow(id) {
+    expireGameSessions()
+    return db.prepare('SELECT * FROM game_session WHERE id = ?').get(String(id))
+  }
+
+  function getPendingGameSessionRow() {
+    expireGameSessions()
+    return db.prepare(`
+      SELECT * FROM game_session
+      WHERE status = 'pending'
+      ORDER BY created_at DESC LIMIT 1
+    `).get()
+  }
+
   function listCompletions(limit = 50) {
     const safeLimit = Math.min(200, Math.max(1, Number(limit) || 50))
     return db.prepare(`
@@ -335,6 +415,7 @@ export function createStore(filename, options = {}) {
       }))
 
     state.activeTimer = sessionFromRow(getPendingSessionRow())
+    state.activeGameSession = gameSessionFromRow(getPendingGameSessionRow())
     state.completionRecords = listCompletions(50)
     return state
   }
@@ -358,7 +439,7 @@ export function createStore(filename, options = {}) {
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec(`
-        DELETE FROM daily_completion;
+        DELETE FROM daily_completion WHERE source IN ('browser', 'self-reported');
         DELETE FROM optional_completion;
         DELETE FROM reward_credit;
         DELETE FROM writing_submission;
@@ -367,6 +448,7 @@ export function createStore(filename, options = {}) {
       for (const day of DAYS) {
         const activities = Array.isArray(state.requiredByDay[day]) ? state.requiredByDay[day] : []
         for (const activityId of [...new Set(activities)]) {
+          if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId))) continue
           insertRequired.run(day, String(activityId), 'browser', now)
           const hasRecord = db.prepare(`
             SELECT 1 FROM completion_record WHERE activity_id = ? AND session_key = ? LIMIT 1
@@ -419,6 +501,126 @@ export function createStore(filename, options = {}) {
     }
 
     return loadState()
+  }
+
+  function startGameSession(input) {
+    const activityId = String(input.activityId ?? '')
+    const day = String(input.day ?? '')
+    const expectedOrigin = normalizeOrigin(input.expectedOrigin)
+    const ttlSeconds = Math.floor(Number(input.ttlSeconds ?? 60 * 60))
+
+    if (activityId !== GAME_ACTIVITY_ID) throw serviceError('Unsupported verified game activity')
+    if (!DAYS.includes(day)) throw serviceError('Invalid weekday')
+    if (!Number.isFinite(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 24 * 60 * 60) {
+      throw serviceError('Game session lifetime must be between 1 second and 24 hours')
+    }
+    if (db.prepare(
+      'SELECT 1 FROM daily_completion WHERE day = ? AND activity_id = ?',
+    ).get(day, activityId)) {
+      throw serviceError('Reading Strategies is already complete for that day', 409, 'already_completed')
+    }
+
+    const id = makeId()
+    const nonce = String(makeNonce())
+    if (nonce.length < 16) throw new Error('Generated game nonce is too short')
+    const createdAt = asIso(wallNow())
+    const expiresAt = asIso(new Date(new Date(createdAt).getTime() + ttlSeconds * 1000))
+
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        UPDATE game_session
+        SET status = 'cancelled'
+        WHERE activity_id = ? AND day = ? AND status = 'pending'
+      `).run(activityId, day)
+      insertGameSession.run(
+        id, activityId, day, hashNonce(nonce).toString('hex'), expectedOrigin, createdAt, expiresAt,
+      )
+      insertAudit.run(
+        'game_session_started',
+        JSON.stringify({ sessionId: id, activityId, day, expectedOrigin, expiresAt }),
+        createdAt,
+      )
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    return { session: gameSessionFromRow(getGameSessionRow(id)), nonce }
+  }
+
+  function getGameSession(id) {
+    const row = getGameSessionRow(id)
+    if (!row) throw serviceError('Game session not found', 404, 'session_not_found')
+    return gameSessionFromRow(row)
+  }
+
+  function completeGameSession(input) {
+    const id = String(input.id ?? '')
+    const suppliedOrigin = String(input.origin ?? '')
+    const suppliedNonce = typeof input.nonce === 'string' ? input.nonce : ''
+    let completedSession
+
+    expireGameSessions()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = db.prepare('SELECT * FROM game_session WHERE id = ?').get(id)
+      if (!row) throw serviceError('Game session not found', 404, 'session_not_found')
+
+      const now = asIso(wallNow())
+      if (row.status === 'expired') {
+        throw serviceError('Game session has expired', 410, 'session_expired')
+      }
+      if (row.status === 'completed') {
+        throw serviceError('Game session has already been used', 409, 'session_replayed')
+      }
+      if (row.status !== 'pending') {
+        throw serviceError('Game session is no longer active', 409, 'session_inactive')
+      }
+      if (suppliedOrigin !== row.expected_origin) {
+        throw serviceError('Game completion origin was not accepted', 403, 'origin_mismatch')
+      }
+
+      const expectedHash = Buffer.from(row.nonce_hash, 'hex')
+      const suppliedHash = hashNonce(suppliedNonce)
+      if (expectedHash.length !== suppliedHash.length || !timingSafeEqual(expectedHash, suppliedHash)) {
+        throw serviceError('Game completion token was not accepted', 403, 'nonce_mismatch')
+      }
+
+      const update = db.prepare(`
+        UPDATE game_session
+        SET status = 'completed', completed_at = ?
+        WHERE id = ? AND status = 'pending'
+      `).run(now, id)
+      if (Number(update.changes) !== 1) {
+        throw serviceError('Game session has already been used', 409, 'session_replayed')
+      }
+
+      db.prepare(`
+        INSERT INTO daily_completion (day, activity_id, source, completed_at)
+        VALUES (?, ?, 'game-verified', ?)
+        ON CONFLICT(day, activity_id) DO UPDATE SET
+          source = excluded.source,
+          completed_at = excluded.completed_at
+      `).run(row.day, row.activity_id, now)
+      insertCompletion.run(
+        `game:${row.id}`, row.activity_id, row.day, 'game-verified', 'reading-game-contract', row.id,
+        now, JSON.stringify({ expectedOrigin: row.expected_origin }),
+      )
+      completedSession = gameSessionFromRow({ ...row, status: 'completed', completed_at: now })
+      insertAudit.run(
+        'game_session_completed',
+        JSON.stringify({ sessionId: row.id, activityId: row.activity_id, day: row.day }),
+        now,
+      )
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    return completedSession
   }
 
   function startSession(input) {
@@ -710,6 +912,9 @@ export function createStore(filename, options = {}) {
     db,
     loadState,
     saveState,
+    startGameSession,
+    getGameSession,
+    completeGameSession,
     startSession,
     heartbeatSession,
     cancelSession,

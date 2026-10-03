@@ -1,4 +1,4 @@
-import type { ActiveTimer, AppState, DayName } from './domain'
+import type { ActiveTimer, AppState, DayName, GameSession } from './domain'
 
 export type ServiceMeta = {
   database: string
@@ -14,6 +14,14 @@ type StateResponse = {
 
 type SessionResponse = StateResponse & {
   session: ActiveTimer | null
+}
+
+type GameSessionResponse = StateResponse & {
+  gameSession: GameSession
+}
+
+type GameSessionLaunchResponse = StateResponse & {
+  gameSession: GameSession & { launchUrl: string }
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -94,4 +102,15 @@ export function setDailyCompletion(
     method: 'POST',
     body: JSON.stringify({ day, activityId, completed, method }),
   })
+}
+
+export function startReadingGame(day: DayName) {
+  return request<GameSessionLaunchResponse>('/api/game-sessions', {
+    method: 'POST',
+    body: JSON.stringify({ activityId: 'reading-strategies', day }),
+  })
+}
+
+export function getReadingGameSession(sessionId: string) {
+  return request<GameSessionResponse>(`/api/game-sessions/${encodeURIComponent(sessionId)}`)
 }

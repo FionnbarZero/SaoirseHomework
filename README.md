@@ -41,6 +41,9 @@ npm run build
 - Safe-by-default dry-run app-policy checks and an uninstalled LaunchAgent template
 - Manifest V3 managed-Chrome prototype with a stable development ID
 - Dynamic Homework-mode navigation rules and a parent-reviewed policy template
+- One-time Reading Strategies game sessions with hashed nonces and a 60-minute expiry
+- Exact-origin CORS, atomic `game-verified` completion, and replay rejection
+- Child-screen game launch, status polling, and a clearly labeled local verification simulator
 - Automatic migration from browser storage on the first service run
 - Parent action audit log and restart-safe timer records
 - Browser-cache fallback when the loopback service is unavailable
@@ -52,10 +55,12 @@ The UI labels the following honestly as pending because they require external in
 
 - Parent-authorized guardian installation and enforcement on the second Mac
 - Chrome Web Store publication and parent-installed policy on the second Mac
-- Reading Strategies completion contract and game origin
+- The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
 - Google OAuth, Drive/Docs/Gmail delivery, and Family Link approval
 - Existing spelling-practice module
 
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
 
 The session service verifies time reported by the browser, but the browser is not yet an enforcement boundary. The future macOS guardian and managed Chrome extension will supply approved-window, approved-origin, and application-blocking signals.
+
+To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.

@@ -46,11 +46,13 @@ import {
   endControlledSession,
   heartbeatControlledSession,
   hydrateFromService,
+  getReadingGameSession,
   loadStateFromService,
   recordAudit,
   saveStateToService,
   setDailyCompletion,
   startControlledSession,
+  startReadingGame as startReadingGameSession,
   type ServiceMeta,
 } from './service'
 
@@ -189,6 +191,30 @@ function App() {
     return () => window.clearInterval(interval)
   }, [view, serviceStatus, state.activeTimer])
 
+  useEffect(() => {
+    const gameSessionId = state.activeGameSession?.id
+    if (!gameSessionId || serviceStatus !== 'online') return
+    let cancelled = false
+    const refresh = () => {
+      getReadingGameSession(gameSessionId)
+        .then(({ state: storedState, meta }) => {
+          if (cancelled) return
+          setState(storedState)
+          setServiceMeta(meta)
+          setSessionError('')
+        })
+        .catch((error) => {
+          if (cancelled) return
+          setSessionError(error instanceof Error ? error.message : 'The game status could not be checked.')
+        })
+    }
+    const interval = window.setInterval(refresh, 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [state.activeGameSession?.id, serviceStatus])
+
   const navigate = (next: View) => {
     if (state.activeTimer && next !== 'session') {
       setView('session')
@@ -243,6 +269,31 @@ function App() {
       setView('session')
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'The controlled session could not start.')
+    }
+  }
+
+  const startReadingGame = async (day: DayName) => {
+    if (serviceStatus !== 'online') {
+      setSessionError('The verified game needs the local SQLite service. Reconnect it from the Parent screen.')
+      return
+    }
+
+    const gameWindow = window.open('', 'reading-strategies-game', 'popup,width=900,height=720')
+    if (!gameWindow) {
+      setSessionError('Allow pop-ups for this app so the Reading Strategies game can open.')
+      return
+    }
+
+    try {
+      const response = await startReadingGameSession(day)
+      setState(response.state)
+      setServiceMeta(response.meta)
+      setSessionError('')
+      gameWindow.location.href = response.gameSession.launchUrl
+      gameWindow.focus()
+    } catch (error) {
+      gameWindow.close()
+      setSessionError(error instanceof Error ? error.message : 'The Reading Strategies game could not start.')
     }
   }
 
@@ -332,6 +383,7 @@ function App() {
               setDay={setSelectedDay}
               toggleSelfReported={toggleSelfReported}
               startTimer={startTimer}
+              startReadingGame={startReadingGame}
               openOptions={() => setView('options')}
             />
           )}
@@ -504,6 +556,7 @@ function DayView({
   setDay,
   toggleSelfReported,
   startTimer,
+  startReadingGame,
   openOptions,
 }: {
   state: AppState
@@ -511,6 +564,7 @@ function DayView({
   setDay: (day: DayName) => void
   toggleSelfReported: (id: string) => void
   startTimer: (timer: ActiveTimer) => void
+  startReadingGame: (day: DayName) => void
   openOptions: () => void
 }) {
   const completed = state.requiredByDay[day]
@@ -538,6 +592,9 @@ function DayView({
         {REQUIRED_ACTIVITIES.map((activity) => {
           const done = completed.includes(activity.id)
           const self = activity.method === 'self'
+          const gamePending = activity.id === 'reading-strategies' &&
+            state.activeGameSession?.day === day &&
+            state.activeGameSession.status === 'pending'
           return (
             <article key={activity.id} className={`activity-row ${done ? 'done' : ''} ${activity.method === 'coming-soon' ? 'muted' : ''}`}>
               <div className={`activity-icon icon-${activity.id}`}>{activity.icon}</div>
@@ -563,7 +620,11 @@ function DayView({
                 })}>Start <Play size={15} fill="currentColor" /></button>
               )}
               {activity.method === 'timer' && done && <span className="verified-check"><Check size={20} /></span>}
-              {activity.method === 'verified' && !done && <span className="waiting-pill">Waiting for game</span>}
+              {activity.method === 'verified' && !done && (
+                <button className="row-button" onClick={() => startReadingGame(day)}>
+                  {gamePending ? 'Restart game' : 'Launch game'} <Play size={15} fill="currentColor" />
+                </button>
+              )}
               {activity.method === 'verified' && done && <span className="verified-check"><ShieldCheck size={20} /></span>}
               {activity.method === 'coming-soon' && <span className="soon-pill">Soon</span>}
             </article>

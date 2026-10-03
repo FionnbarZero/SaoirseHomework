@@ -38,7 +38,10 @@ function sampleState() {
       remainingSeconds: 917,
       running: false,
     },
+    activeGameSession: null,
+    completionRecords: [],
     guardianConnected: false,
+    chromeConnected: false,
   }
 }
 
@@ -63,7 +66,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 4)
+    assert.equal(reopened.info().schemaVersion, 5)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -75,6 +78,7 @@ function controlledClock() {
   let wallMs = Date.parse('2026-10-03T16:00:00.000Z')
   let monotonicMs = 0
   let id = 0
+  let nonce = 0
   return {
     options(runtimeId = 'test-runtime') {
       return {
@@ -82,6 +86,7 @@ function controlledClock() {
         wallNow: () => new Date(wallMs),
         monotonicNow: () => monotonicMs,
         makeId: () => `test-id-${++id}`,
+        makeNonce: () => `test-game-nonce-${++nonce}-secure-value`,
       }
     },
     advance(milliseconds) {
@@ -278,5 +283,137 @@ test('Chrome extension heartbeats expire and deduplicate blocked-navigation audi
   clock.advance(46_000)
   assert.equal(store.getChromeExtensionStatus().connected, false)
   assert.equal(store.loadState().chromeConnected, false)
+  store.close()
+})
+
+function assertServiceError(callback, status, code) {
+  assert.throws(callback, (error) => {
+    assert.equal(error.status, status)
+    assert.equal(error.code, code)
+    return true
+  })
+}
+
+test('a valid one-time game token atomically records verified Reading Strategies completion', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const origin = 'https://reading.example'
+  const { session, nonce } = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Monday',
+    expectedOrigin: origin,
+    ttlSeconds: 60,
+  })
+
+  const stored = store.db.prepare('SELECT nonce_hash FROM game_session WHERE id = ?').get(session.id)
+  assert.notEqual(stored.nonce_hash, nonce)
+  assert.equal(stored.nonce_hash.includes(nonce), false)
+  assert.equal(store.loadState().activeGameSession.id, session.id)
+
+  const completed = store.completeGameSession({ id: session.id, nonce, origin })
+  assert.equal(completed.status, 'completed')
+  const state = store.loadState()
+  assert.equal(state.activeGameSession, null)
+  assert.equal(state.requiredByDay.Monday.includes('reading-strategies'), true)
+  assert.equal(state.completionRecords[0].method, 'game-verified')
+  assert.equal(state.completionRecords[0].source, 'reading-game-contract')
+  assert.equal(
+    store.listAudit().filter((event) => event.eventType === 'game_session_completed').length,
+    1,
+  )
+  store.close()
+})
+
+test('game completion rejects spoofed origins and tokens without awarding credit', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const origin = 'https://reading.example'
+  const { session, nonce } = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Tuesday',
+    expectedOrigin: origin,
+  })
+
+  assertServiceError(
+    () => store.completeGameSession({ id: session.id, nonce, origin: 'https://attacker.example' }),
+    403,
+    'origin_mismatch',
+  )
+  assertServiceError(
+    () => store.completeGameSession({ id: session.id, nonce: 'wrong-token', origin }),
+    403,
+    'nonce_mismatch',
+  )
+  assert.deepEqual(store.loadState().requiredByDay.Tuesday, [])
+  assert.equal(store.listCompletions().length, 0)
+  store.close()
+})
+
+test('a completed game token cannot be replayed', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const origin = 'https://reading.example'
+  const { session, nonce } = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Wednesday',
+    expectedOrigin: origin,
+  })
+
+  store.completeGameSession({ id: session.id, nonce, origin })
+  assertServiceError(
+    () => store.completeGameSession({ id: session.id, nonce, origin }),
+    409,
+    'session_replayed',
+  )
+  assert.equal(store.listCompletions().filter((record) => record.method === 'game-verified').length, 1)
+  store.close()
+})
+
+test('expired and replaced game sessions cannot award completion', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const origin = 'https://reading.example'
+  const expired = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Thursday',
+    expectedOrigin: origin,
+    ttlSeconds: 1,
+  })
+  clock.advance(1_001)
+  assertServiceError(
+    () => store.completeGameSession({ id: expired.session.id, nonce: expired.nonce, origin }),
+    410,
+    'session_expired',
+  )
+
+  const first = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Friday',
+    expectedOrigin: origin,
+  })
+  const replacement = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Friday',
+    expectedOrigin: origin,
+  })
+  assert.equal(store.getGameSession(first.session.id).status, 'cancelled')
+  assert.equal(store.getGameSession(replacement.session.id).status, 'pending')
+  assertServiceError(
+    () => store.completeGameSession({ id: first.session.id, nonce: first.nonce, origin }),
+    409,
+    'session_inactive',
+  )
+  store.close()
+})
+
+test('browser state import cannot spoof a verified or timed required completion', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.requiredByDay.Monday.push('reading-strategies', 'ninja-dojo')
+  const saved = store.saveState(state)
+
+  assert.deepEqual(saved.requiredByDay.Monday, ['mandarin', 'math'])
+  assert.equal(saved.completionRecords.some((record) => record.activityId === 'reading-strategies'), false)
+  assert.equal(saved.completionRecords.some((record) => record.activityId === 'ninja-dojo'), false)
   store.close()
 })

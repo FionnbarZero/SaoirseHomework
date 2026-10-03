@@ -8,11 +8,21 @@ const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
 const port = Number(process.env.HOMEWORK_PORT || 4179)
 const host = '127.0.0.1'
+const serviceOrigin = `http://${host}:${port}`
 const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
 const distDirectory = join(projectRoot, 'dist')
 const store = createStore(databasePath)
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
+const readingGameUrl = new URL(
+  process.env.HOMEWORK_READING_GAME_URL || `${serviceOrigin}/reading-game-simulator.html`,
+)
+const readingGameOrigin = new URL(
+  process.env.HOMEWORK_READING_GAME_ORIGIN || readingGameUrl.origin,
+).origin
+if (readingGameUrl.origin !== readingGameOrigin) {
+  throw new Error('HOMEWORK_READING_GAME_URL must use HOMEWORK_READING_GAME_ORIGIN')
+}
 
 const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
 const selfReportedActivities = new Set(['mandarin', 'math', 'english-packet'])
@@ -50,14 +60,31 @@ const mimeTypes = {
   '.png': 'image/png',
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, extraHeaders = {}) {
   const body = JSON.stringify(value)
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store',
+    ...extraHeaders,
   })
   response.end(body)
+}
+
+function sendEmpty(response, status, extraHeaders = {}) {
+  response.writeHead(status, { 'Cache-Control': 'no-store', ...extraHeaders })
+  response.end()
+}
+
+function gameCorsHeaders(origin) {
+  if (origin !== readingGameOrigin) return {}
+  return {
+    'Access-Control-Allow-Origin': readingGameOrigin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '600',
+    Vary: 'Origin',
+  }
 }
 
 async function readJson(request) {
@@ -83,7 +110,7 @@ function serveStatic(pathname, response) {
   if (!existsSync(filePath)) return false
   response.writeHead(200, {
     'Content-Type': mimeTypes[extname(filePath)] || 'application/octet-stream',
-    'Cache-Control': filePath.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
+    'Cache-Control': filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
   })
   createReadStream(filePath).pipe(response)
   return true
@@ -195,9 +222,8 @@ function chromeResponse() {
 }
 
 const server = createServer(async (request, response) => {
+  const url = new URL(request.url || '/', serviceOrigin)
   try {
-    const url = new URL(request.url || '/', `http://${host}:${port}`)
-
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return sendJson(response, 200, { ok: true, service: 'fionnbar-homework', ...store.info() })
     }
@@ -245,6 +271,68 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 201, { session, state, meta: store.info() })
     }
 
+    if (url.pathname === '/api/game-sessions' && request.method === 'POST') {
+      const body = await readJson(request)
+      const { session, nonce } = store.startGameSession({
+        activityId: body.activityId,
+        day: body.day,
+        expectedOrigin: readingGameOrigin,
+      })
+      const launchUrl = new URL(readingGameUrl)
+      launchUrl.hash = new URLSearchParams({
+        sessionId: session.id,
+        nonce,
+        day: session.day,
+        completionUrl: `${serviceOrigin}/api/game-sessions/${encodeURIComponent(session.id)}/complete`,
+      }).toString()
+      return sendJson(response, 201, {
+        gameSession: { ...session, launchUrl: launchUrl.toString() },
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    const gameCompletionMatch = url.pathname.match(/^\/api\/game-sessions\/([^/]+)\/complete$/)
+    if (gameCompletionMatch && request.method === 'OPTIONS') {
+      const origin = request.headers.origin || ''
+      if (origin !== readingGameOrigin) {
+        return sendJson(response, 403, { error: 'Game completion origin was not accepted', code: 'origin_mismatch' })
+      }
+      return sendEmpty(response, 204, gameCorsHeaders(origin))
+    }
+
+    if (gameCompletionMatch && request.method === 'POST') {
+      const origin = request.headers.origin || ''
+      const headers = gameCorsHeaders(origin)
+      if (origin !== readingGameOrigin) {
+        return sendJson(
+          response,
+          403,
+          { error: 'Game completion origin was not accepted', code: 'origin_mismatch' },
+        )
+      }
+      const body = await readJson(request)
+      const gameSession = store.completeGameSession({
+        id: decodeURIComponent(gameCompletionMatch[1]),
+        nonce: body.nonce,
+        origin,
+      })
+      return sendJson(response, 200, {
+        gameSession,
+        state: store.loadState(),
+        meta: store.info(),
+      }, headers)
+    }
+
+    const gameStatusMatch = url.pathname.match(/^\/api\/game-sessions\/([^/]+)$/)
+    if (gameStatusMatch && request.method === 'GET') {
+      return sendJson(response, 200, {
+        gameSession: store.getGameSession(decodeURIComponent(gameStatusMatch[1])),
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
     const heartbeatMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/heartbeat$/)
     if (heartbeatMatch && request.method === 'POST') {
       const body = await readJson(request)
@@ -288,14 +376,21 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && serveStatic(url.pathname, response)) return
     return sendJson(response, 404, { error: 'Build the web app before serving it here' })
   } catch (error) {
-    console.error(error)
-    return sendJson(response, 500, { error: error instanceof Error ? error.message : 'Unexpected error' })
+    const status = Number.isInteger(error?.status) ? error.status : 500
+    if (status >= 500) console.error(error)
+    const completionRequest = /^\/api\/game-sessions\/[^/]+\/complete$/.test(url.pathname)
+    const headers = completionRequest ? gameCorsHeaders(request.headers.origin || '') : {}
+    return sendJson(response, status, {
+      error: error instanceof Error ? error.message : 'Unexpected error',
+      code: error?.code || 'unexpected_error',
+    }, headers)
   }
 })
 
 server.listen(port, host, () => {
-  console.log(`Homework service listening at http://${host}:${port}`)
+  console.log(`Homework service listening at ${serviceOrigin}`)
   console.log(`SQLite database: ${databasePath}`)
+  console.log(`Reading game origin: ${readingGameOrigin}`)
 })
 
 function close() {

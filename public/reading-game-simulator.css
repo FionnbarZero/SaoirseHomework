@@ -1,0 +1,174 @@
+:root {
+  color: #263431;
+  background: #e8ede9;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(255,255,255,.9) 0 2px, transparent 3px) 0 0 / 28px 28px,
+    linear-gradient(145deg, #eef2ef, #dce6e1);
+}
+
+button { font: inherit; }
+
+.game-shell {
+  width: min(820px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 34px 0 26px;
+}
+
+.game-header {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 20px;
+}
+
+.brand-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: #355f57;
+  font-family: Georgia, serif;
+  font-weight: 800;
+}
+
+.game-header p, .game-header h1 { margin: 0; }
+.game-header p { color: #a05c3f; font-size: 10px; font-weight: 900; letter-spacing: .15em; }
+.game-header h1 { margin-top: 2px; font-family: Georgia, serif; font-size: 25px; font-weight: 600; }
+
+.day-badge {
+  margin-left: auto;
+  padding: 7px 11px;
+  border: 1px solid #c8d5cf;
+  border-radius: 999px;
+  color: #466a63;
+  background: rgba(255,255,255,.58);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.game-card, .result-card {
+  min-height: 510px;
+  padding: clamp(25px, 5vw, 48px);
+  border: 1px solid #d3dcd7;
+  border-radius: 28px;
+  background: rgba(252,251,247,.96);
+  box-shadow: 0 24px 70px rgba(55,75,68,.13);
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #77827e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.progress-track {
+  height: 6px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e1e5e2;
+}
+
+.progress-track span {
+  display: block;
+  width: 33.333%;
+  height: 100%;
+  border-radius: inherit;
+  background: #d59258;
+  transition: width .25s ease;
+}
+
+.strategy-label {
+  margin: 40px 0 7px;
+  color: #a05c3f;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.game-card h2, .result-card h2 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-size: clamp(27px, 5vw, 39px);
+  font-weight: 600;
+  line-height: 1.06;
+}
+
+blockquote {
+  margin: 24px 0;
+  padding: 18px 20px;
+  border-left: 4px solid #e4b268;
+  border-radius: 0 14px 14px 0;
+  color: #4c5955;
+  background: #f5f0e4;
+  font-family: Georgia, serif;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+
+.answer {
+  min-height: 58px;
+  padding: 12px 15px;
+  border: 1px solid #d9dedb;
+  border-radius: 13px;
+  color: #34423e;
+  background: white;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.answer:hover, .answer.selected { border-color: #4d8277; background: #e9f2ef; }
+.answer.correct { border-color: #4d8277; color: #2f6f62; background: #dceee8; }
+.answer.incorrect { border-color: #bd7567; color: #904f43; background: #f7e7e3; }
+
+.next-button, .close-button {
+  min-width: 145px;
+  margin-top: 20px;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 12px;
+  color: white;
+  background: #355f57;
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.next-button:disabled { opacity: .42; cursor: not-allowed; }
+.feedback { min-height: 20px; margin: 12px 0 0; color: #7b5141; font-size: 12px; font-weight: 750; }
+
+.result-card { display: grid; place-items: center; align-content: center; text-align: center; }
+.result-card[hidden] { display: none; }
+.result-icon { width: 78px; height: 78px; display: grid; place-items: center; border-radius: 50%; color: white; background: #d39455; font-size: 41px; font-weight: 800; }
+.result-card.verified .result-icon { background: #418070; }
+.result-card.failed .result-icon { background: #ae6254; }
+.result-label { margin: 25px 0 7px; color: #9c5a3f; font-size: 10px; font-weight: 900; letter-spacing: .16em; }
+.result-card h2 { max-width: 510px; }
+.result-card > p:last-of-type { max-width: 440px; color: #7a8581; line-height: 1.6; }
+
+footer { margin-top: 15px; color: #74817c; text-align: center; font-size: 10px; }
+
+@media (max-width: 580px) {
+  .game-shell { width: min(100% - 20px, 820px); padding-top: 18px; }
+  .game-card, .result-card { min-height: 520px; border-radius: 20px; }
+  .answers { grid-template-columns: 1fr; }
+  .game-header h1 { font-size: 20px; }
+}

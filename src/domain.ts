@@ -71,6 +71,16 @@ export type CompletionRecord = {
   completedAt: string
 }
 
+export type GameSession = {
+  id: string
+  activityId: string
+  day: DayName
+  status: 'pending' | 'completed' | 'cancelled' | 'expired'
+  createdAt: string
+  expiresAt: string
+  completedAt: string | null
+}
+
 export type AppState = {
   entered: boolean
   requiredByDay: Record<DayName, string[]>
@@ -78,6 +88,7 @@ export type AppState = {
   rewardCredits: RewardCredit[]
   drafts: Draft[]
   activeTimer: ActiveTimer | null
+  activeGameSession: GameSession | null
   completionRecords: CompletionRecord[]
   guardianConnected: boolean
   chromeConnected: boolean
@@ -199,6 +210,7 @@ export const defaultState: AppState = {
   rewardCredits: [],
   drafts: [],
   activeTimer: null,
+  activeGameSession: null,
   completionRecords: [],
   guardianConnected: false,
   chromeConnected: false,

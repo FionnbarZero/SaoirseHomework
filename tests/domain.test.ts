@@ -14,6 +14,7 @@ import {
   applyCompletedCorrections,
   inspectAmbiguousDraft,
   inspectDraft,
+  inspectWritingFindings,
   scoreWritingResponses,
   writingReviewStatus,
 } from '../src/writing.ts'
@@ -47,7 +48,7 @@ test('the deterministic writing rules cover high-confidence grammar cases', () =
     findings.filter((finding) => finding.category === 'Grammar').map((finding) => finding.ruleId),
     ['tense-yesterday', 'subject-verb-singular', 'demonstrative-agreement'],
   )
-  assert.equal(findings.every((finding) => finding.practice.length === 5), true)
+  assert.equal(findings.every((finding) => finding.practice.length === 3), true)
   assert.equal(findings.every((finding) => finding.correction.choices.length === 3), true)
   assert.equal(inspectDraft('Yesterday I walked home. She plays games with these books.').length, 0)
 })
@@ -85,19 +86,33 @@ test('reviewed Grade 5 patterns cover perfect tense, tense consistency, conjunct
     const finding = inspectDraft(body).find((item) => item.ruleId === ruleId)
     assert.ok(finding, `${ruleId} should be detected`)
     assert.equal(finding.replacement, replacement)
-    assert.equal(finding.practice.length, 5)
+    assert.equal(finding.practice.length, 3)
   }
 
   assert.equal(inspectDraft('She has written three pages.').length, 0)
   assert.equal(inspectDraft('Neither rain nor wind stopped us.').length, 0)
 })
 
-test('accepted writing corrections build a separate copy and require five practice answers', () => {
+test('the multiple-choice review represents grammar, capitalization, punctuation, and spelling findings', () => {
+  const findings = inspectWritingFindings(
+    'Yesterday I walk home. today I packed socks shoes and books. I saw my freind.',
+  )
+  assert.deepEqual(
+    [...new Set(findings.map((finding) => finding.category))].sort(),
+    ['Capitalization', 'Grammar', 'Punctuation', 'Spelling'],
+  )
+  const spelling = findings.find((finding) => finding.category === 'Spelling')
+  assert.ok(spelling)
+  assert.equal(spelling.replacement, 'friend')
+  assert.equal(spelling.practice.length, 3)
+})
+
+test('accepted writing corrections build a separate copy and require three practice answers', () => {
   const body = 'today i play with this books'
   const findings = inspectDraft(body)
   const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
     correctionComplete: true,
-    practiceCompleted: 5,
+    practiceCompleted: 3,
     incorrectAttempts: 1,
   }]))
   const corrected = applyCompletedCorrections(body, findings, progress)
@@ -106,10 +121,10 @@ test('accepted writing corrections build a separate copy and require five practi
   assert.equal(corrected, 'Today I play with these books.')
   assert.equal(writingReviewStatus(findings, progress), 'spelling-pending')
   const first = findings[0]
-  assert.equal(writingReviewStatus(findings, { ...progress, [first.id]: { ...progress[first.id], practiceCompleted: 4 } }), 'practice')
+  assert.equal(writingReviewStatus(findings, { ...progress, [first.id]: { ...progress[first.id], practiceCompleted: 2 } }), 'practice')
 })
 
-test('every writing response advances once while incorrect answers remain scored incorrect', () => {
+test('each resolved trial advances once while its first-attempt score is preserved', () => {
   const initial = { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 0 }
   const wrongCorrection = advanceFindingProgress(initial, false)
   const corrected = advanceFindingProgress(wrongCorrection, true)
@@ -153,7 +168,7 @@ test('the checker fails closed on ambiguous read tense and fixes audited capital
   )
 })
 
-test('every personalized finding creates five reviewed multiple-choice trials with one declared answer', () => {
+test('every personalized finding creates three reviewed multiple-choice trials with one declared answer', () => {
   const samples = [
     'Yesterday I walk home.',
     'She play games.',
@@ -177,17 +192,22 @@ test('every personalized finding creates five reviewed multiple-choice trials wi
     'Please come with I.',
     'Wow that was close!',
     'Thanks Mom.',
+    'The main character Eddie went to the store bought a hamster it died and he was sad.',
   ]
   const findings = samples.flatMap((sample) => inspectDraft(sample))
   const ruleIds = new Set(findings.map((finding) => finding.ruleId))
   assert.deepEqual([...ruleIds].sort(), [
+    'appositive-name-commas',
     'article-a',
     'article-an',
     'calendar-capital',
+    'compound-predicate-conjunction',
+    'compound-sentence-comma',
     'contraction-apostrophe',
     'correlative-conjunction',
     'demonstrative-agreement',
     'direct-address-comma',
+    'fused-sentence-break',
     'interjection-comma',
     'intro-comma',
     'object-pronoun-after-preposition',
@@ -205,7 +225,7 @@ test('every personalized finding creates five reviewed multiple-choice trials wi
     'title-capital',
   ])
   for (const finding of findings) {
-    assert.equal(finding.practice.length, 5, `${finding.ruleId} should have five similar trials`)
+    assert.equal(finding.practice.length, 3, `${finding.ruleId} should have three similar trials`)
     for (const trial of finding.practice) {
       assert.equal(trial.choices.length, 3, `${trial.id} should have three choices`)
       assert.equal(new Set(trial.choices).size, 3, `${trial.id} choices should be unique`)
@@ -245,6 +265,43 @@ test('the parent dictionary supplies exact capitalization without guessing', () 
   })
   assert.deepEqual(findings.map((finding) => finding.ruleId), ['known-name', 'known-place'])
   assert.deepEqual(findings.map((finding) => finding.replacement), ['Fionnbar', 'San Francisco'])
+})
+
+test('story introductions identify proper names and capitalize every repeated use', () => {
+  const findings = inspectDraft(
+    'The main characted eddie went to the store. Later, eddie said he was ready.',
+  ).filter((finding) => finding.ruleId === 'known-name')
+
+  assert.deepEqual(findings.map((finding) => finding.replacement), ['Eddie', 'Eddie'])
+  assert.equal(findings.every((finding) => finding.category === 'Capitalization'), true)
+  assert.equal(findings.every((finding) => finding.practice.length === 3), true)
+  assert.equal(findings[0].correction.correctAnswer.includes('Eddie'), true)
+  assert.equal(inspectDraft('The main character went home.').some((finding) => finding.ruleId === 'known-name'), false)
+  assert.equal(
+    inspectDraft('The main character Eddie went home. Later, eddie rested.')
+      .filter((finding) => finding.ruleId === 'known-name').length,
+    1,
+  )
+})
+
+test('the checker repairs the audited Eddie passage without teaching comma splices', () => {
+  const body = 'The main characted eddie went to the store cbouts a hambester it dies and he was sad.'
+  const findings = inspectWritingFindings(body)
+  const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+  }]))
+
+  assert.equal(findings.find((finding) => finding.ruleId === 'spelling-reviewed-cbouts')?.replacement, 'bought')
+  assert.equal(findings.filter((finding) => finding.ruleId === 'appositive-name-commas').length, 2)
+  assert.equal(findings.some((finding) => finding.ruleId === 'compound-predicate-conjunction'), true)
+  assert.equal(findings.some((finding) => finding.ruleId === 'fused-sentence-break'), true)
+  assert.equal(findings.some((finding) => finding.ruleId === 'compound-sentence-comma'), true)
+  assert.equal(
+    applyCompletedCorrections(body, findings, progress),
+    'The main character, Eddie, went to the store and bought a hamster. It died, and he was sad.',
+  )
 })
 
 test('ambiguous writing suggestions enter a non-blocking parent review queue', () => {

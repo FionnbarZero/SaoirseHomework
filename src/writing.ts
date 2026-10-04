@@ -1,5 +1,5 @@
 import type { Finding, FindingProgress, SpellingProgress, SpellingWord, WritingDictionary, WritingTrial } from './domain'
-import { spellingPracticeComplete } from './spelling.ts'
+import { inspectSpellingFindings, spellingPracticeComplete } from './spelling.ts'
 
 type Category = Finding['category']
 
@@ -37,6 +37,7 @@ function trial(
 }
 
 function practiceSet(id: string, prompt: string, explanation: string, rows: PracticeRow[]) {
+  if (rows.length < 9) throw new Error(`${id} needs nine reviewed practice examples`)
   return rows.map((row, index) => trial(`${id}-${index + 1}`, prompt, explanation, ...row))
 }
 
@@ -51,6 +52,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Yesterday, they played soccer.', 'Yesterday, they play soccer.', 'Yesterday, they playing soccer.'],
       ['Last week, I cooked dinner.', 'Last week, I cook dinner.', 'Last week, I cooking dinner.'],
       ['Yesterday, he jumped over the puddle.', 'Yesterday, he jumps over the puddle.', 'Yesterday, he jump over the puddle.'],
+      ['Last night, we watched a movie.', 'Last night, we watch a movie.', 'Last night, we watching a movie.'],
+      ['Yesterday, Maya cleaned her room.', 'Yesterday, Maya clean her room.', 'Yesterday, Maya cleaning her room.'],
+      ['Last night, I finished my homework.', 'Last night, I finish my homework.', 'Last night, I finishing my homework.'],
+      ['Last week, they practiced the song.', 'Last week, they practice the song.', 'Last week, they practicing the song.'],
     ],
   ),
   'subject-verb-singular': practiceSet(
@@ -63,6 +68,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['The dog runs to the gate.', 'The dog run to the gate.', 'The dog running to the gate.'],
       ['It makes a loud sound.', 'It make a loud sound.', 'It making a loud sound.'],
       ['She studies before dinner.', 'She study before dinner.', 'She studying before dinner.'],
+      ['The bird sings each morning.', 'The bird sing each morning.', 'The bird singing each morning.'],
+      ['My brother reads every night.', 'My brother read every night.', 'My brother reading every night.'],
+      ['The cat sleeps on the chair.', 'The cat sleep on the chair.', 'The cat sleeping on the chair.'],
+      ['She carries her lunch.', 'She carry her lunch.', 'She carrying her lunch.'],
     ],
   ),
   'subject-verb-plural': practiceSet(
@@ -75,6 +84,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['I write in my journal.', 'I writes in my journal.', 'I writing in my journal.'],
       ['You have a good idea.', 'You has a good idea.', 'You having a good idea.'],
       ['They study together.', 'They studies together.', 'They studying together.'],
+      ['We read after lunch.', 'We reads after lunch.', 'We reading after lunch.'],
+      ['They run around the field.', 'They runs around the field.', 'They running around the field.'],
+      ['I make breakfast on Sundays.', 'I makes breakfast on Sundays.', 'I making breakfast on Sundays.'],
+      ['You study before the test.', 'You studies before the test.', 'You studying before the test.'],
     ],
   ),
   'article-an': practiceSet(
@@ -87,6 +100,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['We had an idea.', 'We had a idea.', 'We had an ideas.'],
       ['He carried an umbrella.', 'He carried a umbrella.', 'He carried an umbrellas.'],
       ['That is an excellent answer.', 'That is a excellent answer.', 'That is an excellents answer.'],
+      ['She found an old coin.', 'She found a old coin.', 'She found an old coins.'],
+      ['We saw an orange butterfly.', 'We saw a orange butterfly.', 'We saw an orange butterflies.'],
+      ['He waited for an hour.', 'He waited for a hour.', 'He waited for an hours.'],
+      ['I need an eraser.', 'I need a eraser.', 'I need an erasers.'],
     ],
   ),
   'article-a': practiceSet(
@@ -99,6 +116,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['We played a game.', 'We played an game.', 'We played a games.'],
       ['He told a story.', 'He told an story.', 'He told a stories.'],
       ['I sharpened a pencil.', 'I sharpened an pencil.', 'I sharpened a pencils.'],
+      ['He wore a red jacket.', 'He wore an red jacket.', 'He wore a red jackets.'],
+      ['She packed a lunch.', 'She packed an lunch.', 'She packed a lunches.'],
+      ['We saw a tall tree.', 'We saw an tall tree.', 'We saw a tall trees.'],
+      ['He adopted a kitten.', 'He adopted an kitten.', 'He adopted a kittens.'],
     ],
   ),
   'demonstrative-agreement': practiceSet(
@@ -111,6 +132,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['This story is funny.', 'These story is funny.', 'This stories is funny.'],
       ['That game was difficult.', 'Those game was difficult.', 'That games was difficult.'],
       ['These ideas could work.', 'This ideas could work.', 'These idea could work.'],
+      ['Those pencils need sharpening.', 'That pencils need sharpening.', 'Those pencil need sharpening.'],
+      ['This pencil is sharp.', 'These pencil is sharp.', 'This pencils is sharp.'],
+      ['That mountain looks tall.', 'Those mountain looks tall.', 'That mountains looks tall.'],
+      ['These cookies smell good.', 'This cookies smell good.', 'These cookie smell good.'],
     ],
   ),
   'pronoun-agreement': practiceSet(
@@ -123,6 +148,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['She introduced herself to the class.', 'She introduced themselves to the class.', 'She introduced herselfs to the class.'],
       ['He helped himself to some water.', 'He helped themselves to some water.', 'He helped himselfs to some water.'],
       ['She reminded herself to practice.', 'She reminded themselves to practice.', 'She reminded herselfs to practice.'],
+      ['The girl prepared herself for school.', 'The girl prepared themselves for school.', 'The girl prepared herselfs for school.'],
+      ['He dressed himself quickly.', 'He dressed themselves quickly.', 'He dressed himselfs quickly.'],
+      ['The boy taught himself chess.', 'The boy taught themselves chess.', 'The boy taught himselfs chess.'],
+      ['She made herself some tea.', 'She made themselves some tea.', 'She made herselfs some tea.'],
     ],
   ),
   'sentence-capital': practiceSet(
@@ -135,6 +164,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['After lunch, we read quietly.', 'after lunch, we read quietly.', 'AFter lunch, we read quietly.'],
       ['Tomorrow will be sunny.', 'tomorrow will be sunny.', 'TOmorrow will be sunny.'],
       ['Everyone cheered at the end.', 'everyone cheered at the end.', 'EVeryone cheered at the end.'],
+      ['Our team practiced after school.', 'our team practiced after school.', 'OUr team practiced after school.'],
+      ['Rain tapped against the window.', 'rain tapped against the window.', 'RAin tapped against the window.'],
+      ['Later, we finished the puzzle.', 'later, we finished the puzzle.', 'LAter, we finished the puzzle.'],
+      ['Nothing moved in the hallway.', 'nothing moved in the hallway.', 'NOthing moved in the hallway.'],
     ],
   ),
   'pronoun-i': practiceSet(
@@ -147,6 +180,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Sam and I rode our bikes.', 'Sam and i rode our bikes.', 'Sam and II rode our bikes.'],
       ['When I arrived, class had started.', 'When i arrived, class had started.', 'When II arrived, class had started.'],
       ['I think the answer is seven.', 'i think the answer is seven.', 'II think the answer is seven.'],
+      ['Dad and I cleaned the kitchen.', 'Dad and i cleaned the kitchen.', 'Dad and II cleaned the kitchen.'],
+      ['Maya and I read together.', 'Maya and i read together.', 'Maya and II read together.'],
+      ['After dinner, I washed the dishes.', 'After dinner, i washed the dishes.', 'After dinner, II washed the dishes.'],
+      ['Can I borrow your pencil?', 'Can i borrow your pencil?', 'Can II borrow your pencil?'],
     ],
   ),
   'calendar-capital': practiceSet(
@@ -159,6 +196,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['We practice on Friday.', 'We practice on friday.', 'We practice on FRIDAY.'],
       ['Her birthday is in January.', 'Her birthday is in january.', 'Her birthday is in JANUARY.'],
       ['The trip starts on Tuesday.', 'The trip starts on tuesday.', 'The trip starts on TUESDAY.'],
+      ['The concert is in June.', 'The concert is in june.', 'The concert is in JUNE.'],
+      ['We leave on Wednesday.', 'We leave on wednesday.', 'We leave on WEDNESDAY.'],
+      ['My birthday is in October.', 'My birthday is in october.', 'My birthday is in OCTOBER.'],
+      ['The game is on Saturday.', 'The game is on saturday.', 'The game is on SATURDAY.'],
     ],
   ),
   'title-capital': practiceSet(
@@ -171,6 +212,26 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Ms. Rivera teaches science.', 'ms. Rivera teaches science.', 'MS. RIVERA teaches science.'],
       ['Mrs. Green called the office.', 'mrs. green called the office.', 'MRS. GREEN called the office.'],
       ['Dr. Brown checked the results.', 'dr. brown checked the results.', 'DR. BROWN checked the results.'],
+      ['Ms. Chen collected our papers.', 'ms. chen collected our papers.', 'MS. CHEN collected our papers.'],
+      ['Mr. Patel coaches our team.', 'mr. patel coaches our team.', 'MR. PATEL coaches our team.'],
+      ['Mrs. Jones leads the club.', 'mrs. jones leads the club.', 'MRS. JONES leads the club.'],
+      ['Dr. Garcia answered my question.', 'dr. garcia answered my question.', 'DR. GARCIA answered my question.'],
+    ],
+  ),
+  'proper-name-capital': practiceSet(
+    'proper-name-capital',
+    'Choose the sentence that capitalizes the person’s name correctly.',
+    'A person’s name is a proper noun, so it begins with a capital letter.',
+    [
+      ['The main character, Eddie, found a map.', 'The main character, eddie, found a map.', 'The main character, EDDIE, found a map.'],
+      ['A girl named Maya joined the team.', 'A girl named maya joined the team.', 'A girl named MAYA joined the team.'],
+      ['Leo opened the old book.', 'leo opened the old book.', 'LEO opened the old book.'],
+      ['My friend Sam brought a kite.', 'My friend sam brought a kite.', 'My friend SAM brought a kite.'],
+      ['A boy called Ben answered the door.', 'A boy called ben answered the door.', 'A boy called BEN answered the door.'],
+      ['Nora walked through the garden.', 'nora walked through the garden.', 'NORA walked through the garden.'],
+      ['The character Ava solved the puzzle.', 'The character ava solved the puzzle.', 'The character AVA solved the puzzle.'],
+      ['Liam said that he was ready.', 'liam said that he was ready.', 'LIAM said that he was ready.'],
+      ['Zoe carried the basket home.', 'zoe carried the basket home.', 'ZOE carried the basket home.'],
     ],
   ),
   'contraction-apostrophe': practiceSet(
@@ -183,6 +244,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['We won’t be late.', 'We wont be late.', 'We won’’t be late.'],
       ['I’m ready to begin.', 'Im ready to begin.', 'I’’m ready to begin.'],
       ['They’re waiting outside.', 'Theyre waiting outside.', 'They’’re waiting outside.'],
+      ['He isn’t here yet.', 'He isnt here yet.', 'He isn’’t here yet.'],
+      ['You’re welcome to join us.', 'Youre welcome to join us.', 'You’’re welcome to join us.'],
+      ['We’ll finish tomorrow.', 'Well finish tomorrow.', 'We’’ll finish tomorrow.'],
+      ['That’s my backpack.', 'Thats my backpack.', 'That’’s my backpack.'],
     ],
   ),
   'intro-comma': practiceSet(
@@ -195,6 +260,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['When she reached school, she called home.', 'When she reached school she called home.', 'When, she reached school she called home.'],
       ['If it rains, we will stay inside.', 'If it rains we will stay inside.', 'If, it rains we will stay inside.'],
       ['While they waited, they read a book.', 'While they waited they read a book.', 'While, they waited they read a book.'],
+      ['Although I was tired, I finished the chapter.', 'Although I was tired I finished the chapter.', 'Although, I was tired I finished the chapter.'],
+      ['Because the bell rang, we went inside.', 'Because the bell rang we went inside.', 'Because, the bell rang we went inside.'],
+      ['As the sun set, the air cooled.', 'As the sun set the air cooled.', 'As, the sun set the air cooled.'],
+      ['Unless you hurry, you will miss the bus.', 'Unless you hurry you will miss the bus.', 'Unless, you hurry you will miss the bus.'],
     ],
   ),
   'simple-list-commas': practiceSet(
@@ -207,6 +276,74 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['She likes apples, pears, and grapes.', 'She likes apples pears and grapes.', 'She likes, apples pears, and grapes.'],
       ['I brought paper, pencils, and markers.', 'I brought paper pencils and markers.', 'I brought, paper pencils, and markers.'],
       ['They chose red, blue, and green.', 'They chose red blue and green.', 'They chose, red blue, and green.'],
+      ['We need glue, tape, and scissors.', 'We need glue tape and scissors.', 'We need, glue tape, and scissors.'],
+      ['She bought milk, bread, and eggs.', 'She bought milk bread and eggs.', 'She bought, milk bread, and eggs.'],
+      ['The flag is red, white, and blue.', 'The flag is red white and blue.', 'The flag is, red white, and blue.'],
+      ['We studied math, science, and art.', 'We studied math science and art.', 'We studied, math science, and art.'],
+    ],
+  ),
+  'appositive-name-commas': practiceSet(
+    'appositive-name-commas',
+    'Choose the sentence that sets off the character’s name correctly.',
+    'A name that renames a nearby noun is extra information, so a comma belongs before and after the name.',
+    [
+      ['The main character, Eddie, found a map.', 'The main character Eddie found a map.', 'The main character, Eddie found a map.'],
+      ['The protagonist, Maya, opened the gate.', 'The protagonist Maya opened the gate.', 'The protagonist Maya, opened the gate.'],
+      ['The main character, Leo, climbed the hill.', 'The main character Leo climbed the hill.', 'The main character, Leo climbed the hill.'],
+      ['The protagonist, Ava, solved the puzzle.', 'The protagonist Ava solved the puzzle.', 'The protagonist Ava, solved the puzzle.'],
+      ['The main character, Ben, carried the bag.', 'The main character Ben carried the bag.', 'The main character, Ben carried the bag.'],
+      ['The protagonist, Nora, read the note.', 'The protagonist Nora read the note.', 'The protagonist Nora, read the note.'],
+      ['The main character, Liam, crossed the bridge.', 'The main character Liam crossed the bridge.', 'The main character, Liam crossed the bridge.'],
+      ['The protagonist, Zoe, heard a sound.', 'The protagonist Zoe heard a sound.', 'The protagonist Zoe, heard a sound.'],
+      ['The main character, Sam, followed the trail.', 'The main character Sam followed the trail.', 'The main character, Sam followed the trail.'],
+    ],
+  ),
+  'compound-predicate-conjunction': practiceSet(
+    'compound-predicate-conjunction',
+    'Choose the sentence that joins two actions by the same subject correctly.',
+    'When one subject performs two connected actions, “and” can join the verbs without a comma.',
+    [
+      ['Eddie went to the store and bought a hamster.', 'Eddie went to the store bought a hamster.', 'Eddie went to the store, bought a hamster.'],
+      ['Maya opened the book and read the first page.', 'Maya opened the book read the first page.', 'Maya opened the book, read the first page.'],
+      ['Leo packed his bag and walked to school.', 'Leo packed his bag walked to school.', 'Leo packed his bag, walked to school.'],
+      ['Ava found the key and opened the door.', 'Ava found the key opened the door.', 'Ava found the key, opened the door.'],
+      ['Ben washed the apple and ate it.', 'Ben washed the apple ate it.', 'Ben washed the apple, ate it.'],
+      ['Nora picked up the note and read it.', 'Nora picked up the note read it.', 'Nora picked up the note, read it.'],
+      ['Liam tied his shoes and ran outside.', 'Liam tied his shoes ran outside.', 'Liam tied his shoes, ran outside.'],
+      ['Zoe finished her work and closed the notebook.', 'Zoe finished her work closed the notebook.', 'Zoe finished her work, closed the notebook.'],
+      ['Sam reached the park and met his friend.', 'Sam reached the park met his friend.', 'Sam reached the park, met his friend.'],
+    ],
+  ),
+  'fused-sentence-break': practiceSet(
+    'fused-sentence-break',
+    'Choose the sentence that separates two complete thoughts correctly.',
+    'Two complete thoughts need a period and a capital letter when they stand as separate sentences.',
+    [
+      ['I bought a hamster. It slept in a cage.', 'I bought a hamster it slept in a cage.', 'I bought a hamster, it slept in a cage.'],
+      ['She found a kitten. It followed her home.', 'She found a kitten it followed her home.', 'She found a kitten, it followed her home.'],
+      ['We saw a bird. It flew into a tree.', 'We saw a bird it flew into a tree.', 'We saw a bird, it flew into a tree.'],
+      ['He carried the box. It was very heavy.', 'He carried the box it was very heavy.', 'He carried the box, it was very heavy.'],
+      ['They planted a seed. It grew quickly.', 'They planted a seed it grew quickly.', 'They planted a seed, it grew quickly.'],
+      ['I opened the letter. It had good news.', 'I opened the letter it had good news.', 'I opened the letter, it had good news.'],
+      ['She kicked the ball. It rolled downhill.', 'She kicked the ball it rolled downhill.', 'She kicked the ball, it rolled downhill.'],
+      ['We heard a noise. It came from upstairs.', 'We heard a noise it came from upstairs.', 'We heard a noise, it came from upstairs.'],
+      ['He made a model. It looked realistic.', 'He made a model it looked realistic.', 'He made a model, it looked realistic.'],
+    ],
+  ),
+  'compound-sentence-comma': practiceSet(
+    'compound-sentence-comma',
+    'Choose the sentence that joins two complete thoughts correctly.',
+    'Use a comma before “and” when it joins two complete thoughts that each have their own subject and verb.',
+    [
+      ['It died, and he was sad.', 'It died and he was sad.', 'It died and, he was sad.'],
+      ['She finished, and I checked the work.', 'She finished and I checked the work.', 'She finished and, I checked the work.'],
+      ['He laughed, and she smiled.', 'He laughed and she smiled.', 'He laughed and, she smiled.'],
+      ['They ran, and we followed.', 'They ran and we followed.', 'They ran and, we followed.'],
+      ['It was late, and we went home.', 'It was late and we went home.', 'It was late and, we went home.'],
+      ['I was tired, and she was hungry.', 'I was tired and she was hungry.', 'I was tired and, she was hungry.'],
+      ['He cried, and she felt worried.', 'He cried and she felt worried.', 'He cried and, she felt worried.'],
+      ['We laughed, and they laughed too.', 'We laughed and they laughed too.', 'We laughed and, they laughed too.'],
+      ['She was ready, and he was calm.', 'She was ready and he was calm.', 'She was ready and, he was calm.'],
     ],
   ),
   'paired-quotes': practiceSet(
@@ -219,6 +356,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['I heard her shout, “Wait!”', 'I heard her shout, “Wait!', 'I heard her shout, Wait!”'],
       ['Dad asked, “Are you ready?”', 'Dad asked, “Are you ready?', 'Dad asked, Are you ready?”'],
       ['“That was amazing,” Fionnbar said.', '“That was amazing, Fionnbar said.', 'That was amazing,” Fionnbar said.'],
+      ['Leo whispered, “Be quiet.”', 'Leo whispered, “Be quiet.', 'Leo whispered, Be quiet.”'],
+      ['“I found it,” Maya said.', '“I found it, Maya said.', 'I found it,” Maya said.'],
+      ['Mom said, “Dinner is ready.”', 'Mom said, “Dinner is ready.', 'Mom said, Dinner is ready.”'],
+      ['“Turn left,” the guide said.', '“Turn left, the guide said.', 'Turn left,” the guide said.'],
     ],
   ),
   'perfect-tense-participle': practiceSet(
@@ -231,6 +372,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['I had eaten before practice.', 'I had eat before practice.', 'I had ate before practice.'],
       ['He has taken the bus before.', 'He has take the bus before.', 'He has took the bus before.'],
       ['We have finished our project.', 'We have finish our project.', 'We have finishing our project.'],
+      ['Dad had driven there before.', 'Dad had drive there before.', 'Dad had drove there before.'],
+      ['I have seen that movie.', 'I have see that movie.', 'I have saw that movie.'],
+      ['He had made a model.', 'He had make a model.', 'He had making a model.'],
+      ['The class has begun the lesson.', 'The class has begin the lesson.', 'The class has began the lesson.'],
     ],
   ),
   'past-tense-consistency': practiceSet(
@@ -243,6 +388,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Yesterday, we visited and talked.', 'Yesterday, we visited and talk.', 'Yesterday, we visit and talked.'],
       ['Last week, they jumped and played.', 'Last week, they jumped and play.', 'Last week, they jump and played.'],
       ['Yesterday, I looked and listened.', 'Yesterday, I looked and listens.', 'Yesterday, I look and listened.'],
+      ['Last night, she laughed and smiled.', 'Last night, she laughed and smiles.', 'Last night, she laughs and smiled.'],
+      ['Yesterday, he opened the book and started reading.', 'Yesterday, he opened the book and starts reading.', 'Yesterday, he opens the book and started reading.'],
+      ['Last week, we studied and practiced.', 'Last week, we studied and practice.', 'Last week, we study and practiced.'],
+      ['Last night, they watched and laughed.', 'Last night, they watched and laugh.', 'Last night, they watch and laughed.'],
     ],
   ),
   'correlative-conjunction': practiceSet(
@@ -255,6 +404,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Both the book and the film were funny.', 'Both the book or the film were funny.', 'Both the book nor the film were funny.'],
       ['We can either walk or take the bus.', 'We can either walk nor take the bus.', 'We can either walk and take the bus.'],
       ['She likes both drawing and writing.', 'She likes both drawing or writing.', 'She likes both drawing nor writing.'],
+      ['They brought neither pencils nor paper.', 'They brought neither pencils or paper.', 'They brought neither pencils and paper.'],
+      ['Both Maya and Leo volunteered.', 'Both Maya or Leo volunteered.', 'Both Maya nor Leo volunteered.'],
+      ['Either the blue pen or the black pen will work.', 'Either the blue pen nor the black pen will work.', 'Either the blue pen and the black pen will work.'],
+      ['Neither the teacher nor the students were late.', 'Neither the teacher or the students were late.', 'Neither the teacher and the students were late.'],
     ],
   ),
   'object-pronoun-after-preposition': practiceSet(
@@ -267,6 +420,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['The teacher spoke to her.', 'The teacher spoke to she.', 'The teacher spoke to hers.'],
       ['Keep this between you and me.', 'Keep this between you and I.', 'Keep this between you and my.'],
       ['Dad sat beside us.', 'Dad sat beside we.', 'Dad sat beside our.'],
+      ['The coach waited for them.', 'The coach waited for they.', 'The coach waited for their.'],
+      ['She shared the snack with us.', 'She shared the snack with we.', 'She shared the snack with our.'],
+      ['I saved a seat for her.', 'I saved a seat for she.', 'I saved a seat for hers.'],
+      ['The letter came from him.', 'The letter came from he.', 'The letter came from his.'],
     ],
   ),
   'interjection-comma': practiceSet(
@@ -279,6 +436,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['No, we did not miss the bus.', 'No we did not miss the bus.', 'No we, did not miss the bus.'],
       ['Well, I can try again.', 'Well I can try again.', 'Well I, can try again.'],
       ['Oh, that makes sense now.', 'Oh that makes sense now.', 'Oh that, makes sense now.'],
+      ['Okay, I will check my answer.', 'Okay I will check my answer.', 'Okay I, will check my answer.'],
+      ['Sure, I can help.', 'Sure I can help.', 'Sure I, can help.'],
+      ['Hey, wait for me!', 'Hey wait for me!', 'Hey wait, for me!'],
+      ['Gosh, that was surprising.', 'Gosh that was surprising.', 'Gosh that, was surprising.'],
     ],
   ),
   'direct-address-comma': practiceSet(
@@ -291,6 +452,10 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Goodbye, Dad.', 'Goodbye Dad.', 'Goodbye Dad,.'],
       ['Please listen, Maya.', 'Please listen Maya.', 'Please, listen Maya.'],
       ['Are you ready, Leo?', 'Are you ready Leo?', 'Are you, ready Leo?'],
+      ['Come here, Sam.', 'Come here Sam.', 'Come, here Sam.'],
+      ['Please pass the ball, Liam.', 'Please pass the ball Liam.', 'Please, pass the ball Liam.'],
+      ['I appreciate your help, Ava.', 'I appreciate your help Ava.', 'I appreciate, your help Ava.'],
+      ['Wait for me, Ben!', 'Wait for me Ben!', 'Wait, for me Ben!'],
     ],
   ),
   'terminal-punctuation': practiceSet(
@@ -303,11 +468,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Watch out for the puddle!', 'Watch out for the puddle', 'Watch out for the puddle!!'],
       ['She said, “Hello.”', 'She said, “Hello”', 'She said, “Hello..”'],
       ['We arrived before noon.', 'We arrived before noon', 'We arrived before noon..'],
+      ['Did you finish the chapter?', 'Did you finish the chapter.', 'Did you finish the chapter'],
+      ['The library closes at five.', 'The library closes at five', 'The library closes at five..'],
+      ['Why is the sky blue?', 'Why is the sky blue.', 'Why is the sky blue'],
+      ['That was an amazing goal!', 'That was an amazing goal', 'That was an amazing goal!!'],
     ],
   ),
 }
 
-RULE_PRACTICE['known-name'] = RULE_PRACTICE['title-capital']
+RULE_PRACTICE['known-name'] = RULE_PRACTICE['proper-name-capital']
 RULE_PRACTICE['known-place'] = RULE_PRACTICE['title-capital']
 
 function sentenceBounds(body: string, index: number) {
@@ -351,11 +520,17 @@ function addFinding(body: string, findings: Finding[], input: FindingInput) {
   if (overlaps) return
   const practice = RULE_PRACTICE[input.ruleId]
   if (!practice) throw new Error(`Missing writing practice for ${input.ruleId}`)
+  const sameRuleIndex = findings.filter((finding) => finding.ruleId === input.ruleId).length
+  const practiceStart = (sameRuleIndex * 3) % practice.length
+  const selectedPractice = Array.from(
+    { length: 3 },
+    (_, index) => practice[(practiceStart + index) % practice.length],
+  )
   findings.push({
     ...input,
     id: `${input.ruleId}-${input.start}`,
     correction: correctionTrial(body, input),
-    practice: practice.map((item) => ({ ...item, choices: [...item.choices] })),
+    practice: selectedPractice.map((item) => ({ ...item, choices: [...item.choices] })),
   })
 }
 
@@ -365,6 +540,42 @@ function capitalizeLike(value: string, replacement: string) {
 
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function capitalizeProperName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/(^|[-'’])([a-z])/g, (_, separator: string, letter: string) => `${separator}${letter.toUpperCase()}`)
+}
+
+function inferredProperNames(body: string) {
+  const names = new Map<string, string>()
+  const ignored = new Set([
+    'a', 'an', 'and', 'he', 'her', 'him', 'his', 'i', 'it', 'main', 'my', 'she', 'the', 'their',
+    'them', 'they', 'this', 'we', 'who', 'you', 'your',
+  ])
+  const remember = (value: string) => {
+    const normalized = value.toLowerCase()
+    if (value.length < 2 || ignored.has(normalized)) return
+    names.set(normalized, capitalizeProperName(value))
+  }
+
+  // Infer names only from explicit story context. This avoids treating every
+  // unfamiliar lowercase word as a proper noun.
+  const introducedName = /\bnamed\s+([a-z][a-z'’-]{1,30})\b/gi
+  let match: RegExpExecArray | null
+  while ((match = introducedName.exec(body)) !== null) remember(match[1])
+
+  const calledName = /\b(?:boy|girl|person|character|friend|student|teacher|dog|cat|hamster|pet)\s+called\s+([a-z][a-z'’-]{1,30})\b/gi
+  while ((match = calledName.exec(body)) !== null) remember(match[1])
+
+  const characterThenAction = /\b(?:main\s+)?(?:character|characted|charater|caracter|protagonist)\s*,?\s+([a-z][a-z'’-]{1,30})\s*,?\s+(?=(?:is|was|went|said|asked|replied|shouted|whispered|had|has|did|does|walked|ran|lived|wanted|told|found|made|saw|liked|visited)\b)/gi
+  while ((match = characterThenAction.exec(body)) !== null) remember(match[1])
+
+  const speakerName = /\b([a-z][a-z'’-]{1,30})\s+(?=(?:said|asked|replied|shouted|whispered)\b)/gi
+  while ((match = speakerName.exec(body)) !== null) remember(match[1])
+
+  return [...names.values()]
 }
 
 export function inspectDraft(
@@ -457,6 +668,33 @@ export function inspectDraft(
     })
   }
 
+  const narrativePastShift = /\b(it|he|she)\s+(dies|walks|plays|runs|looks)\s+and\s+(he|she|it)\s+(was|were)\b/gi
+  const narrativePastForms: Record<string, string> = {
+    dies: 'died', walks: 'walked', plays: 'played', runs: 'ran', looks: 'looked',
+  }
+  while ((match = narrativePastShift.exec(body)) !== null) {
+    const verb = match[2]
+    const start = match.index + match[0].toLowerCase().indexOf(verb.toLowerCase())
+    const replacement = capitalizeLike(verb, narrativePastForms[verb.toLowerCase()])
+    addFinding(body, findings, {
+      ruleId: 'past-tense-consistency', category: 'Grammar', start, end: start + verb.length, replacement,
+      message: `“${verb}” shifts to the present even though the connected action uses the past tense.`,
+      suggestion: `Keep the connected actions in the past tense with “${replacement}”.`,
+      wrongReplacement: verb.replace(/s$/i, ''),
+    })
+  }
+
+  const missingPredicateConjunction = /\b((?:went|walked|drove)\s+to\s+the\s+(?:store|shop|market))(\s+)(?=(?:cbouts|bought|purchased)\b)/gi
+  while ((match = missingPredicateConjunction.exec(body)) !== null) {
+    const start = match.index + match[1].length
+    addFinding(body, findings, {
+      ruleId: 'compound-predicate-conjunction', category: 'Grammar', start,
+      end: start + match[2].length, replacement: ' and ',
+      message: 'The same character performs two connected actions, but the joining word is missing.',
+      suggestion: 'Use “and” to join “went” and “bought.”', wrongReplacement: ', ',
+    })
+  }
+
   for (const [opening, wrongClosing, correctClosing] of [
     ['either', 'nor', 'or'],
     ['neither', 'or', 'nor'],
@@ -544,10 +782,10 @@ export function inspectDraft(
   }
 
   for (const [kind, entries] of [
-    ['name', dictionary.knownNames],
+    ['name', [...dictionary.knownNames, ...inferredProperNames(body)]],
     ['place', dictionary.knownPlaces],
   ] as const) {
-    for (const entry of entries) {
+    for (const entry of [...new Set(entries)]) {
       const expected = entry.trim()
       if (!expected) continue
       const pattern = new RegExp(`\\b${escapeRegex(expected.toLowerCase())}\\b`, 'g')
@@ -579,6 +817,29 @@ export function inspectDraft(
       message: `“${match[0]}” needs standard title and name capitalization.`,
       suggestion: `Write “${replacement}”.`, wrongReplacement: replacement.toUpperCase(),
     })
+  }
+
+  const appositiveName = /\b((?:main\s+)?(?:character|characted|charater|caracter|protagonist))(\s*,\s*|\s+)([A-Za-z][A-Za-z'’-]{1,30})(\s*,\s*|\s+)(?=(?:is|was|went|said|asked|replied|shouted|whispered|had|has|did|does|walked|ran|lived|wanted|told|found|made|saw|liked|visited)\b)/gi
+  while ((match = appositiveName.exec(body)) !== null) {
+    const name = capitalizeProperName(match[3])
+    const beforeStart = match.index + match[1].length
+    const beforeEnd = beforeStart + match[2].length
+    if (match[2] !== ', ') {
+      addFinding(body, findings, {
+        ruleId: 'appositive-name-commas', category: 'Punctuation', start: beforeStart, end: beforeEnd,
+        replacement: ', ', message: `The name “${name}” needs a comma before it.`,
+        suggestion: `Write “${match[1]}, ${name}, …”`, wrongReplacement: ' ',
+      })
+    }
+    const afterStart = beforeEnd + match[3].length
+    const afterEnd = afterStart + match[4].length
+    if (match[4] !== ', ') {
+      addFinding(body, findings, {
+        ruleId: 'appositive-name-commas', category: 'Punctuation', start: afterStart, end: afterEnd,
+        replacement: ', ', message: `The name “${name}” needs a comma after it.`,
+        suggestion: `Write “${match[1]}, ${name}, …”`, wrongReplacement: ' ',
+      })
+    }
   }
 
   const sentenceCapital = /(^|[.!?]\s+|\n\s*)([a-z])/gm
@@ -685,6 +946,29 @@ export function inspectDraft(
     })
   }
 
+  const fusedSentence = /\b(?:a|an|the)\s+[A-Za-z]+(\s+)(it)(?=\s+(?:is|was|has|had|dies|died|runs|ran|gets|got|becomes|became|sleeps|slept|looks|looked)\b)/gi
+  while ((match = fusedSentence.exec(body)) !== null) {
+    const start = match.index + match[0].length - match[1].length - match[2].length
+    addFinding(body, findings, {
+      ruleId: 'fused-sentence-break', category: 'Punctuation', start,
+      end: match.index + match[0].length, replacement: '. It',
+      message: 'Two complete thoughts have been joined without an ending mark.',
+      suggestion: 'End the first thought with a period and begin “It” with a capital letter.',
+      wrongReplacement: ', it',
+    })
+  }
+
+  const compoundSentence = /\b(?:it|he|she|they|we|I)\s+(?:is|are|was|were|has|have|had|does|did|dies|died|runs|ran|laughs|laughed|cries|cried|finishes|finished|feels|felt|wants|wanted|goes|went)(?:\s+[A-Za-z]+){0,3}(\s+)and(\s+)(?=(?:it|he|she|they|we|I)\s+(?:is|are|was|were|has|have|had|does|did|runs|ran|laughs|laughed|cries|cried|checks|checked|feels|felt|wants|wanted|goes|went)\b)/gi
+  while ((match = compoundSentence.exec(body)) !== null) {
+    const start = match.index + match[0].length - match[2].length - 'and'.length - match[1].length
+    addFinding(body, findings, {
+      ruleId: 'compound-sentence-comma', category: 'Punctuation', start,
+      end: start + match[1].length, replacement: ', ',
+      message: '“And” joins two complete thoughts, so it needs a comma before it.',
+      suggestion: 'Place a comma before “and.”', wrongReplacement: ' ',
+    })
+  }
+
   const quoteCount = [...body].filter((character) => character === '“' || character === '”' || character === '"').length
   if (quoteCount % 2 === 1) {
     const end = body.trimEnd().length
@@ -709,6 +993,14 @@ export function inspectDraft(
   }
 
   return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
+}
+
+export function inspectWritingFindings(
+  body: string,
+  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+) {
+  return [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
+    .sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
 }
 
 export type AmbiguousWritingFinding = {
@@ -775,7 +1067,7 @@ export function applyCompletedCorrections(
 export function advanceFindingProgress(
   current: FindingProgress | undefined,
   correct: boolean,
-  practiceTarget = 5,
+  practiceTarget = 3,
 ): FindingProgress {
   const progress = current ?? { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 0 }
   const next = {
@@ -785,6 +1077,33 @@ export function advanceFindingProgress(
   }
   if (!progress.correctionComplete) return { ...next, correctionComplete: true }
   return { ...next, practiceCompleted: Math.min(practiceTarget, progress.practiceCompleted + 1) }
+}
+
+export function skipRemainingWritingTrials(
+  findings: Finding[],
+  current: Record<string, FindingProgress>,
+) {
+  return Object.fromEntries(findings.map((finding) => {
+    const progress = current[finding.id] ?? {
+      correctionComplete: false,
+      practiceCompleted: 0,
+      incorrectAttempts: 0,
+    }
+    const requiredResponses = finding.practice.length + 1
+    const attemptResults = Array.isArray(progress.attemptResults)
+      ? progress.attemptResults.slice(0, requiredResponses).map(Boolean)
+      : []
+    while (attemptResults.length < requiredResponses) attemptResults.push(false)
+    return [finding.id, {
+      correctionComplete: true,
+      practiceCompleted: finding.practice.length,
+      incorrectAttempts: Math.max(
+        progress.incorrectAttempts,
+        attemptResults.filter((result) => !result).length,
+      ),
+      attemptResults,
+    }]
+  }))
 }
 
 export type WritingScore = {
@@ -805,6 +1124,52 @@ export function evaluateWritingChoice(trial: WritingTrial, choice: string) {
       ? 'Correct.'
       : `Not quite. The correct answer is “${trial.correctAnswer}”`,
     explanation: trial.explanation,
+  }
+}
+
+export type WritingAnswerState = {
+  firstChoice: string
+  firstAttemptCorrect: boolean
+  resolved: boolean
+  feedback: ReturnType<typeof evaluateWritingChoice>
+}
+
+export function resolveWritingChoice(
+  trial: WritingTrial,
+  choice: string,
+  current: WritingAnswerState | null = null,
+): WritingAnswerState {
+  if (current?.resolved) return current
+  const evaluated = evaluateWritingChoice(trial, choice)
+  if (!current) {
+    return {
+      firstChoice: choice,
+      firstAttemptCorrect: evaluated.correct,
+      resolved: evaluated.correct,
+      feedback: evaluated.correct
+        ? evaluated
+        : {
+            ...evaluated,
+            summary: `${evaluated.summary}. Select that answer to continue.`,
+          },
+    }
+  }
+  if (!evaluated.correct) {
+    return {
+      ...current,
+      feedback: {
+        ...evaluated,
+        summary: `${evaluated.summary}. Select that answer to continue.`,
+      },
+    }
+  }
+  return {
+    ...current,
+    resolved: true,
+    feedback: {
+      ...evaluated,
+      summary: `Corrected. The correct answer is “${trial.correctAnswer}”`,
+    },
   }
 }
 

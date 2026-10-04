@@ -49,10 +49,12 @@ import {
 import {
   advanceFindingProgress,
   applyCompletedCorrections,
-  evaluateWritingChoice,
   inspectAmbiguousDraft,
-  inspectDraft,
+  inspectWritingFindings,
+  resolveWritingChoice,
   scoreWritingResponses,
+  skipRemainingWritingTrials,
+  type WritingAnswerState,
   writingReviewStatus,
 } from './writing'
 import {
@@ -405,8 +407,27 @@ function App() {
     const session = latestState.current.activeGameSession
     if (!session || session.status !== 'pending') throw new Error('Start the daily writing activity first.')
     if (serviceStatus !== 'online') throw new Error('Reconnect the local service before finishing the writing activity.')
-    await saveStateToService(latestState.current)
-    const response = await completeWritingGame(session.id, draftId)
+    let response
+    try {
+      await saveStateToService(latestState.current)
+      response = await completeWritingGame(session.id, draftId)
+    } catch (error) {
+      const recoverable = error instanceof ServiceRequestError &&
+        ['session_expired', 'session_inactive', 'session_not_found'].includes(error.code)
+      if (!recoverable) throw error
+
+      const restarted = await startReadingGameSession(session.day)
+      const refreshedAt = new Date().toISOString()
+      const recoveredState: AppState = {
+        ...restarted.state,
+        drafts: latestState.current.drafts.map((draft) => draft.id === draftId
+          ? { ...draft, updatedAt: refreshedAt }
+          : draft),
+        activeGameSession: restarted.gameSession,
+      }
+      await saveStateToService(recoveredState)
+      response = await completeWritingGame(restarted.gameSession.id, draftId)
+    }
     setState(response.state)
     setServiceMeta(response.meta)
     setSessionError('')
@@ -995,14 +1016,14 @@ function WritingAccuracyGraph({ points }: { points: number[] }) {
   })
   return (
     <figure className="accuracy-graph">
-      <figcaption>Accuracy after each response</figcaption>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Line graph of cumulative accuracy across ${points.length} responses, ending at ${points.at(-1)} percent`}>
-        <title>Cumulative writing-game accuracy</title>
+      <figcaption>First-try accuracy after each question</figcaption>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Line graph of cumulative first-try accuracy across ${points.length} questions, ending at ${points.at(-1)} percent`}>
+        <title>Cumulative first-try writing-game accuracy</title>
         <line x1={inset} y1={inset} x2={inset} y2={height - inset} />
         <line x1={inset} y1={height - inset} x2={width - inset} y2={height - inset} />
         <line className="guide" x1={inset} y1={height / 2} x2={width - inset} y2={height / 2} />
         <polyline points={coordinates.map(({ x, y }) => `${x},${y}`).join(' ')} />
-        {coordinates.map(({ x, y, percent }, index) => <circle key={`${index}-${percent}`} cx={x} cy={y} r="4"><title>{`Response ${index + 1}: ${percent}% cumulative accuracy`}</title></circle>)}
+        {coordinates.map(({ x, y, percent }, index) => <circle key={`${index}-${percent}`} cx={x} cy={y} r="4"><title>{`Question ${index + 1}: ${percent}% cumulative first-try accuracy`}</title></circle>)}
       </svg>
       <span><b>0%</b><b>50%</b><b>100%</b></span>
     </figure>
@@ -1018,27 +1039,40 @@ function WritingView({
   setState: React.Dispatch<React.SetStateAction<AppState>>
   finishWritingGame: (draftId: string) => Promise<void>
 }) {
-  const latest = state.drafts[0]
+  const latest = state.drafts.find((draft) => !draft.weekId || draft.weekId === state.weekContext.weekId)
   const dailyWritingActive = state.activeGameSession?.status === 'pending'
+  const latestNeedsWork = Boolean(
+    latest && (latest.reviewStatus !== 'complete' || (latest.findings?.length ?? 0) > 0),
+  )
   const latestIsCurrentActivity = !dailyWritingActive || Boolean(
     latest && state.activeGameSession &&
-    new Date(latest.updatedAt).getTime() >= new Date(state.activeGameSession.createdAt).getTime(),
+    (latestNeedsWork || new Date(latest.updatedAt).getTime() >= new Date(state.activeGameSession.createdAt).getTime()),
   )
   const workingDraft = latestIsCurrentActivity ? latest : undefined
   const [title, setTitle] = useState(workingDraft?.title ?? '')
   const [body, setBody] = useState(workingDraft?.body ?? '')
-  const [showReview, setShowReview] = useState(false)
+  const [showReview, setShowReview] = useState(Boolean(
+    workingDraft && (
+      workingDraft.reviewStatus !== 'complete' ||
+      (dailyWritingActive && (workingDraft.findings?.length ?? 0) === 0)
+    ),
+  ))
   const [reviewDraftId, setReviewDraftId] = useState<string | null>(workingDraft?.id ?? null)
+  const [revisingFromDraftId, setRevisingFromDraftId] = useState<string | null>(
+    workingDraft?.reviewStatus === 'complete' && (workingDraft.findings?.length ?? 0) > 0
+      ? workingDraft.id
+      : null,
+  )
   const [answerMessage, setAnswerMessage] = useState('')
-  const [answerFeedback, setAnswerFeedback] = useState<null | ReturnType<typeof evaluateWritingChoice>>(null)
+  const [answerState, setAnswerState] = useState<WritingAnswerState | null>(null)
   const [spellingAnswer, setSpellingAnswer] = useState('')
   const [finishingWriting, setFinishingWriting] = useState(false)
   const [finishMessage, setFinishMessage] = useState('')
   const questionHeadingRef = useRef<HTMLHeadingElement>(null)
   const analysis = useMemo(() => ({
-    findings: inspectDraft(body, state.writingDictionary),
+    findings: inspectWritingFindings(body, state.writingDictionary),
     reviewItems: inspectAmbiguousDraft(body),
-    spellingWords: inspectSpelling(body, state.writingDictionary),
+    spellingWords: [],
   }), [body, state.writingDictionary])
   const findings = analysis.findings
   const reviewDraft = state.drafts.find((draft) => draft.id === reviewDraftId)
@@ -1066,18 +1100,25 @@ function WritingView({
   const activeSpellingWord = activeSpellingStep
     ? reviewSpellingWords.find((word) => word.id === activeSpellingStep.wordId)
     : null
-  const totalExerciseSteps = reviewFindings.length * 6
+  const totalExerciseSteps = reviewFindings.reduce((total, finding) => total + finding.practice.length + 1, 0)
   const completedExerciseSteps = reviewFindings.reduce((total, finding) => {
     const progress = reviewProgress[finding.id]
-    return total + (progress?.correctionComplete ? 1 : 0) + Math.min(5, progress?.practiceCompleted ?? 0)
+    return total + (progress?.correctionComplete ? 1 : 0) +
+      Math.min(finding.practice.length, progress?.practiceCompleted ?? 0)
   }, 0)
   const totalSpellingSteps = reviewSpellingWords.length * 9
   const spellingStepsComplete = completedSpellingSteps(reviewSpellingWords, reviewSpellingProgress)
   const writingScore = scoreWritingResponses(reviewFindings, reviewProgress)
+  const reviewAreas = [
+    { name: 'Grammar', label: 'Agreement, articles, and basic tense' },
+    { name: 'Capitalization', label: 'Sentence starts and known names' },
+    { name: 'Punctuation', label: 'End marks and simple commas' },
+    { name: 'Spelling', label: 'Reviewed common misspellings only' },
+  ] as const
 
   useEffect(() => {
     setAnswerMessage('')
-    setAnswerFeedback(null)
+    setAnswerState(null)
     setSpellingAnswer('')
     if (activeTrial) window.requestAnimationFrame(() => questionHeadingRef.current?.focus())
   }, [activeTrial?.id, activeSpellingStep?.wordId, activeSpellingStep?.phase, activeSpellingStep?.attempt])
@@ -1109,8 +1150,23 @@ function WritingView({
 
   const save = () => {
     if (!title.trim() && !body.trim()) return
+    const revisionSource = revisingFromDraftId
+      ? state.drafts.find((draft) => draft.id === revisingFromDraftId)
+      : undefined
+    const existingDraft = !revisionSource && workingDraft?.reviewStatus !== 'complete'
+      ? workingDraft
+      : undefined
+    const draftId = existingDraft?.id ?? crypto.randomUUID()
+    const revisionGroupId = revisionSource?.revisionGroupId ?? revisionSource?.id ??
+      existingDraft?.revisionGroupId ?? existingDraft?.id ?? draftId
+    const versionNumber = revisionSource
+      ? (revisionSource.versionNumber ?? 1) + 1
+      : existingDraft?.versionNumber ?? 1
     const draft: Draft = {
-      id: workingDraft?.id ?? crypto.randomUUID(),
+      id: draftId,
+      weekId: state.weekContext.weekId,
+      revisionGroupId,
+      versionNumber,
       title: title.trim() || 'Untitled writing',
       body,
       correctedBody: body,
@@ -1144,18 +1200,33 @@ function WritingView({
       }
     })
     setReviewDraftId(draft.id)
+    setRevisingFromDraftId(null)
     setShowReview(true)
   }
 
+  const beginRevision = () => {
+    if (!reviewDraft) return
+    setTitle(reviewDraft.title)
+    setBody(reviewDraft.body)
+    setRevisingFromDraftId(reviewDraft.id)
+    setReviewDraftId(null)
+    setFinishMessage('')
+    setShowReview(false)
+  }
+
   const chooseAnswer = (choice: string) => {
-    if (!activeTrial || answerFeedback) return
-    setAnswerFeedback(evaluateWritingChoice(activeTrial, choice))
+    if (!activeTrial || answerState?.resolved) return
+    setAnswerState((current) => resolveWritingChoice(activeTrial, choice, current))
   }
 
   const continueAfterAnswer = () => {
     if (!reviewDraft || !activeFinding || !activeProgress || !activeTrial) return
-    if (!answerFeedback) return
-    const nextItem = advanceFindingProgress(activeProgress, answerFeedback.correct, activeFinding.practice.length)
+    if (!answerState?.resolved) return
+    const nextItem = advanceFindingProgress(
+      activeProgress,
+      answerState.firstAttemptCorrect,
+      activeFinding.practice.length,
+    )
     const nextProgress = { ...reviewProgress, [activeFinding.id]: nextItem }
     const grammarCorrected = applyCompletedCorrections(reviewDraft.body, reviewFindings, nextProgress)
     const correctedBody = applyCompletedSpellingCorrections(
@@ -1182,7 +1253,29 @@ function WritingView({
           }
         : draft),
     }))
-    setAnswerFeedback(null)
+    setAnswerState(null)
+  }
+
+  const skipCorrectionGame = () => {
+    if (!reviewDraft || reviewFindings.length === 0) return
+    const skippedProgress = skipRemainingWritingTrials(reviewFindings, reviewProgress)
+    const correctedBody = applyCompletedCorrections(reviewDraft.body, reviewFindings, skippedProgress)
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+        ? {
+            ...draft,
+            correctedBody,
+            exerciseProgress: skippedProgress,
+            spellingWords: [],
+            spellingProgress: {},
+            reviewStatus: 'complete',
+            updatedAt: new Date().toISOString(),
+          }
+        : draft),
+    }))
+    setAnswerState(null)
+    setAnswerMessage('')
   }
 
   const speakSpellingWord = () => {
@@ -1256,7 +1349,7 @@ function WritingView({
         </div>
         <div className="privacy-pill"><ShieldCheck size={18} /><span><strong>Private by design</strong><small>Checked on this Mac</small></span></div>
       </div>
-      <div className="writing-grid">
+      <div className={`writing-grid${showReview ? ' game-open' : ''}`}>
         <div className="editor-card">
           <input className="title-input" value={title} disabled={showReview} onChange={(event) => setTitle(event.target.value)} placeholder={dailyWritingActive ? 'Name the passage you read…' : 'Give your writing a title…'} spellCheck={false} />
           <textarea
@@ -1271,15 +1364,16 @@ function WritingView({
           />
           <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Hints are off · Your work stays yours</span></div>
         </div>
-        <aside className="review-card">
-          <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>Ready to review?</h3><p>We’ll look for rules we know well.</p></div></div>
+        <aside className="review-card" role={showReview ? 'dialog' : undefined} aria-modal={showReview || undefined} aria-label={showReview ? 'Correction game' : undefined}>
+          <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div></div>
           {!showReview ? (
             <div className="review-empty">
+              {revisingFromDraftId && <div className="revision-callout"><strong>Revise version {state.drafts.find((draft) => draft.id === revisingFromDraftId)?.versionNumber ?? 1}</strong><span>Correct the errors you practiced, then check the new version.</span></div>}
               <div className="review-category"><span>✓</span><p><strong>Grammar</strong><small>Agreement, articles, and basic tense</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Reviewed common misspellings only</small></p></div>
-              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>{dailyWritingActive ? 'Save & build my practice game' : 'Save & check my writing'}</button>
+              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>{revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
             </div>
           ) : activeFinding && activeTrial ? (
             <div className="writing-exercise">
@@ -1287,36 +1381,64 @@ function WritingView({
                 <span>{completedExerciseSteps} of {totalExerciseSteps} steps</span>
                 <div><i style={{ width: `${totalExerciseSteps ? (completedExerciseSteps / totalExerciseSteps) * 100 : 100}%` }} /></div>
               </div>
-              <small className="exercise-category">{activeFinding.category} · {activeProgress?.correctionComplete ? `practice ${Math.min(5, (activeProgress?.practiceCompleted ?? 0) + 1)} of 5` : 'your sentence'}</small>
+              {import.meta.env.DEV && <button className="skip-game-button" type="button" onClick={skipCorrectionGame}>Skip game for testing</button>}
+              <div className="exercise-area-summary" aria-label="Writing review areas">
+                {reviewAreas.map((area) => {
+                  const count = reviewFindings.filter((finding) => finding.category === area.name).length
+                  return (
+                    <div key={area.name} className={activeFinding.category === area.name ? 'active' : ''}>
+                      <strong>{area.name}</strong>
+                      <span>{area.label}</span>
+                      <small>{count} {count === 1 ? 'error' : 'errors'} found</small>
+                    </div>
+                  )
+                })}
+              </div>
+              <small className="exercise-category">{activeFinding.category} · {activeProgress?.correctionComplete ? `practice ${Math.min(activeFinding.practice.length, (activeProgress?.practiceCompleted ?? 0) + 1)} of ${activeFinding.practice.length}` : 'your sentence'}</small>
               <h4 ref={questionHeadingRef} tabIndex={-1}>{activeFinding.message}</h4>
               <p>{activeTrial.prompt}</p>
               <div className="exercise-choices" role="radiogroup" aria-label={activeTrial.prompt}>
                 {activeTrial.choices.map((choice) => {
-                  const selected = answerFeedback?.choice === choice
-                  const correctChoice = answerFeedback && choice === activeTrial.correctAnswer
-                  const incorrectChoice = answerFeedback && selected && !answerFeedback.correct
-                  const stateLabel = correctChoice ? ', correct answer' : incorrectChoice ? ', your answer, incorrect' : selected ? ', selected' : ''
+                  const firstWrongChoice = Boolean(
+                    answerState &&
+                    !answerState.firstAttemptCorrect &&
+                    choice === answerState.firstChoice,
+                  )
+                  const correctChoice = Boolean(answerState?.resolved && choice === activeTrial.correctAnswer)
+                  const selected = answerState?.resolved
+                    ? correctChoice
+                    : answerState?.feedback.choice === choice
+                  const stateLabel = correctChoice
+                    ? ', correct answer'
+                    : firstWrongChoice
+                      ? ', your first answer, incorrect'
+                      : selected
+                        ? ', selected'
+                        : ''
+                  const disabled = Boolean(
+                    answerState?.resolved ||
+                    (answerState && !answerState.resolved && choice !== activeTrial.correctAnswer),
+                  )
                   return (
                     <button
                       key={choice}
-                      className={correctChoice ? 'correct' : incorrectChoice ? 'incorrect' : selected ? 'selected' : ''}
+                      className={correctChoice ? 'correct' : firstWrongChoice ? 'incorrect' : selected ? 'selected' : ''}
                       role="radio"
                       aria-checked={selected}
                       aria-label={`${choice}${stateLabel}`}
-                      disabled={Boolean(answerFeedback)}
+                      disabled={disabled}
                       onClick={() => chooseAnswer(choice)}
                     >{choice}</button>
                   )
                 })}
               </div>
-              {answerFeedback && (
-                <div className={answerFeedback.correct ? 'answer-message correct' : 'answer-message'} role="status" aria-live="assertive">
-                  <strong>{answerFeedback.summary}</strong>
-                  <span>{answerFeedback.explanation}</span>
+              {answerState && (
+                <div className={answerState.resolved ? 'answer-message correct' : 'answer-message'} role="status" aria-live="assertive">
+                  <strong>{answerState.feedback.summary}</strong>
+                  <span>{answerState.feedback.explanation}</span>
                 </div>
               )}
-              {answerFeedback && <button className="primary-button full-button exercise-next" onClick={continueAfterAnswer}>Continue</button>}
-              <button className="text-button" onClick={() => setShowReview(false)}>Return to draft</button>
+              {answerState?.resolved && <button className="primary-button full-button exercise-next" onClick={continueAfterAnswer}>Continue</button>}
             </div>
           ) : activeSpellingStep && activeSpellingWord ? (
             <form className="writing-exercise spelling-exercise" onSubmit={submitSpelling}>
@@ -1344,31 +1466,36 @@ function WritingView({
               </label>
               <button className="primary-button full-button" type="submit" disabled={!spellingAnswer.trim()}>Check spelling</button>
               {answerMessage && <p className={answerMessage.startsWith('Correct') ? 'answer-message correct' : 'answer-message'} aria-live="polite">{answerMessage}</p>}
-              <button className="text-button" type="button" onClick={() => setShowReview(false)}>Return to draft</button>
             </form>
           ) : (
             <div className="writing-complete">
               <span><Check size={24} /></span>
-              <h3>{reviewFindings.length || reviewSpellingWords.length ? 'Writing practice complete!' : 'No supported issues found.'}</h3>
-              <p>Your untouched original and corrected copy are saved separately.</p>
+              <h3>{reviewFindings.length || reviewSpellingWords.length ? 'Correction game complete!' : 'This version is correct!'}</h3>
+              <p>{reviewFindings.length || reviewSpellingWords.length ? 'This version is saved. Return to your writing, make the corrections yourself, and check the next version.' : 'No supported errors remain. Every saved version will be included in the weekly document.'}</p>
               {writingScore.total > 0 && (
                 <div className="writing-score-card">
-                  <small>SESSION SCORE</small>
+                  <small>FIRST-TRY SCORE</small>
                   <strong>{writingScore.percent}%</strong>
-                  <p>{writingScore.correct} of {writingScore.total} responses correct</p>
+                  <p>{writingScore.correct} of {writingScore.total} questions correct on the first try</p>
                   <WritingAccuracyGraph points={writingScore.cumulativePercent} />
                 </div>
               )}
-              {reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
-              <div className="spelling-complete"><Check size={16} /><p><strong>Ready for Friday delivery.</strong> Every supported correction and spelling exercise is complete.</p></div>
-              {dailyWritingActive && <button className="primary-button full-button" disabled={finishingWriting} onClick={() => { void finishDailyWriting() }}>{finishingWriting ? 'Saving result…' : 'Finish daily writing activity'}</button>}
+              {reviewFindings.length > 0 && reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
+              {reviewFindings.length > 0 ? (
+                <button className="primary-button full-button" onClick={beginRevision}>Revise my writing</button>
+              ) : (
+                <>
+                  <div className="spelling-complete"><Check size={16} /><p><strong>Ready for Friday delivery.</strong> The final checked version and every earlier version are saved.</p></div>
+                  {dailyWritingActive && <button className="primary-button full-button" disabled={finishingWriting} onClick={() => { void finishDailyWriting() }}>{finishingWriting ? 'Saving result…' : 'Finish daily writing activity'}</button>}
+                </>
+              )}
               {finishMessage && <p className="answer-message" role="alert">{finishMessage}</p>}
-              <button className="secondary-button full-button" onClick={() => setShowReview(false)}>Keep writing</button>
+              {!dailyWritingActive && reviewFindings.length === 0 && <button className="secondary-button full-button" onClick={() => setShowReview(false)}>Keep writing</button>}
             </div>
           )}
         </aside>
       </div>
-      <div className="integration-note"><Clock3 size={19} /><div><strong>Completed writing is ready for Friday.</strong><p>Safe test mode stays local. When a parent enables and authorizes live Google delivery, only writing that finishes every supported exercise can be sent.</p></div></div>
+      <div className="integration-note"><Clock3 size={19} /><div><strong>Every version is saved for Friday.</strong><p>After the final check is correct, authorized live Google delivery puts each version in the weekly document and emails it to the teacher Friday at 12:00 p.m. Safe-test mode keeps it local.</p></div></div>
     </section>
   )
 }
@@ -2057,7 +2184,7 @@ function ParentView({
       </div>
       <div className="parent-panel google-proof-panel live-google-panel">
         <div className="panel-heading">
-          <div><h3>Live Friday Google delivery</h3><p>Creates the weekly Google Doc, exports a verified PDF, shares view-only, and emails the school recipient after Friday at 4 p.m.</p></div>
+          <div><h3>Live Friday Google delivery</h3><p>Creates the weekly Google Doc with every saved writing version, exports a verified PDF, shares view-only, and emails the school recipient Friday at 12:00 p.m.</p></div>
           <span className={`mock-badge ${state.googleLive.enabled ? 'live-badge' : ''}`}>{state.googleLive.enabled ? 'LIVE MODE' : 'SAFE MODE ACTIVE'}</span>
         </div>
         <div className="google-proof-content">

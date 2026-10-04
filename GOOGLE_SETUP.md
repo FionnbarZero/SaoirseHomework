@@ -4,11 +4,11 @@ Live delivery is deliberately disabled by default. The local proof remains avail
 
 ## What live mode does
 
-After Friday at 4:00 p.m. in the configured school time zone, the local service:
+After Friday at 12:00 p.m. in the configured school time zone, the local service:
 
-1. Selects writing marked `complete` and snapshots it into one restart-safe weekly queue record.
+1. Selects revision groups whose final checked version has no supported errors and snapshots every completed version into one restart-safe weekly queue record.
 2. Creates `My Drive/Fionnbar Homework/<School Year>/Writing` when needed.
-3. Creates `Fionnbar Writing — Week of <Monday date>` with the original, corrected copy, and practice summary.
+3. Creates `Fionnbar Writing — Week of <Monday date>` with every version, its corrected model, and its practice summary.
 4. Exports the Google Doc as PDF and verifies the `%PDF-` signature before continuing.
 5. Shares the Doc with the configured school address as a viewer.
 6. Sends a separate Gmail message containing the PDF and, when sharing succeeded, the Doc link.

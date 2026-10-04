@@ -1,4 +1,4 @@
-import type { SpellingProgress, SpellingWord, WritingDictionary } from './domain'
+import type { Finding, SpellingProgress, SpellingWord, WritingDictionary, WritingTrial } from './domain'
 
 export const SPELLING_REPETITIONS = 3
 
@@ -43,6 +43,10 @@ const COMMON_MISSPELLINGS: Record<string, string> = {
   wich: 'which',
   writting: 'writing',
   studing: 'studying',
+  characted: 'character',
+  cbouts: 'bought',
+  hambester: 'hamster',
+  whitch: 'witch',
 }
 
 const NORMALIZED_MISSPELLINGS = new Map(
@@ -61,6 +65,48 @@ function preserveCase(original: string, correction: string) {
   if (original === original.toLocaleUpperCase()) return correction.toLocaleUpperCase()
   if (/^[A-Z]/.test(original)) return `${correction[0].toLocaleUpperCase()}${correction.slice(1)}`
   return correction
+}
+
+function sentenceBounds(body: string, index: number) {
+  let start = index
+  while (start > 0 && !/[.!?\n]/.test(body[start - 1])) start -= 1
+  while (start < body.length && /\s/.test(body[start])) start += 1
+  let end = index
+  while (end < body.length && !/[.!?\n]/.test(body[end])) end += 1
+  if (end < body.length && /[.!?]/.test(body[end])) end += 1
+  return { start, end }
+}
+
+function rotateChoices(choices: string[], seed: number) {
+  const offset = Math.abs(seed) % choices.length
+  return [...choices.slice(offset), ...choices.slice(0, offset)]
+}
+
+function spellingPracticeTrials(
+  word: string,
+  original: string,
+  correction: string,
+  seed: number,
+): WritingTrial[] {
+  const extraMisspelling = `${original}${original.at(-1) ?? 'x'}`
+  const frames = [
+    (value: string) => `I wrote the word “${value}” in my notebook.`,
+    (value: string) => `The word “${value}” appears on the page.`,
+    (value: string) => `Please check the word “${value}” carefully.`,
+  ]
+  return frames.map((frame, index) => {
+    const correctAnswer = frame(correction)
+    return {
+      id: `spelling-reviewed-${word}-${seed}-practice-${index + 1}`,
+      prompt: `Choose the sentence that spells “${correction}” correctly.`,
+      choices: rotateChoices(
+        [correctAnswer, frame(original), frame(extraMisspelling)],
+        seed + index,
+      ),
+      correctAnswer,
+      explanation: `The reviewed spelling is “${correction}”.`,
+    }
+  })
 }
 
 function progressFor(progress: Record<string, SpellingProgress>, id: string): SpellingProgress {
@@ -96,6 +142,53 @@ export function inspectSpelling(
     }
   }
   return [...found.values()]
+}
+
+export function inspectSpellingFindings(
+  body: string,
+  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+): Finding[] {
+  const protectedWords = new Set(
+    [...dictionary.knownNames, ...dictionary.knownPlaces]
+      .flatMap((entry) => entry.match(/[A-Za-z]+(?:['’][A-Za-z]+)?/g) ?? [])
+      .map(normalizeWord),
+  )
+  const findings: Finding[] = []
+  const reviewed = new Set<string>()
+  for (const match of body.matchAll(/[A-Za-z]+(?:['’][A-Za-z]+)?/g)) {
+    const actual = match[0]
+    const word = normalizeWord(actual)
+    const rawCorrection = NORMALIZED_MISSPELLINGS.get(word)
+    const start = match.index ?? 0
+    if (!rawCorrection || protectedWords.has(word) || reviewed.has(word)) continue
+    reviewed.add(word)
+    const replacement = preserveCase(actual, rawCorrection)
+    const bounds = sentenceBounds(body, start)
+    const original = body.slice(bounds.start, bounds.end)
+    const relativeStart = start - bounds.start
+    const corrected = `${original.slice(0, relativeStart)}${replacement}${original.slice(relativeStart + actual.length)}`
+    let distractor = `${original.slice(0, relativeStart)}${replacement.toUpperCase()}${original.slice(relativeStart + actual.length)}`
+    if (distractor === original || distractor === corrected) distractor = `${corrected}.`
+    findings.push({
+      id: `spelling-reviewed-${word}-${start}`,
+      ruleId: `spelling-reviewed-${word}`,
+      category: 'Spelling',
+      message: `“${actual}” is a reviewed common misspelling.`,
+      suggestion: `Spell it “${replacement}”.`,
+      start,
+      end: start + actual.length,
+      replacement,
+      correction: {
+        id: `spelling-reviewed-${word}-${start}-correction`,
+        prompt: 'Choose the sentence that corrects your spelling.',
+        choices: rotateChoices([original, corrected, distractor], start),
+        correctAnswer: corrected,
+        explanation: `The reviewed spelling of “${actual}” is “${replacement}”.`,
+      },
+      practice: spellingPracticeTrials(word, actual, replacement, start),
+    })
+  }
+  return findings
 }
 
 export function nextSpellingStep(

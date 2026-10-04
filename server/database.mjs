@@ -11,14 +11,14 @@ import {
 import {
   applyCompletedCorrections,
   inspectAmbiguousDraft,
-  inspectDraft,
+  inspectWritingFindings,
   writingReviewStatus,
 } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 15
+const SCHEMA_VERSION = 21
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -309,6 +309,9 @@ export function createStore(filename, options = {}) {
 
     CREATE TABLE IF NOT EXISTS writing_submission (
       id TEXT PRIMARY KEY,
+      week_id TEXT,
+      revision_group_id TEXT,
+      version_number INTEGER NOT NULL DEFAULT 1,
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       corrected_body TEXT,
@@ -509,6 +512,9 @@ export function createStore(filename, options = {}) {
   ensureColumn('activity_session', 'reward_playback_active', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('game_session', 'week_id', 'TEXT')
   ensureColumn('writing_submission', 'corrected_body', 'TEXT')
+  ensureColumn('writing_submission', 'week_id', 'TEXT')
+  ensureColumn('writing_submission', 'revision_group_id', 'TEXT')
+  ensureColumn('writing_submission', 'version_number', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_progress_json', "TEXT NOT NULL DEFAULT '{}'")
@@ -542,9 +548,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
-      id, title, body, corrected_body, findings_json, exercise_progress_json,
+      id, week_id, revision_group_id, version_number, title, body, corrected_body, findings_json, exercise_progress_json,
       spelling_words_json, spelling_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -691,8 +697,217 @@ export function createStore(filename, options = {}) {
     }
   }
 
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'writing_practice_target_3_migrated'`).get()?.value !== '1') {
+    const dictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const drafts = db.prepare(`
+      SELECT id, body, exercise_progress_json, spelling_progress_json
+      FROM writing_submission
+      WHERE review_status != 'complete'
+    `).all()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updateDraft = db.prepare(`
+        UPDATE writing_submission
+        SET corrected_body = ?, findings_json = ?, exercise_progress_json = ?,
+            spelling_words_json = ?, spelling_progress_json = ?, review_status = ?
+        WHERE id = ?
+      `)
+      for (const draft of drafts) {
+        const body = String(draft.body ?? '')
+        const findings = inspectWritingFindings(body, dictionary)
+        const previousProgress = safeJson(draft.exercise_progress_json, {})
+        const progress = Object.fromEntries(findings.map((finding) => {
+          const previous = previousProgress[finding.id] ?? {}
+          const attemptResults = Array.isArray(previous.attemptResults)
+            ? previous.attemptResults.slice(0, finding.practice.length + 1).map(Boolean)
+            : []
+          return [finding.id, {
+            correctionComplete: previous.correctionComplete === true,
+            practiceCompleted: Math.min(
+              finding.practice.length,
+              Math.max(0, Number(previous.practiceCompleted) || 0),
+            ),
+            incorrectAttempts: attemptResults.length
+              ? attemptResults.filter((result) => !result).length
+              : Math.max(0, Number(previous.incorrectAttempts) || 0),
+            ...(attemptResults.length ? { attemptResults } : {}),
+          }]
+        }))
+        const spellingWords = inspectSpelling(body, dictionary)
+        const spellingProgress = safeJson(draft.spelling_progress_json, {})
+        const grammarCorrected = applyCompletedCorrections(body, findings, progress)
+        const correctedBody = applyCompletedSpellingCorrections(
+          grammarCorrected,
+          spellingWords,
+          spellingProgress,
+        )
+        const reviewStatus = writingReviewStatus(findings, progress, spellingWords, spellingProgress)
+        updateDraft.run(
+          correctedBody,
+          JSON.stringify(findings),
+          JSON.stringify(progress),
+          JSON.stringify(spellingWords),
+          JSON.stringify(spellingProgress),
+          reviewStatus,
+          draft.id,
+        )
+      }
+      setMeta.run('writing_practice_target_3_migrated', '1')
+      if (drafts.length > 0) {
+        insertAudit.run(
+          'writing_practice_target_migrated',
+          JSON.stringify({ practiceExamples: 3, draftsUpdated: drafts.length }),
+          asIso(wallNow()),
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'spelling_multiple_choice_v2_migrated'`).get()?.value !== '1') {
+    const dictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const drafts = db.prepare(`
+      SELECT id, body, exercise_progress_json
+      FROM writing_submission
+      WHERE review_status != 'complete'
+         OR updated_at >= COALESCE(
+           (SELECT min(created_at) FROM game_session WHERE status = 'pending'),
+           '9999-12-31T23:59:59.999Z'
+         )
+    `).all()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updateDraft = db.prepare(`
+        UPDATE writing_submission
+        SET corrected_body = ?, findings_json = ?, exercise_progress_json = ?,
+            spelling_words_json = '[]', spelling_progress_json = '{}', review_status = ?
+        WHERE id = ?
+      `)
+      for (const draft of drafts) {
+        const body = String(draft.body ?? '')
+        const findings = inspectWritingFindings(body, dictionary)
+        const previousProgress = safeJson(draft.exercise_progress_json, {})
+        const progress = Object.fromEntries(findings.map((finding) => {
+          const previous = previousProgress[finding.id] ?? {}
+          const attemptResults = Array.isArray(previous.attemptResults)
+            ? previous.attemptResults.slice(0, finding.practice.length + 1).map(Boolean)
+            : []
+          return [finding.id, {
+            correctionComplete: previous.correctionComplete === true,
+            practiceCompleted: Math.min(
+              finding.practice.length,
+              Math.max(0, Number(previous.practiceCompleted) || 0),
+            ),
+            incorrectAttempts: attemptResults.length
+              ? attemptResults.filter((result) => !result).length
+              : Math.max(0, Number(previous.incorrectAttempts) || 0),
+            ...(attemptResults.length ? { attemptResults } : {}),
+          }]
+        }))
+        const correctedBody = applyCompletedCorrections(body, findings, progress)
+        const reviewStatus = writingReviewStatus(findings, progress, [], {})
+        updateDraft.run(
+          correctedBody,
+          JSON.stringify(findings),
+          JSON.stringify(progress),
+          reviewStatus,
+          draft.id,
+        )
+      }
+      setMeta.run('spelling_multiple_choice_v2_migrated', '1')
+      if (drafts.length > 0) {
+        insertAudit.run(
+          'spelling_practice_migrated_to_multiple_choice',
+          JSON.stringify({ draftsUpdated: drafts.length }),
+          asIso(wallNow()),
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'varied_writing_practice_v2_migrated'`).get()?.value !== '1') {
+    const dictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const drafts = db.prepare(`
+      SELECT id, body, exercise_progress_json
+      FROM writing_submission
+      WHERE review_status != 'complete'
+         OR updated_at >= COALESCE(
+           (SELECT min(created_at) FROM game_session WHERE status = 'pending'),
+           '9999-12-31T23:59:59.999Z'
+         )
+    `).all()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updateDraft = db.prepare(`
+        UPDATE writing_submission
+        SET corrected_body = ?, findings_json = ?, exercise_progress_json = ?, review_status = ?
+        WHERE id = ?
+      `)
+      for (const draft of drafts) {
+        const body = String(draft.body ?? '')
+        const findings = inspectWritingFindings(body, dictionary)
+        const previousProgress = safeJson(draft.exercise_progress_json, {})
+        const progress = Object.fromEntries(findings.map((finding) => {
+          const previous = previousProgress[finding.id] ?? {}
+          const attemptResults = Array.isArray(previous.attemptResults)
+            ? previous.attemptResults.slice(0, finding.practice.length + 1).map(Boolean)
+            : []
+          return [finding.id, {
+            correctionComplete: previous.correctionComplete === true,
+            practiceCompleted: Math.min(
+              finding.practice.length,
+              Math.max(0, Number(previous.practiceCompleted) || 0),
+            ),
+            incorrectAttempts: attemptResults.length
+              ? attemptResults.filter((result) => !result).length
+              : Math.max(0, Number(previous.incorrectAttempts) || 0),
+            ...(attemptResults.length ? { attemptResults } : {}),
+          }]
+        }))
+        const correctedBody = applyCompletedCorrections(body, findings, progress)
+        const reviewStatus = writingReviewStatus(findings, progress, [], {})
+        updateDraft.run(
+          correctedBody,
+          JSON.stringify(findings),
+          JSON.stringify(progress),
+          reviewStatus,
+          draft.id,
+        )
+      }
+      setMeta.run('varied_writing_practice_v2_migrated', '1')
+      if (drafts.length > 0) {
+        insertAudit.run(
+          'writing_practice_examples_varied',
+          JSON.stringify({ draftsUpdated: drafts.length }),
+          asIso(wallNow()),
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   db.prepare('UPDATE activity_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
   db.prepare('UPDATE game_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
+  db.prepare('UPDATE writing_submission SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
   ensureCurrentWeek()
 
   setMeta.run('schema_version', String(SCHEMA_VERSION))
@@ -1024,13 +1239,17 @@ export function createStore(filename, options = {}) {
 
     state.drafts = db
       .prepare(`
-        SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
-               spelling_words_json, spelling_progress_json, review_status, updated_at
+      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+               revision_group_id, version_number, spelling_words_json, spelling_progress_json,
+               review_status, updated_at
         FROM writing_submission ORDER BY updated_at DESC
       `)
       .all()
       .map((row) => ({
         id: row.id,
+        weekId: row.week_id ?? weekContext.weekId,
+        revisionGroupId: row.revision_group_id ?? row.id,
+        versionNumber: Math.max(1, Number(row.version_number) || 1),
         title: row.title,
         body: row.body,
         correctedBody: row.corrected_body ?? row.body,
@@ -1256,32 +1475,23 @@ export function createStore(filename, options = {}) {
 
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
-        const findings = inspectDraft(body, dictionary)
+        const findings = inspectWritingFindings(body, dictionary)
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
           : {}
-        const spellingWords = inspectSpelling(body, dictionary)
-        const spellingProgress = draft.spellingProgress && typeof draft.spellingProgress === 'object'
-          ? draft.spellingProgress
-          : {}
+        const spellingWords = []
+        const spellingProgress = {}
         const grammarComplete = findings.every((finding) => {
           const progress = exerciseProgress[finding.id]
           return progress?.correctionComplete === true &&
             Number(progress.practiceCompleted) >= finding.practice.length
         })
-        const reviewStatus = !grammarComplete
-          ? 'practice'
-          : spellingPracticeComplete(spellingWords, spellingProgress)
-            ? 'complete'
-            : 'spelling-pending'
-        const grammarCorrected = applyCompletedCorrections(body, findings, exerciseProgress)
-        const correctedBody = applyCompletedSpellingCorrections(
-          grammarCorrected,
-          spellingWords,
-          spellingProgress,
-        )
+        const reviewStatus = grammarComplete ? 'complete' : 'practice'
+        const correctedBody = applyCompletedCorrections(body, findings, exerciseProgress)
         insertDraft.run(
-          String(draft.id), String(draft.title ?? 'Untitled writing'), body,
+          String(draft.id), String(draft.weekId ?? weekId), String(draft.revisionGroupId ?? draft.id),
+          Math.max(1, Math.floor(Number(draft.versionNumber) || 1)),
+          String(draft.title ?? 'Untitled writing'), body,
           correctedBody,
           JSON.stringify(findings),
           JSON.stringify(exerciseProgress),
@@ -1393,7 +1603,7 @@ export function createStore(filename, options = {}) {
     const activityId = String(input.activityId ?? '')
     const day = String(input.day ?? '')
     const expectedOrigin = normalizeOrigin(input.expectedOrigin)
-    const ttlSeconds = Math.floor(Number(input.ttlSeconds ?? 60 * 60))
+    const ttlSeconds = Math.floor(Number(input.ttlSeconds ?? 24 * 60 * 60))
 
     if (activityId !== GAME_ACTIVITY_ID) throw serviceError('Unsupported verified writing activity')
     if (!DAYS.includes(day)) throw serviceError('Invalid weekday')
@@ -1528,7 +1738,7 @@ export function createStore(filename, options = {}) {
       if (row.status !== 'pending') throw serviceError('Writing session is no longer active', 409, 'session_inactive')
 
       const draft = db.prepare(`
-        SELECT id, body, corrected_body, findings_json, exercise_progress_json,
+        SELECT id, week_id, revision_group_id, version_number, body, corrected_body, findings_json, exercise_progress_json,
                spelling_words_json, spelling_progress_json, updated_at
         FROM writing_submission WHERE id = ?
       `).get(draftId)
@@ -1552,25 +1762,54 @@ export function createStore(filename, options = {}) {
         )
       }
 
-      const responses = findings.flatMap((finding) => {
-        const item = progress[finding.id]
-        const results = Array.isArray(item?.attemptResults) ? item.attemptResults : []
-        if (results.length < finding.practice.length + 1) {
-          throw serviceError('Writing response evidence is incomplete', 409, 'writing_evidence_incomplete')
-        }
-        return results.slice(0, finding.practice.length + 1).map(Boolean)
+      if (findings.length > 0) {
+        throw serviceError(
+          'The correction game is complete. Revise the writing, save a new version, and check it again.',
+          409,
+          'writing_revision_required',
+        )
+      }
+
+      const revisionGroupId = String(draft.revision_group_id ?? draft.id)
+      const versions = db.prepare(`
+        SELECT id, body, findings_json, exercise_progress_json, review_status
+        FROM writing_submission
+        WHERE week_id = ? AND COALESCE(revision_group_id, id) = ?
+        ORDER BY version_number, updated_at
+      `).all(draft.week_id, revisionGroupId)
+      if (versions.some((version) => version.review_status !== 'complete')) {
+        throw serviceError(
+          'Finish the correction game for each saved version before completing the activity',
+          409,
+          'writing_version_incomplete',
+        )
+      }
+      const versionFindings = versions.map((version) => safeJson(version.findings_json, []))
+      const responses = versions.flatMap((version, versionIndex) => {
+        const findingsForVersion = versionFindings[versionIndex]
+        const progressForVersion = safeJson(version.exercise_progress_json, {})
+        return findingsForVersion.flatMap((finding) => {
+          const item = progressForVersion[finding.id]
+          const results = Array.isArray(item?.attemptResults) ? item.attemptResults : []
+          if (results.length < finding.practice.length + 1) {
+            throw serviceError('Writing response evidence is incomplete', 409, 'writing_evidence_incomplete')
+          }
+          return results.slice(0, finding.practice.length + 1).map(Boolean)
+        })
       })
       const correct = responses.filter(Boolean).length
       const total = responses.length
       const percent = total ? Math.round((correct / total) * 100) : 100
       evidence = {
         draftId,
-        findingCount: findings.length,
+        revisionGroupId,
+        versionCount: versions.length,
+        findingCount: versionFindings.reduce((totalFindings, items) => totalFindings + items.length, 0),
         correct,
         total,
         percent,
         wordCount: String(draft.body).trim().split(/\s+/).length,
-        edited: String(draft.corrected_body ?? draft.body) !== String(draft.body) || findings.length === 0,
+        edited: versions.length > 1 && String(versions.at(-1)?.body) !== String(versions[0]?.body),
       }
 
       const update = db.prepare(`
@@ -2085,14 +2324,18 @@ export function createStore(filename, options = {}) {
     const idempotencyKey = `${weekId}:${documentId}`
     const existing = db.prepare('SELECT * FROM google_delivery WHERE idempotency_key = ?').get(idempotencyKey)
     const draftRows = db.prepare(`
-      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
-             spelling_words_json, spelling_progress_json, review_status, updated_at
+      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+             revision_group_id, version_number, spelling_words_json, spelling_progress_json,
+             review_status, updated_at
       FROM writing_submission
-      WHERE length(trim(body)) > 0
+      WHERE week_id = ? AND length(trim(body)) > 0
       ORDER BY updated_at
-    `).all()
+    `).all(weekId)
     const drafts = draftRows.map((row) => ({
       id: row.id,
+      weekId: row.week_id ?? weekId,
+      revisionGroupId: row.revision_group_id ?? row.id,
+      versionNumber: Math.max(1, Number(row.version_number) || 1),
       title: row.title,
       body: row.body,
       correctedBody: row.corrected_body ?? row.body,
@@ -2338,15 +2581,19 @@ export function createStore(filename, options = {}) {
     return getLiveGoogleState()
   }
 
-  function completedWritingSnapshots() {
-    return db.prepare(`
-      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
-             spelling_words_json, spelling_progress_json, review_status, updated_at
+  function completedWritingSnapshots(weekId) {
+    const drafts = db.prepare(`
+      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+             revision_group_id, version_number, spelling_words_json, spelling_progress_json,
+             review_status, updated_at
       FROM writing_submission
-      WHERE review_status = 'complete' AND length(trim(body)) > 0
+      WHERE week_id = ? AND length(trim(body)) > 0
       ORDER BY updated_at
-    `).all().map((row) => ({
+    `).all(weekId).map((row) => ({
       id: row.id,
+      weekId: row.week_id ?? weekId,
+      revisionGroupId: row.revision_group_id ?? row.id,
+      versionNumber: Math.max(1, Number(row.version_number) || 1),
       title: row.title,
       body: row.body,
       correctedBody: row.corrected_body ?? row.body,
@@ -2357,6 +2604,12 @@ export function createStore(filename, options = {}) {
       reviewStatus: row.review_status,
       updatedAt: row.updated_at,
     }))
+    const eligibleGroups = new Set(drafts
+      .filter((draft) => draft.reviewStatus === 'complete' && draft.findings.length === 0)
+      .map((draft) => draft.revisionGroupId))
+    return drafts.filter((draft) =>
+      draft.reviewStatus === 'complete' && eligibleGroups.has(draft.revisionGroupId),
+    )
   }
 
   function prepareLiveGoogleDelivery(input = {}) {
@@ -2372,7 +2625,7 @@ export function createStore(filename, options = {}) {
     const existing = db.prepare('SELECT * FROM google_live_delivery WHERE week_id = ?').get(weekId)
     if (existing) return { delivery: liveGoogleDeliveryFromRow(existing), drafts: [], created: false }
 
-    const drafts = completedWritingSnapshots()
+    const drafts = completedWritingSnapshots(weekId)
     const id = makeId()
     const now = asIso(wallNow())
     const status = drafts.length ? 'queued' : 'skipped'

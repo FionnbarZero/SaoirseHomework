@@ -85,11 +85,15 @@ export function buildWeeklyDocumentText(delivery, drafts) {
     '',
   ]
   for (const draft of drafts) {
+    const versionLabel = `Version ${Math.max(1, Number(draft.versionNumber) || 1)}`
     const completeSteps = Object.values(draft.exerciseProgress ?? {}).reduce(
       (total, item) => total + (item?.correctionComplete ? 1 : 0) + Number(item?.practiceCompleted ?? 0),
       0,
     )
-    const totalSteps = (draft.findings ?? []).length * 6
+    const totalSteps = (draft.findings ?? []).reduce(
+      (total, finding) => total + (Array.isArray(finding.practice) ? finding.practice.length : 3) + 1,
+      0,
+    )
     const attemptResults = (draft.findings ?? []).flatMap((finding) => {
       const results = draft.exerciseProgress?.[finding.id]?.attemptResults
       return Array.isArray(results) ? results.filter((result) => typeof result === 'boolean') : []
@@ -110,8 +114,9 @@ export function buildWeeklyDocumentText(delivery, drafts) {
         Math.min(3, Number(item?.mixedCompleted) || 0)
     }, 0)
     const spellingTotal = spellingWords.length * 9
+    const spellingFindingCount = (draft.findings ?? []).filter((finding) => finding.category === 'Spelling').length
     sections.push(
-      draft.title || 'Untitled writing',
+      `${draft.title || 'Untitled writing'} — ${versionLabel}`,
       `Completed ${new Date(draft.updatedAt).toLocaleDateString('en-US', { timeZone: 'UTC' })}`,
       '',
       'Original',
@@ -120,15 +125,17 @@ export function buildWeeklyDocumentText(delivery, drafts) {
       'Corrected copy',
       draft.correctedBody || draft.body,
       '',
-      `Practice summary: ${completeSteps} of ${totalSteps} grammar, punctuation, and capitalization steps completed. ` +
+      `Practice summary: ${completeSteps} of ${totalSteps} writing correction and review steps completed. ` +
         (spellingWords.length
           ? `${spellingSteps} of ${spellingTotal} spelling responses completed for ${spellingWords.length} ${spellingWords.length === 1 ? 'word' : 'words'}.`
+          : spellingFindingCount
+            ? `${spellingFindingCount} reviewed ${spellingFindingCount === 1 ? 'misspelling was' : 'misspellings were'} completed in the multiple-choice game.`
           : 'No supported common misspellings were detected.'),
       scorePercent === null
-        ? 'Writing game score: no scored responses were recorded.'
-        : `Writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%).`,
+        ? 'First-try writing game score: no scored responses were recorded.'
+        : `First-try writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%).`,
       attemptResults.length
-        ? `Accuracy by response: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`
+        ? `First-try accuracy by question: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`
         : '',
       '',
       '────────────────────────────────────────',
@@ -177,7 +184,7 @@ export function isFridayDeliveryDue(value, timeZone = 'America/Los_Angeles') {
     minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date).map((part) => [part.type, part.value]))
-  return parts.weekday === 'Friday' && (Number(parts.hour) > 16 || (Number(parts.hour) === 16 && Number(parts.minute) >= 0))
+  return parts.weekday === 'Friday' && (Number(parts.hour) > 12 || (Number(parts.hour) === 12 && Number(parts.minute) >= 0))
 }
 
 export function createGoogleLiveIntegration(options) {

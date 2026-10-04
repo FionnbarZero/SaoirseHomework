@@ -78,7 +78,7 @@ The full homework flow can be locked on an iPad, but the current Mac loopback se
 | Du Chinese | Time-in-session | Complete 13 active reading minutes followed by 7 active flashcard minutes. |
 | Daily Math Practice | Self-reported | Fionnbar changes the control to a green check. |
 | Daily English Packet | Self-reported | Fionnbar changes the control to a green check. |
-| Reading Response Writing Game | Writing-evidence verified | Read a passage of Fionnbar’s choice, write a response, answer one correction plus five similar trials for every supported error, and finish the edited copy. Accuracy is reported but does not block completion. |
+| Reading Response Writing Game | Writing-evidence verified | Read a passage of Fionnbar’s choice, write a response, complete the correction game in its own frame, revise, and check again until no supported errors remain. Accuracy is reported but does not block completion. |
 | Ninja Dojo | Time-in-session | Open 5th Grade Learning Hub in a controlled view for 17 active minutes. |
 | English Escape | Coming soon | Visible but excluded from completion until its app is ready; future duration is 10 active minutes. |
 
@@ -138,13 +138,15 @@ There are no extra wildcard sessions in the revised model.
 - Save the untouched original response before analysis.
 - Detect only supported high-confidence capitalization, grammar, punctuation, and spelling errors. Ambiguous language goes to the parent review queue instead of being silently changed.
 - The reviewed Grade 5 library includes simple and perfect tense, safe past-tense consistency patterns, subject–verb and pronoun agreement, articles, correlative conjunctions, object pronouns after prepositions, capitalization, contractions, introductory and list commas, interjections, direct address, quotations, and ending punctuation. Extend it only with reviewed positive, negative, and ambiguous regression cases.
-- For every supported error, first show Fionnbar’s actual sentence, then present five reviewed examples of the same rule.
-- Lock each selected answer. Immediately announce whether it was correct, identify the correct answer when needed, and explain the rule before **Continue** becomes available.
-- Every response advances the activity. Correct and incorrect answers are both recorded; mastery is not required.
-- Apply the reviewed correction to a separate edited copy after the original-error response. The original draft never changes.
-- After all correction, practice, and spelling responses are complete, show the overall percent correct and a line graph of cumulative accuracy.
-- The local service verifies the saved draft, all expected response evidence, and the edited copy before recording daily completion. A browser-only completion signal is insufficient.
-- When live Google delivery is authorized, include the original, edited copy, response score, and graph data in the Google document and automatic teacher email workflow.
+- For every supported error, first show Fionnbar’s actual sentence, then present three reviewed examples of the same rule before moving to the next error.
+- When the same rule appears more than once in a draft, assign the next reviewed three-example set instead of repeating earlier questions; each rule has three non-overlapping sets. Spelling examples use the child’s specific reviewed word.
+- Score only the first selection. If it is wrong, immediately explain the rule and identify the correct answer, then require Fionnbar to select that answer before **Continue** becomes available. The corrective selection is not scored and never replaces the first-attempt result.
+- Advance each trial only after the correct answer has been selected. Store one first-attempt result per trial; no minimum game score is required.
+- After each correction game, preserve that version and return to an editable writing frame. Fionnbar makes the revisions and saves a new version for another check. Repeat the game-and-revise loop until the newest version has no supported errors.
+- Preserve every version in its revision group. Never overwrite an earlier version.
+- After all correction, practice, and spelling responses are complete, show the percent correct on first attempts and a line graph of cumulative first-try accuracy.
+- The local service verifies every game response and requires a final clean checked version before recording daily completion. A browser-only completion signal is insufficient. Expired writing sessions restart safely without discarding versions.
+- When live Google delivery is authorized, include every completed version, its response score, and graph data in the weekly Google document and automatic teacher email workflow.
 
 ### Ninja Dojo
 
@@ -260,14 +262,11 @@ Each rule requires reviewed positive examples, distractors, and regression tests
 
 ### Exercise flow
 
-- Grammar: show the original sentence and three corrections; after the correct selection, require five similar three-choice trials.
-- Punctuation: use the same original-error plus five-practice-trials model.
-- Capitalization: show three versions with different capitalization; after the correct selection, require five similar trials.
-- Incorrect answers receive immediate feedback and do not advance the five-trial counter.
-- Spelling uses the local show/copy and hide/respond module through an adapter:
-  1. Hear and see the word, then copy it three times.
-  2. Hear the hidden word, then type it correctly three times.
-  3. Complete a mixed hidden review of every misspelled word three times.
+- Grammar: show three versions of the child’s original sentence, then require three similar three-choice trials.
+- Punctuation: use the same original-error plus three-practice-trials model.
+- Capitalization: show three versions with different capitalization, then require three similar trials.
+- Incorrect first attempts receive immediate feedback and stay scored incorrect. The child must select the correct answer before **Continue** appears, and that correction adds no score.
+- Reviewed spelling mistakes join the multiple-choice sequence: correct the child’s sentence, answer three similar reviewed spelling questions, then move to the next detected error.
 - The writing task completes only after every supported correction exercise completes.
 - Spelling detection stays conservative: only reviewed common misspellings generate mandatory practice, and unknown words are never guessed.
 
@@ -283,11 +282,11 @@ Each rule requires reviewed positive examples, distractors, and regression tests
   - `My Drive/Fionnbar Homework/<School Year>/Writing`
 - Maintain one document per week named:
   - `Fionnbar Writing — Week of <Monday date>`
-- Append each completed writing task with its title, date, untouched draft, corrected version, and short practice summary.
+- Append every saved version in each eligible revision group with its title, version number, date, text, corrected model, and short practice summary.
 
 ### Friday behavior
 
-- At 4:00 p.m. Friday, send whatever completed writing exists at that moment. Do not delay for unfinished Friday work.
+- At 12:00 p.m. Friday, send the completed revision groups that exist at that moment. Do not include a group until it has a final checked version with no supported errors.
 - Export and verify a PDF.
 - Share the Google Doc as view-only with one configured school address.
 - Send a separate email from Fionnbar's authorized Google account containing the PDF and link.
@@ -422,7 +421,7 @@ Default retention:
 - Test every timer, phase transition, redirect, close attempt, app switch, crash, restart, logout, sleep, and offline recovery.
 - Confirm elapsed wall-clock downtime never becomes credited activity time.
 - Confirm parent emergency exits and overrides.
-- Confirm the writing activity rejects missing drafts, unfinished trials, stale drafts, expired sessions, and duplicate completion while accepting completed participation at any accuracy percentage.
+- Confirm the writing activity rejects missing drafts, unfinished trials, uncorrected final versions, and duplicate completion; expired sessions restart safely, and any first-attempt accuracy percentage is accepted after a clean final revision.
 - Confirm missing, expired, replayed, altered, and wrong-key lifecycle assertions cannot start or release daemon enforcement.
 
 ### Rewards
@@ -434,13 +433,13 @@ Default retention:
 ### Writing
 
 - Test each supported grammar, punctuation, and capitalization rule with positive, negative, and ambiguous examples.
-- Confirm each original supported error produces one correction plus five practice trials.
+- Confirm each original supported error produces one correction plus three practice trials before the next error begins.
 - Confirm every multiple-choice trial has three unique choices, exactly one declared correct answer, and a rule-specific explanation.
-- Confirm incorrect choices advance once, remain scored incorrect, expose the correct answer, and cannot be changed.
-- Confirm original drafts remain unchanged and corrected drafts contain the reviewed corrections.
+- Confirm an incorrect first choice remains scored incorrect, exposes the correct answer with rule feedback, and cannot advance until that correct answer is selected; confirm the corrective selection adds no second score.
+- Confirm the game returns to an editable revision step, every version remains unchanged, and another game is required when the revision still contains supported errors.
 - Confirm the final percentage and cumulative-accuracy line graph match the stored response sequence.
 - Confirm screen readers receive selected/correct/incorrect state and immediate feedback, and keyboard focus moves to each new question.
-- Run the spelling adapter's regression tests before enabling writing completion.
+- Confirm reviewed misspellings enter the multiple-choice sequence and unreviewed words remain unchanged.
 
 ### Google and Chrome
 

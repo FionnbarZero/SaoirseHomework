@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { createStore, getWeekContext } from '../server/database.mjs'
-import { inspectDraft } from '../src/writing.ts'
+import { inspectDraft, inspectWritingFindings } from '../src/writing.ts'
 
 function sampleState() {
   return {
@@ -27,16 +27,14 @@ function sampleState() {
     drafts: [{
       id: 'draft-1',
       title: 'A test draft',
-      body: 'Today I recieve a persistence test.',
-      correctedBody: 'Today I recieve a persistence test.',
+      body: 'Today I receive a persistence test.',
+      correctedBody: 'Today I receive a persistence test.',
       updatedAt: '2026-10-03T07:00:00.000Z',
       findings: [],
       exerciseProgress: { example: { correctionComplete: true, practiceCompleted: 5, incorrectAttempts: 1 } },
-      spellingWords: [{ id: 'spelling-recieve-receive', word: 'recieve', correctWord: 'receive', occurrences: 1 }],
-      spellingProgress: {
-        'spelling-recieve-receive': { copyCompleted: 3, hiddenCompleted: 2, mixedCompleted: 0, incorrectAttempts: 1 },
-      },
-      reviewStatus: 'spelling-pending',
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'complete',
     }],
     writingDictionary: { knownNames: ['Fionnbar', 'Ms. Rivera'], knownPlaces: ['San Francisco'] },
     writingReviewQueue: [{
@@ -82,18 +80,178 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.deepEqual(restored.optionalCompleted, ['voena:0'])
     assert.equal(restored.rewardCredits[0].remainingSeconds, 300)
     assert.equal(restored.drafts[0].title, 'A test draft')
-    assert.equal(restored.drafts[0].correctedBody, 'Today I recieve a persistence test.')
+    assert.equal(restored.drafts[0].correctedBody, 'Today I receive a persistence test.')
     assert.equal(restored.drafts[0].exerciseProgress.example.practiceCompleted, 5)
-    assert.equal(restored.drafts[0].spellingWords[0].correctWord, 'receive')
-    assert.equal(restored.drafts[0].spellingProgress['spelling-recieve-receive'].hiddenCompleted, 2)
-    assert.equal(restored.drafts[0].reviewStatus, 'spelling-pending')
+    assert.deepEqual(restored.drafts[0].spellingWords, [])
+    assert.equal(restored.drafts[0].reviewStatus, 'complete')
     assert.deepEqual(restored.writingDictionary.knownPlaces, ['San Francisco'])
     assert.equal(restored.writingReviewQueue[0].status, 'pending')
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 15)
+    assert.equal(reopened.info().schemaVersion, 21)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('unfinished five-example writing drafts migrate to three examples without losing completed responses', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-writing-target-'))
+  const filename = join(directory, 'homework.sqlite')
+  try {
+    const first = createStore(filename)
+    const state = sampleState()
+    const body = 'She play games.'
+    const finding = inspectDraft(body)[0]
+    const legacyFinding = {
+      ...finding,
+      practice: [...finding.practice, finding.practice[0], finding.practice[1]],
+    }
+    state.drafts = [{
+      id: 'legacy-writing-draft',
+      title: 'Legacy writing practice',
+      body,
+      correctedBody: 'She plays games.',
+      findings: [legacyFinding],
+      exerciseProgress: {
+        [finding.id]: {
+          correctionComplete: true,
+          practiceCompleted: 5,
+          incorrectAttempts: 3,
+          attemptResults: [false, true, false, true, false, true],
+        },
+      },
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'practice',
+      updatedAt: '2026-10-03T16:00:00.000Z',
+    }]
+    first.saveState(state)
+    first.db.prepare(`
+      UPDATE writing_submission
+      SET findings_json = ?, exercise_progress_json = ?, review_status = 'practice'
+      WHERE id = 'legacy-writing-draft'
+    `).run(
+      JSON.stringify([legacyFinding]),
+      JSON.stringify(state.drafts[0].exerciseProgress),
+    )
+    first.db.prepare(`DELETE FROM app_meta WHERE key = 'writing_practice_target_3_migrated'`).run()
+    first.close()
+
+    const reopened = createStore(filename)
+    const migrated = reopened.loadState().drafts[0]
+    assert.equal(migrated.findings[0].practice.length, 3)
+    assert.equal(migrated.exerciseProgress[finding.id].practiceCompleted, 3)
+    assert.deepEqual(
+      migrated.exerciseProgress[finding.id].attemptResults,
+      [false, true, false, true],
+    )
+    assert.equal(migrated.reviewStatus, 'complete')
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('unfinished repeated-rule findings migrate to different reviewed question sets', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-varied-practice-'))
+  const filename = join(directory, 'homework.sqlite')
+  try {
+    const first = createStore(filename)
+    const body = 'She play games. He walk home. It run fast.'
+    const findings = inspectDraft(body)
+      .filter((finding) => finding.ruleId === 'subject-verb-singular')
+    const legacyFindings = findings.map((finding) => ({
+      ...finding,
+      practice: findings[0].practice.map((trial) => ({ ...trial, choices: [...trial.choices] })),
+    }))
+    const state = sampleState()
+    state.drafts = [{
+      id: 'repeated-rule-draft',
+      title: 'Repeated rule',
+      body,
+      correctedBody: body,
+      findings: legacyFindings,
+      exerciseProgress: {},
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'practice',
+      updatedAt: '2026-10-03T16:00:00.000Z',
+    }]
+    first.saveState(state)
+    first.db.prepare(`
+      UPDATE writing_submission
+      SET findings_json = ?, review_status = 'practice'
+      WHERE id = 'repeated-rule-draft'
+    `).run(JSON.stringify(legacyFindings))
+    first.db.prepare(`DELETE FROM app_meta WHERE key = 'varied_writing_practice_v2_migrated'`).run()
+    first.close()
+
+    const reopened = createStore(filename)
+    const migrated = reopened.loadState().drafts[0].findings
+      .filter((finding) => finding.ruleId === 'subject-verb-singular')
+    assert.deepEqual(
+      migrated.map((finding) => finding.practice.map((trial) => trial.id)),
+      [
+        ['subject-verb-singular-1', 'subject-verb-singular-2', 'subject-verb-singular-3'],
+        ['subject-verb-singular-4', 'subject-verb-singular-5', 'subject-verb-singular-6'],
+        ['subject-verb-singular-7', 'subject-verb-singular-8', 'subject-verb-singular-9'],
+      ],
+    )
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a pending writing session re-analyzes a legacy completed draft for multiple-choice spelling', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-spelling-choice-'))
+  const filename = join(directory, 'homework.sqlite')
+  const clock = controlledClock()
+  try {
+    const first = createStore(filename, clock.options())
+    first.startGameSession({
+      activityId: 'reading-strategies',
+      day: 'Monday',
+      expectedOrigin: 'http://127.0.0.1:4179',
+    })
+    clock.advance(1_000)
+    const body = 'the hambester runs and he was happy.'
+    const legacyFindings = inspectDraft(body)
+    const state = sampleState()
+    state.drafts = [{
+      id: 'active-legacy-draft',
+      title: 'Active legacy draft',
+      body,
+      correctedBody: body,
+      findings: legacyFindings,
+      exerciseProgress: Object.fromEntries(legacyFindings.map((finding) => [finding.id, {
+        correctionComplete: true,
+        practiceCompleted: finding.practice.length,
+        incorrectAttempts: 0,
+        attemptResults: Array.from({ length: finding.practice.length + 1 }, () => true),
+      }])),
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'complete',
+      updatedAt: '2026-10-03T16:00:01.000Z',
+    }]
+    first.saveState(state)
+    first.db.prepare(`
+      UPDATE writing_submission
+      SET findings_json = ?, exercise_progress_json = ?, review_status = 'complete'
+      WHERE id = 'active-legacy-draft'
+    `).run(JSON.stringify(legacyFindings), JSON.stringify(state.drafts[0].exerciseProgress))
+    first.db.prepare(`DELETE FROM app_meta WHERE key = 'spelling_multiple_choice_v2_migrated'`).run()
+    first.close()
+
+    const reopened = createStore(filename, clock.options())
+    const migrated = reopened.loadState().drafts[0]
+    assert.equal(migrated.findings.some((finding) => finding.category === 'Spelling'), true)
+    assert.equal(migrated.findings.find((finding) => finding.category === 'Spelling').replacement, 'hamster')
+    assert.equal(migrated.reviewStatus, 'practice')
     reopened.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -776,7 +934,7 @@ test('a valid one-time game token atomically records verified Reading Strategies
   store.close()
 })
 
-test('writing remediation requires every response but completion is based on participation and editing, not mastery', () => {
+test('writing remediation requires practice, a saved revision, and a clean final check', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', clock.options())
   const { session } = store.startGameSession({
@@ -784,12 +942,15 @@ test('writing remediation requires every response but completion is based on par
     day: 'Monday',
     expectedOrigin: 'http://127.0.0.1:4179',
   })
+  assert.equal(new Date(session.expiresAt).getTime() - new Date(session.createdAt).getTime(), 24 * 60 * 60 * 1000)
   const body = 'She play games.'
   const finding = inspectDraft(body)[0]
   const state = sampleState()
   state.activeTimer = null
   state.drafts = [{
     id: 'writing-game-draft',
+    revisionGroupId: 'writing-game-draft',
+    versionNumber: 1,
     title: 'My reading response',
     body,
     correctedBody: 'She plays games.',
@@ -798,9 +959,9 @@ test('writing remediation requires every response but completion is based on par
     exerciseProgress: {
       [finding.id]: {
         correctionComplete: true,
-        practiceCompleted: 4,
-        incorrectAttempts: 5,
-        attemptResults: [false, false, false, false, false],
+        practiceCompleted: 2,
+        incorrectAttempts: 3,
+        attemptResults: [false, false, false],
       },
     },
     spellingWords: [],
@@ -818,19 +979,43 @@ test('writing remediation requires every response but completion is based on par
 
   state.drafts[0].exerciseProgress[finding.id] = {
     correctionComplete: true,
-    practiceCompleted: 5,
-    incorrectAttempts: 6,
-    attemptResults: [false, false, false, false, false, false],
+    practiceCompleted: 3,
+    incorrectAttempts: 4,
+    attemptResults: [false, false, false, false],
   }
   state.drafts[0].updatedAt = '2026-10-03T16:00:02.000Z'
   clock.advance(1_000)
   store.saveState(state)
-  const completed = store.completeWritingGameSession({ id: session.id, draftId: 'writing-game-draft' })
+  assertServiceError(
+    () => store.completeWritingGameSession({ id: session.id, draftId: 'writing-game-draft' }),
+    409,
+    'writing_revision_required',
+  )
+
+  state.drafts.unshift({
+    id: 'writing-game-revision',
+    revisionGroupId: 'writing-game-draft',
+    versionNumber: 2,
+    title: 'My reading response',
+    body: 'She plays games.',
+    correctedBody: 'She plays games.',
+    updatedAt: '2026-10-03T16:00:03.000Z',
+    findings: [],
+    exerciseProgress: {},
+    spellingWords: [],
+    spellingProgress: {},
+    reviewStatus: 'complete',
+  })
+  clock.advance(1_000)
+  store.saveState(state)
+  const completed = store.completeWritingGameSession({ id: session.id, draftId: 'writing-game-revision' })
 
   assert.equal(completed.evidence.correct, 0)
-  assert.equal(completed.evidence.total, 6)
+  assert.equal(completed.evidence.total, 4)
   assert.equal(completed.evidence.percent, 0)
   assert.equal(completed.evidence.edited, true)
+  assert.equal(completed.evidence.versionCount, 2)
+  assert.equal(completed.evidence.findingCount, 1)
   assert.equal(store.loadState().requiredByDay.Monday.includes('reading-strategies'), true)
   assert.equal(store.listCompletions()[0].source, 'writing-remediation')
   store.close()
@@ -1013,9 +1198,9 @@ test('the service recomputes writing completion instead of trusting browser stat
 
   assert.equal(draft.reviewStatus, 'practice')
   assert.deepEqual(draft.findings.map((finding) => finding.ruleId), [
-    'sentence-capital', 'pronoun-i', 'terminal-punctuation',
+    'sentence-capital', 'pronoun-i', 'spelling-reviewed-recieve', 'terminal-punctuation',
   ])
-  assert.equal(draft.spellingWords[0].word, 'recieve')
+  assert.deepEqual(draft.spellingWords, [])
   assert.equal(draft.correctedBody, draft.body)
   store.close()
 })
@@ -1027,10 +1212,46 @@ test('live Google delivery snapshots complete writing and remains duplicate-safe
     googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
   })
   const state = sampleState()
+  const findings = inspectWritingFindings(state.drafts[0].body, state.writingDictionary)
+  state.drafts[0].revisionGroupId = 'weekly-revision-group'
+  state.drafts[0].versionNumber = 2
+  state.drafts[0].findings = findings
+  state.drafts[0].exerciseProgress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+    attemptResults: Array.from({ length: finding.practice.length + 1 }, () => true),
+  }]))
   state.drafts[0].reviewStatus = 'complete'
-  state.drafts[0].spellingProgress['spelling-recieve-receive'] = {
-    copyCompleted: 3, hiddenCompleted: 3, mixedCompleted: 3, incorrectAttempts: 1,
-  }
+  const firstBody = 'She play games.'
+  const firstFindings = inspectWritingFindings(firstBody, state.writingDictionary)
+  state.drafts.push({
+    id: 'draft-version-1',
+    revisionGroupId: 'weekly-revision-group',
+    versionNumber: 1,
+    title: state.drafts[0].title,
+    body: firstBody,
+    correctedBody: 'She plays games.',
+    findings: firstFindings,
+    exerciseProgress: Object.fromEntries(firstFindings.map((finding) => [finding.id, {
+      correctionComplete: true,
+      practiceCompleted: finding.practice.length,
+      incorrectAttempts: 0,
+      attemptResults: Array.from({ length: finding.practice.length + 1 }, () => true),
+    }])),
+    spellingWords: [],
+    spellingProgress: {},
+    reviewStatus: 'complete',
+    updatedAt: '2026-10-02T20:00:00.000Z',
+  })
+  state.drafts.push({
+    ...state.drafts.at(-1),
+    id: 'unfinished-revision-group',
+    revisionGroupId: 'unfinished-revision-group',
+    versionNumber: 1,
+    title: 'Not ready to send',
+    updatedAt: '2026-10-02T21:00:00.000Z',
+  })
   store.saveState(state)
   store.configureLiveGoogle({ recipient: 'Teacher@School.org' })
   store.connectLiveGoogle({
@@ -1042,7 +1263,9 @@ test('live Google delivery snapshots complete writing and remains duplicate-safe
   assert.equal(prepared.created, true)
   assert.equal(prepared.delivery.status, 'queued')
   assert.equal(prepared.delivery.recipient, 'teacher@school.org')
-  assert.equal(prepared.drafts.length, 1)
+  assert.equal(prepared.drafts.length, 2)
+  assert.deepEqual(prepared.drafts.map((draft) => draft.versionNumber), [1, 2])
+  assert.equal(prepared.drafts.some((draft) => draft.id === 'unfinished-revision-group'), false)
 
   const attempt = store.beginLiveGoogleDeliveryAttempt(prepared.delivery.id)
   assert.equal(attempt.delivery.status, 'creating')
@@ -1075,15 +1298,20 @@ test('live Google failures receive an exponential retry time and can be manually
     googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
   })
   const state = sampleState()
+  const findings = inspectWritingFindings(state.drafts[0].body, state.writingDictionary)
+  state.drafts[0].findings = findings
+  state.drafts[0].exerciseProgress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+    attemptResults: Array.from({ length: finding.practice.length + 1 }, () => true),
+  }]))
   state.drafts[0].reviewStatus = 'complete'
-  state.drafts[0].spellingProgress['spelling-recieve-receive'] = {
-    copyCompleted: 3, hiddenCompleted: 3, mixedCompleted: 3, incorrectAttempts: 1,
-  }
   store.saveState(state)
   store.connectLiveGoogle({ accountEmail: 'fionnbar@example.com', scopes: [] })
   store.configureLiveGoogle({ recipient: 'teacher@school.org' })
 
-  const prepared = store.prepareLiveGoogleDelivery({ weekId: '2026-10-05' })
+  const prepared = store.prepareLiveGoogleDelivery({ weekId: '2026-09-28' })
   store.beginLiveGoogleDeliveryAttempt(prepared.delivery.id)
   const failed = store.failLiveGoogleDelivery(prepared.delivery.id, new Error('offline'))
   assert.equal(failed.status, 'failed')

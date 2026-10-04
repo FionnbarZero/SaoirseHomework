@@ -31,9 +31,10 @@ npm run build
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
 - Local writing drafts with deterministic grammar, capitalization, punctuation, and reviewed common-misspelling checks
-- One original-sentence correction plus five three-choice practice trials for every supported finding
-- Restart-safe spelling practice with three visible copies, three hidden responses, and three mixed-review responses per word
-- Restart-safe exercise progress, unchanged original drafts, and separately persisted corrected copies
+- One original-sentence correction plus three three-choice practice trials for every supported finding
+- Reviewed spelling mistakes use the same original correction plus three multiple-choice reviews as the other writing areas
+- A separate full-width correction-game frame followed by child revision and rechecking until no supported errors remain
+- Restart-safe exercise progress and separately persisted version history; earlier writing is never overwritten
 - Parent-editable capitalization dictionaries for known names and places
 - Persistent, non-blocking parent review queue for ambiguous repeated-word, tense, and run-on suggestions
 - Parent preview dashboard and completion overrides
@@ -61,17 +62,17 @@ npm run build
 - Safe-by-default dry-run app-policy checks and an uninstalled LaunchAgent template
 - Manifest V3 managed-Chrome prototype with a stable development ID
 - Dynamic Homework-mode navigation rules and a parent-reviewed policy template
-- Personalized reading-response writing with one original correction and five rule-matched trials per supported error
+- Personalized reading-response writing with one original correction and three rule-matched trials per supported error
 - Reviewed Grade 5 practice for perfect tense, safe tense consistency, correlative conjunctions, preposition pronouns, interjections, direct address, and the existing capitalization and punctuation rules
-- Participation-based completion with locked answers, immediate rule feedback, stored accuracy, and a cumulative line graph
-- Server-verified writing evidence, edited-copy completion, expiry, and replay rejection
+- Participation-based completion with first-attempt scoring, required unscored corrections, immediate rule feedback, stored accuracy, and a cumulative line graph
+- Server-verified game evidence, clean-final-version completion, 24-hour sessions with safe expiry recovery, and replay rejection
 - Persistent safe-mode Google connection and weekly delivery records
 - Duplicate-safe local document assembly, original/corrected writing sections, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Safe-by-default live Google foundation with Desktop OAuth PKCE and macOS Keychain refresh-token storage
 - Drive/Docs weekly document creation, verified PDF export, view-only sharing, and Gmail attachment delivery
-- Friday 4 p.m. queue, weekly idempotency, restart recovery, exponential retry, and parent retry/revoke controls
-- Fail-closed delivery eligibility: only writing explicitly marked complete can leave the Mac
+- Friday 12 p.m. queue, weekly idempotency, restart recovery, exponential retry, and parent retry/revoke controls
+- Fail-closed delivery eligibility: a revision group can leave the Mac only after its final checked version has no supported errors
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
 - Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock
 - Parent-reviewed URL and exact-origin configuration for Ninja Dojo, Du Chinese, and Level Chinese
@@ -105,6 +106,6 @@ Configure tracked school activities from the Parent screen. Launch URLs must use
 
 The Parent screen's Google delivery proof remains deliberately local and is the default. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`.
 
-The live path is implemented but fail-closed until explicitly configured. In the packaged production architecture, the signed login agent performs Authorization Code with PKCE, token exchange, refresh, revocation, and login-Keychain storage; the root service receives only short-lived access tokens through its authenticated broker queue. It uses `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The writing flow marks a draft `complete` only after every supported correction and spelling response is finished; only complete drafts are eligible for live delivery.
+The live path is implemented but fail-closed until explicitly configured. In the packaged production architecture, the signed login agent performs Authorization Code with PKCE, token exchange, refresh, revocation, and login-Keychain storage; the root service receives only short-lived access tokens through its authenticated broker queue. It uses `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). A revision group becomes delivery-eligible only after every game is complete and its latest checked version has no supported errors; the weekly document then includes every completed version in that group.
 
 Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

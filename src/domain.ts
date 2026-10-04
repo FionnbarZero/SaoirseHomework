@@ -38,7 +38,7 @@ export type OptionalActivity = {
 export type Finding = {
   id: string
   ruleId: string
-  category: 'Grammar' | 'Capitalization' | 'Punctuation'
+  category: 'Grammar' | 'Capitalization' | 'Punctuation' | 'Spelling'
   message: string
   suggestion: string
   start: number
@@ -95,6 +95,9 @@ export type WritingReviewItem = {
 
 export type Draft = {
   id: string
+  weekId?: string
+  revisionGroupId?: string
+  versionNumber?: number
   title: string
   body: string
   correctedBody?: string

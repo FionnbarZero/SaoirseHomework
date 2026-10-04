@@ -39,25 +39,27 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
   }
   const drafts = [{
     title: 'The Adventure',
+    versionNumber: 2,
     body: 'the original',
     correctedBody: 'The original.',
     findings: [{ id: 'one' }],
     exerciseProgress: {
       one: {
         correctionComplete: true,
-        practiceCompleted: 5,
-        attemptResults: [false, true, true, false, true, true],
+        practiceCompleted: 3,
+        attemptResults: [false, true, true, false],
       },
     },
     updatedAt: '2026-10-02T20:00:00.000Z',
   }]
   const text = buildWeeklyDocumentText(delivery, drafts)
+  assert.match(text, /The Adventure — Version 2/)
   assert.match(text, /Original\nthe original/)
   assert.match(text, /Corrected copy\nThe original\./)
-  assert.match(text, /6 of 6 grammar, punctuation, and capitalization steps completed/)
+  assert.match(text, /4 of 4 writing correction and review steps completed/)
   assert.match(text, /No supported common misspellings were detected/)
-  assert.match(text, /Writing game score: 4 of 6 correct \(67%\)/)
-  assert.match(text, /Accuracy by response: 0%, 50%, 67%, 50%, 60%, 67%/)
+  assert.match(text, /First-try writing game score: 2 of 4 correct \(50%\)/)
+  assert.match(text, /First-try accuracy by question: 0%, 50%, 67%, 50%/)
   assert.equal(schoolYearForWeek('2026-09-28'), '2026-2027')
 
   const raw = buildGmailRawMessage({
@@ -77,8 +79,8 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
 })
 
 test('Friday delivery gate follows the configured school time zone', () => {
-  assert.equal(isFridayDeliveryDue('2026-10-02T22:59:00.000Z', 'America/Los_Angeles'), false)
-  assert.equal(isFridayDeliveryDue('2026-10-02T23:00:00.000Z', 'America/Los_Angeles'), true)
+  assert.equal(isFridayDeliveryDue('2026-10-02T18:59:00.000Z', 'America/Los_Angeles'), false)
+  assert.equal(isFridayDeliveryDue('2026-10-02T19:00:00.000Z', 'America/Los_Angeles'), true)
   assert.equal(isFridayDeliveryDue('2026-10-03T01:00:00.000Z', 'America/Los_Angeles'), true)
   assert.equal(isFridayDeliveryDue('2026-10-03T08:00:00.000Z', 'America/Los_Angeles'), false)
 })

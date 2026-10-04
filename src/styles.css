@@ -255,6 +255,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .privacy-pill strong, .admin-pill strong { font-size: 11px; }
 .privacy-pill small, .admin-pill small { color: #66877f; font-size: 9px; margin-top: 2px; }
 .writing-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(260px, .75fr); gap: 18px; }
+.writing-grid.game-open { max-width: 820px; margin: 0 auto; display: block; }
+.writing-grid.game-open .editor-card { display: none; }
+.writing-grid.game-open .review-card { min-height: 520px; padding: 28px; border-color: #c9d7d2; box-shadow: 0 24px 70px rgba(45, 65, 59, .16); }
 .editor-card, .review-card { border: 1px solid var(--line); border-radius: 20px; background: var(--paper); box-shadow: var(--shadow); overflow: hidden; }
 .title-input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 21px 24px 15px; font-family: Georgia, serif; font-size: 22px; font-weight: 600; }
 .title-input::placeholder { color: #b2afa8; }
@@ -268,6 +271,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .review-heading h3 { margin: 0 0 3px; font-family: Georgia, serif; font-size: 18px; }
 .review-heading p { margin: 0; color: #8c918e; font-size: 10px; }
 .review-empty { display: grid; gap: 10px; margin-top: 18px; }
+.revision-callout { padding: 13px 14px; display: grid; gap: 4px; border: 1px solid #d7c17f; border-radius: 12px; color: #71581f; background: #fff5d8; }
+.revision-callout strong { font-size: 14px; }
+.revision-callout span { font-size: 13px; line-height: 1.45; }
 .review-category { display: flex; align-items: center; gap: 11px; padding: 11px; background: #f1eee6; border-radius: 12px; }
 .review-category > span { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: #2f7066; background: #dcebe6; font-size: 10px; font-weight: 900; }
 .review-category p { margin: 0; }
@@ -288,6 +294,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .exercise-progress { display: grid; gap: 6px; margin-bottom: 18px; color: #52605a; font-size: 14px; font-weight: 800; }
 .exercise-progress > div { height: 6px; overflow: hidden; border-radius: 999px; background: #e7e2d8; }
 .exercise-progress i { height: 100%; display: block; border-radius: inherit; background: var(--teal); transition: width .25s ease; }
+.skip-game-button { margin: -5px 0 15px auto; border: 1px dashed #b98958; border-radius: 9px; padding: 8px 10px; display: block; color: #7e542f; background: #fff7e8; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.skip-game-button:hover { border-style: solid; background: #f9ecd5; }
+.exercise-area-summary { margin: 0 0 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.exercise-area-summary > div { padding: 9px 10px; border: 1px solid #ddd8ce; border-radius: 10px; color: #65706b; background: #f7f4ed; }
+.exercise-area-summary > div.active { border-color: #6d9a90; color: #285d52; background: #e4f0ec; }
+.exercise-area-summary strong, .exercise-area-summary span, .exercise-area-summary small { display: block; }
+.exercise-area-summary strong { font-size: 13px; }
+.exercise-area-summary span { margin-top: 2px; font-size: 12px; line-height: 1.35; }
+.exercise-area-summary small { margin-top: 5px; font-size: 12px; font-weight: 800; }
 .exercise-category { color: #934d32; font-size: 13px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
 .writing-exercise h4 { margin: 9px 0 7px; font-family: Georgia, serif; font-size: 19px; line-height: 1.35; }
 .writing-exercise h4:focus { outline: 3px solid rgba(53,95,87,.25); outline-offset: 4px; }

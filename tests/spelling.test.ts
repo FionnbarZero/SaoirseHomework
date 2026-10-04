@@ -4,6 +4,7 @@ import {
   applyCompletedSpellingCorrections,
   completedSpellingSteps,
   inspectSpelling,
+  inspectSpellingFindings,
   nextSpellingStep,
   spellingPracticeComplete,
   submitSpellingAnswer,
@@ -21,6 +22,21 @@ test('spelling inspection recognizes only reviewed misspellings and groups repea
   ])
   assert.deepEqual(inspectSpelling('Teh met a freind.', { knownNames: ['Teh'], knownPlaces: [] })
     .map((word) => word.word), ['freind'])
+})
+
+test('reviewed misspellings become child-sentence plus three multiple-choice reviews', () => {
+  const findings = inspectSpellingFindings('I saw my freind. Eddie cbouts a hambester and met a whitch.')
+  assert.deepEqual(findings.map((finding) => finding.replacement), ['friend', 'bought', 'hamster', 'witch'])
+  for (const finding of findings) {
+    assert.equal(finding.category, 'Spelling')
+    assert.equal(finding.practice.length, 3)
+    for (const trial of [finding.correction, ...finding.practice]) {
+      assert.equal(new Set(trial.choices).size, 3)
+      assert.equal(trial.choices.filter((choice) => choice === trial.correctAnswer).length, 1)
+    }
+    assert.equal(finding.practice.every((trial) => trial.correctAnswer.includes(finding.replacement)), true)
+  }
+  assert.equal(new Set(findings.flatMap((finding) => finding.practice.map((trial) => trial.correctAnswer))).size, 12)
 })
 
 test('spelling adapter requires copy, hidden, and mixed phases in order', () => {

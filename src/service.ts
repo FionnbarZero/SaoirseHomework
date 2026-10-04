@@ -97,6 +97,8 @@ type GameSessionLaunchResponse = StateResponse & {
 type WritingGameCompletionResponse = GameSessionResponse & {
   evidence: {
     draftId: string
+    revisionGroupId: string
+    versionCount: number
     findingCount: number
     correct: number
     total: number

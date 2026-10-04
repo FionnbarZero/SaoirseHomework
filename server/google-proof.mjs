@@ -39,9 +39,14 @@ function practiceSummary(draft) {
     : {}
   const completed = draft.findings.reduce((total, finding) => {
     const item = progress[finding.id]
-    return total + (item?.correctionComplete ? 1 : 0) + Math.min(5, Number(item?.practiceCompleted) || 0)
+    const practiceTarget = Array.isArray(finding.practice) ? finding.practice.length : 3
+    return total + (item?.correctionComplete ? 1 : 0) +
+      Math.min(practiceTarget, Number(item?.practiceCompleted) || 0)
   }, 0)
-  const total = draft.findings.length * 6
+  const total = draft.findings.reduce(
+    (sum, finding) => sum + (Array.isArray(finding.practice) ? finding.practice.length : 3) + 1,
+    0,
+  )
   const categories = [...new Set(draft.findings.map((finding) => finding.category))]
   const attemptResults = draft.findings.flatMap((finding) => {
     const results = progress[finding.id]?.attemptResults
@@ -66,9 +71,12 @@ function practiceSummary(draft) {
       Math.min(3, Number(item?.mixedCompleted) || 0)
   }, 0)
   const spellingTotal = spellingWords.length * 9
+  const spellingFindingCount = draft.findings.filter((finding) => finding.category === 'Spelling').length
   const spellingText = draft.reviewStatus === 'complete'
     ? spellingWords.length
       ? `${spellingCompleted} of ${spellingTotal} spelling-practice responses completed for ${spellingWords.length} ${spellingWords.length === 1 ? 'word' : 'words'}.`
+      : spellingFindingCount
+        ? `${spellingFindingCount} reviewed ${spellingFindingCount === 1 ? 'misspelling was' : 'misspellings were'} completed in the multiple-choice game.`
       : 'No supported common misspellings were detected.'
     : 'Spelling practice is not complete.'
   return {
@@ -79,7 +87,7 @@ function practiceSummary(draft) {
       : 'No supported grammar, punctuation, or capitalization findings were detected.',
     scoreText: scorePercent === null
       ? 'No scored writing responses were recorded.'
-      : `Writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%). Accuracy by response: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`,
+      : `First-try writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%). First-try accuracy by question: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`,
     spellingText,
   }
 }
@@ -87,10 +95,11 @@ function practiceSummary(draft) {
 function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, generatedAt }) {
   const draftSections = drafts.map((draft, index) => {
     const summary = practiceSummary(draft)
+    const versionLabel = `Version ${Math.max(1, Number(draft.versionNumber) || 1)}`
     return `
     <section class="draft">
       <p class="draft-number">WRITING ${index + 1}</p>
-      <h2>${escapeHtml(draft.title || 'Untitled writing')}</h2>
+      <h2>${escapeHtml(draft.title || 'Untitled writing')} — ${escapeHtml(versionLabel)}</h2>
       <p class="date">Saved ${escapeHtml(formatDate(draft.updatedAt))}</p>
       <h3>Original draft</h3>
       <div class="body">${escapeHtml(draft.body).replaceAll('\n', '<br />')}</div>

@@ -8,6 +8,7 @@ import type {
   GoogleLiveDelivery,
   GoogleLiveState,
   GoogleProofState,
+  WritingDictionary,
 } from './domain'
 
 export type ServiceMeta = {
@@ -20,6 +21,37 @@ export type ServiceMeta = {
 type StateResponse = {
   state: AppState
   meta: ServiceMeta
+}
+
+export type ParentAuthorizationStatus = {
+  configured: boolean
+  guardianConnected: boolean
+  authenticated: boolean
+  purpose?: 'dashboard' | 'sensitive'
+  issuedAt?: string
+  expiresAt?: string
+  sensitiveUntil?: string
+}
+
+export type ParentAuthorizationChallenge = {
+  id: string
+  purpose: 'dashboard' | 'sensitive'
+  purposeLabel: string
+  status: 'pending' | 'approved' | 'denied' | 'cancelled'
+  requestedAt: string
+  expiresAt: string
+}
+
+export type SecurityStatus = {
+  mode: 'preview' | 'enforcing'
+  learningMode: 'inactive' | 'homework' | 'free'
+  locked: boolean
+  reasons: ('guardian_unavailable' | 'managed_chrome_unavailable' | 'service_unavailable' | 'parent_authorization_not_configured')[]
+  guardianConnected: boolean
+  chromeConnected: boolean
+  parentAuthorizationConfigured: boolean
+  serviceTime: string
+  entered: boolean
 }
 
 type SessionResponse = StateResponse & {
@@ -91,6 +123,33 @@ export function loadStateFromService() {
   return request<StateResponse>('/api/state')
 }
 
+export function getSecurityStatus() {
+  return request<SecurityStatus>('/api/security/status')
+}
+
+export function getParentAuthorizationStatus() {
+  return request<ParentAuthorizationStatus>('/api/parent/auth/status')
+}
+
+export function startParentAuthorization(purpose: 'dashboard' | 'sensitive') {
+  return request<{ challenge: ParentAuthorizationChallenge }>('/api/parent/auth/challenges', {
+    method: 'POST',
+    body: JSON.stringify({ purpose }),
+  })
+}
+
+export function pollParentAuthorization(challengeId: string) {
+  return request<{
+    status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'expired'
+    challenge?: ParentAuthorizationChallenge
+    session?: ParentAuthorizationStatus
+  }>(`/api/parent/auth/challenges/${encodeURIComponent(challengeId)}`)
+}
+
+export function lockParentSession() {
+  return request<{ authenticated: false }>('/api/parent/auth/logout', { method: 'POST' })
+}
+
 export function saveStateToService(state: AppState) {
   return request<StateResponse>('/api/state', {
     method: 'PUT',
@@ -103,6 +162,31 @@ export function saveActivityConfiguration(configuration: ActivityConfiguration) 
     method: 'PUT',
     body: JSON.stringify({ configuration }),
   })
+}
+
+export function addParentRewardCredit(seconds = 300) {
+  return request<StateResponse>('/api/parent/reward-credits', {
+    method: 'POST',
+    body: JSON.stringify({ seconds, source: 'Parent-added credit' }),
+  })
+}
+
+export function saveWritingDictionary(dictionary: WritingDictionary) {
+  return request<StateResponse>('/api/parent/writing-dictionary', {
+    method: 'PUT',
+    body: JSON.stringify({ dictionary }),
+  })
+}
+
+export function saveWritingReviewStatus(id: string, status: 'pending' | 'resolved') {
+  return request<StateResponse>(`/api/parent/writing-reviews/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function resetParentPreviewData() {
+  return request<StateResponse>('/api/parent/reset-preview', { method: 'POST' })
 }
 
 export function recordAudit(eventType: string, details: Record<string, unknown>) {

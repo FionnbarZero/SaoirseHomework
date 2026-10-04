@@ -36,6 +36,10 @@ npm run build
 - Parent-editable capitalization dictionaries for known names and places
 - Persistent, non-blocking parent review queue for ambiguous repeated-word, tense, and run-on suggestions
 - Parent preview dashboard and completion overrides
+- macOS administrator authorization challenges for Parent controls, with no password field in the web app
+- Ten-minute HttpOnly parent sessions, explicit lock, sensitive-action reauthorization, and restart revocation
+- Server-enforced protection for parent overrides, rewards, writing review tools, URLs, Google controls/artifacts, audit history, and reset
+- Enforcing-mode recovery lock when the guardian, managed Chrome, or local service fails during Homework mode
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations
 - Five-second focus heartbeats using monotonic elapsed time
@@ -80,9 +84,11 @@ The UI labels the following honestly as pending because they require external in
 - The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
 - Parent-created Google Cloud credentials and Family Link approval for the implemented live Google delivery path
 
-The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
+The browser does not claim to enforce applications or URLs by itself. Those controls belong to the guardian and extension described in the project plan.
 
 The managed Chrome extension supplies approved-origin and YouTube playback signals for external activities and rewards. The macOS guardian remains a prototype until it is parent-installed and tested on the child account, so application-level blocking is not yet a production enforcement boundary.
+
+Parent controls now fail closed behind a native guardian authorization protocol. See [PARENT_AUTH_SETUP.md](PARENT_AUTH_SETUP.md). The native prompt and server boundary are implemented, but the guardian remains a feasibility build until its signed, parent-owned installation and second-Mac bypass testing are complete.
 
 Configure tracked school activities from the Parent screen. Launch URLs must use HTTPS (loopback HTTP is accepted for local testing), and any login or redirect origins must be entered explicitly. A configured external activity still cannot start until the managed Chrome extension is connected.
 

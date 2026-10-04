@@ -7,6 +7,7 @@ import { createStore } from './database.mjs'
 import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
+import { createParentAuthorization } from './parent-auth.mjs'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -22,6 +23,11 @@ const timeZone = process.env.HOMEWORK_TIME_ZONE || 'America/Los_Angeles'
 const googleMode = process.env.HOMEWORK_GOOGLE_MODE === 'live' ? 'live' : 'safe-test'
 const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim()
 const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
+const guardianSharedSecret = String(process.env.HOMEWORK_GUARDIAN_SHARED_SECRET ?? '').trim()
+const parentAuthorizationConfigured = guardianSharedSecret.length >= 32
+const securityMode = process.env.HOMEWORK_SECURITY_MODE === 'enforcing' ? 'enforcing' : 'preview'
+const parentAuthorization = createParentAuthorization()
+const parentSessionCookie = 'fionnbar_parent_session'
 const googleKeychain = createMacOSKeychain()
 const store = createStore(databasePath, {
   timeZone,
@@ -116,6 +122,67 @@ function sendHtml(response, status, body) {
     'Cache-Control': 'no-store',
   })
   response.end(body)
+}
+
+function requestCookie(request, name) {
+  const cookies = String(request.headers.cookie ?? '').split(';')
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf('=')
+    if (separator < 0) continue
+    if (cookie.slice(0, separator).trim() !== name) continue
+    return decodeURIComponent(cookie.slice(separator + 1).trim())
+  }
+  return ''
+}
+
+function parentSessionToken(request) {
+  return requestCookie(request, parentSessionCookie)
+}
+
+function parentSessionHeader(token) {
+  return `${parentSessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=600`
+}
+
+function expiredParentSessionHeader() {
+  return `${parentSessionCookie}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0`
+}
+
+function bearerToken(request) {
+  const value = String(request.headers.authorization ?? '')
+  return value.startsWith('Bearer ') ? value.slice(7) : ''
+}
+
+function guardianRequestIsAuthenticated(request) {
+  return parentAuthorizationConfigured && parentAuthorization.safeEqual(
+    bearerToken(request),
+    guardianSharedSecret,
+  )
+}
+
+function requireGuardian(request) {
+  if (!parentAuthorizationConfigured) {
+    const error = new Error('Parent authorization is not configured')
+    error.status = 503
+    error.code = 'parent_authorization_not_configured'
+    throw error
+  }
+  if (!guardianRequestIsAuthenticated(request)) {
+    const error = new Error('Guardian authentication failed')
+    error.status = 401
+    error.code = 'guardian_authentication_required'
+    throw error
+  }
+}
+
+function requireParent(request, options = {}) {
+  const result = parentAuthorization.validateSession(parentSessionToken(request), options)
+  if (result.valid) return result.session
+  const error = new Error(options.sensitive
+    ? 'Administrator reauthorization is required for this action'
+    : 'Parent authorization is required')
+  error.status = result.code === 'parent_reauthentication_required' ? 403 : 401
+  error.code = result.code
+  throw error
 }
 
 function oauthResultPage(success, message) {
@@ -279,7 +346,7 @@ function learningModeState() {
   return { state, mode, homeworkMode: mode === 'homework', day }
 }
 
-function guardianResponse() {
+function guardianResponse(includeParentChallenge = false) {
   const { state, mode, homeworkMode, day } = learningModeState()
   return {
     mode,
@@ -290,7 +357,43 @@ function guardianResponse() {
       : null,
     policy: guardianPolicy,
     guardian: store.getGuardianStatus(),
+    parentAuthorizationChallenge: includeParentChallenge
+      ? parentAuthorization.pendingChallenge()
+      : null,
     serviceTime: new Date().toISOString(),
+  }
+}
+
+function securityResponse() {
+  const { state, mode, homeworkMode } = learningModeState()
+  const guardian = store.getGuardianStatus()
+  const chrome = store.getChromeExtensionStatus()
+  const reasons = []
+  if (securityMode === 'enforcing' && homeworkMode) {
+    if (!parentAuthorizationConfigured) reasons.push('parent_authorization_not_configured')
+    if (!guardian.connected || !parentAuthorizationConfigured) reasons.push('guardian_unavailable')
+    if (!chrome.connected) reasons.push('managed_chrome_unavailable')
+  }
+  return {
+    mode: securityMode,
+    learningMode: mode,
+    locked: reasons.length > 0,
+    reasons,
+    guardianConnected: guardian.connected,
+    chromeConnected: chrome.connected,
+    parentAuthorizationConfigured,
+    serviceTime: new Date().toISOString(),
+    entered: state.entered,
+  }
+}
+
+function parentStatus(request) {
+  const result = parentAuthorization.validateSession(parentSessionToken(request))
+  return {
+    configured: parentAuthorizationConfigured,
+    guardianConnected: store.getGuardianStatus().connected,
+    authenticated: result.valid,
+    ...(result.valid ? result.session : {}),
   }
 }
 
@@ -345,6 +448,62 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { ok: true, service: 'fionnbar-homework', ...store.info() })
     }
 
+    if (url.pathname === '/api/security/status' && request.method === 'GET') {
+      return sendJson(response, 200, securityResponse())
+    }
+
+    if (url.pathname === '/api/parent/auth/status' && request.method === 'GET') {
+      return sendJson(response, 200, parentStatus(request))
+    }
+
+    if (url.pathname === '/api/parent/auth/challenges' && request.method === 'POST') {
+      if (!parentAuthorizationConfigured) {
+        return sendJson(response, 503, {
+          error: 'Parent authorization needs a guardian shared secret',
+          code: 'parent_authorization_not_configured',
+        })
+      }
+      if (!store.getGuardianStatus().connected) {
+        return sendJson(response, 503, {
+          error: 'The macOS guardian must be connected before Parent controls can open',
+          code: 'guardian_unavailable',
+        })
+      }
+      const body = await readJson(request)
+      const challenge = parentAuthorization.createChallenge(body.purpose)
+      store.addAudit('parent_authorization_requested', {
+        challengeId: challenge.id,
+        purpose: challenge.purpose,
+      })
+      return sendJson(response, 201, { challenge })
+    }
+
+    const parentChallengeMatch = url.pathname.match(/^\/api\/parent\/auth\/challenges\/([^/]+)$/)
+    if (parentChallengeMatch && request.method === 'GET') {
+      const challengeId = decodeURIComponent(parentChallengeMatch[1])
+      const result = parentAuthorization.consumeChallenge(challengeId)
+      if (result.status === 'approved') {
+        store.addAudit('parent_authorization_succeeded', {
+          challengeId,
+          purpose: result.session.purpose,
+          expiresAt: result.session.expiresAt,
+        })
+        return sendJson(response, 200, {
+          status: result.status,
+          session: result.session,
+        }, { 'Set-Cookie': parentSessionHeader(result.token) })
+      }
+      return sendJson(response, 200, result)
+    }
+
+    if (url.pathname === '/api/parent/auth/logout' && request.method === 'POST') {
+      parentAuthorization.revokeSession(parentSessionToken(request))
+      store.addAudit('parent_session_locked', {})
+      return sendJson(response, 200, { authenticated: false }, {
+        'Set-Cookie': expiredParentSessionHeader(),
+      })
+    }
+
     if (url.pathname === '/api/state' && request.method === 'GET') {
       return sendJson(response, 200, {
         state: store.loadState(),
@@ -359,19 +518,42 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/activity-configuration' && request.method === 'PUT') {
+      requireParent(request)
       const body = await readJson(request)
       store.setActivityConfiguration(body.configuration ?? body)
       return sendJson(response, 200, { state: store.loadState(), meta: store.info() })
     }
 
     if (url.pathname === '/api/guardian/status' && request.method === 'GET') {
-      return sendJson(response, 200, guardianResponse())
+      return sendJson(response, 200, guardianResponse(guardianRequestIsAuthenticated(request)))
     }
 
     if (url.pathname === '/api/guardian/heartbeat' && request.method === 'POST') {
+      if (parentAuthorizationConfigured || securityMode === 'enforcing') requireGuardian(request)
       const body = await readJson(request)
       const guardian = store.recordGuardianHeartbeat(body)
-      return sendJson(response, 200, { guardian, status: guardianResponse() })
+      return sendJson(response, 200, { guardian, status: guardianResponse(true) })
+    }
+
+    if (url.pathname === '/api/guardian/parent-approval' && request.method === 'POST') {
+      requireGuardian(request)
+      const body = await readJson(request)
+      const challenge = body.approved === true
+        ? parentAuthorization.approveChallenge(body.challengeId)
+        : parentAuthorization.denyChallenge(body.challengeId)
+      if (!challenge) {
+        return sendJson(response, 404, {
+          error: 'Parent authorization challenge was not found or has expired',
+          code: 'parent_challenge_expired',
+        })
+      }
+      store.addAudit(body.approved === true
+        ? 'parent_authorization_approved_by_macos'
+        : 'parent_authorization_denied_by_macos', {
+        challengeId: challenge.id,
+        purpose: challenge.purpose,
+      })
+      return sendJson(response, 200, { challenge })
     }
 
     if (url.pathname === '/api/chrome/status' && request.method === 'GET') {
@@ -388,6 +570,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/mock/status' && request.method === 'GET') {
+      requireParent(request)
       return sendJson(response, 200, {
         googleProof: store.getGoogleProofState(),
         state: store.loadState(),
@@ -396,6 +579,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/live/status' && request.method === 'GET') {
+      requireParent(request)
       return sendJson(response, 200, {
         googleLive: store.getLiveGoogleState(),
         state: store.loadState(),
@@ -404,6 +588,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/live/configuration' && request.method === 'POST') {
+      requireParent(request)
       const body = await readJson(request)
       const googleLiveState = store.configureLiveGoogle(body)
       return sendJson(response, 200, {
@@ -414,6 +599,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/live/authorize' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
       const authorization = await googleLive.beginAuthorization()
       return sendJson(response, 200, authorization)
     }
@@ -444,6 +630,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/live/disconnect' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
       const googleLiveState = await googleLive.disconnect()
       return sendJson(response, 200, {
         googleLive: googleLiveState,
@@ -453,6 +640,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/google/live/deliveries' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
       const body = await readJson(request)
       const prepared = await googleLive.queueDelivery({ recipient: body.recipient, weekId: body.weekId })
       return sendJson(response, prepared.created ? 201 : 200, {
@@ -465,29 +653,34 @@ const server = createServer(async (request, response) => {
 
     const googleLiveRetryMatch = url.pathname.match(/^\/api\/google\/live\/deliveries\/([^/]+)\/retry$/)
     if (googleLiveRetryMatch && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
       const delivery = await googleLive.retryDelivery(decodeURIComponent(googleLiveRetryMatch[1]))
       return sendJson(response, 200, { delivery, state: store.loadState(), meta: store.info() })
     }
 
     const googleLivePdfMatch = url.pathname.match(/^\/api\/google\/live\/deliveries\/([^/]+)\/pdf$/)
     if (googleLivePdfMatch && request.method === 'GET') {
+      requireParent(request)
       const artifact = store.getLiveGoogleDeliveryArtifact(decodeURIComponent(googleLivePdfMatch[1]))
       if (serveArtifact(artifact, response)) return
       return sendJson(response, 404, { error: 'Delivery PDF file not found', code: 'artifact_not_found' })
     }
 
     if (url.pathname === '/api/google/mock/connect' && request.method === 'POST') {
+      requireParent(request)
       const body = await readJson(request)
       const googleProof = store.connectMockGoogle(body)
       return sendJson(response, 200, { googleProof, state: store.loadState(), meta: store.info() })
     }
 
     if (url.pathname === '/api/google/mock/disconnect' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
       const googleProof = store.disconnectMockGoogle()
       return sendJson(response, 200, { googleProof, state: store.loadState(), meta: store.info() })
     }
 
     if (url.pathname === '/api/google/mock/deliveries' && request.method === 'POST') {
+      requireParent(request)
       const body = await readJson(request)
       const prepared = store.prepareMockGoogleDelivery({ recipient: body.recipient })
       if (!prepared.created || prepared.delivery.status === 'skipped') {
@@ -526,12 +719,41 @@ const server = createServer(async (request, response) => {
 
     const googleArtifactMatch = url.pathname.match(/^\/api\/google\/mock\/deliveries\/([^/]+)\/(document|pdf)$/)
     if (googleArtifactMatch && request.method === 'GET') {
+      requireParent(request)
       const artifact = store.getGoogleDeliveryArtifact(
         decodeURIComponent(googleArtifactMatch[1]),
         googleArtifactMatch[2],
       )
       if (serveArtifact(artifact, response)) return
       return sendJson(response, 404, { error: 'Delivery artifact file not found', code: 'artifact_not_found' })
+    }
+
+    if (url.pathname === '/api/parent/reward-credits' && request.method === 'POST') {
+      requireParent(request)
+      const body = await readJson(request)
+      const state = store.addParentRewardCredit(body)
+      return sendJson(response, 201, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/parent/writing-dictionary' && request.method === 'PUT') {
+      requireParent(request)
+      const body = await readJson(request)
+      const state = store.setWritingDictionary(body.dictionary ?? body)
+      return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    const writingReviewMatch = url.pathname.match(/^\/api\/parent\/writing-reviews\/([^/]+)$/)
+    if (writingReviewMatch && request.method === 'PUT') {
+      requireParent(request)
+      const body = await readJson(request)
+      const state = store.setWritingReviewStatus(decodeURIComponent(writingReviewMatch[1]), body.status)
+      return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/parent/reset-preview' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
+      const state = store.resetParentPreviewData()
+      return sendJson(response, 200, { state, meta: store.info() })
     }
 
     if (url.pathname === '/api/sessions' && request.method === 'POST') {
@@ -624,6 +846,7 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/completions' && request.method === 'POST') {
       const body = await readJson(request)
+      if (body.method === 'parent-override') requireParent(request)
       const allowedActivities = body.method === 'self-reported' ? selfReportedActivities : parentOverrideActivities
       if (!allowedActivities.has(body.activityId)) {
         return sendJson(response, 400, { error: 'That activity cannot use this completion method' })
@@ -633,10 +856,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/audit' && request.method === 'GET') {
+      requireParent(request)
       return sendJson(response, 200, { events: store.listAudit(url.searchParams.get('limit')) })
     }
 
     if (url.pathname === '/api/audit' && request.method === 'POST') {
+      requireParent(request)
       const body = await readJson(request)
       if (!body.eventType) return sendJson(response, 400, { error: 'eventType is required' })
       return sendJson(response, 201, { event: store.addAudit(body.eventType, body.details) })
@@ -662,6 +887,8 @@ server.listen(port, host, () => {
   console.log(`SQLite database: ${databasePath}`)
   console.log(`Reading game origin: ${readingGameOrigin}`)
   console.log(`Google delivery mode: ${googleMode}`)
+  console.log(`Parent authorization: ${parentAuthorizationConfigured ? 'configured' : 'locked (shared secret missing)'}`)
+  console.log(`Recovery security mode: ${securityMode}`)
 })
 
 const googleQueueInterval = setInterval(() => {

@@ -8,7 +8,7 @@ import {
   inspectSpelling,
   spellingPracticeComplete,
 } from '../src/spelling.ts'
-import { applyCompletedCorrections, inspectDraft } from '../src/writing.ts'
+import { applyCompletedCorrections, inspectAmbiguousDraft, inspectDraft } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -981,61 +981,72 @@ export function createStore(filename, options = {}) {
     const now = asIso(wallNow())
     const weekContext = ensureCurrentWeek()
     const weekId = weekContext.weekId
+    const importingBrowserState = !isInitialized()
+    const storedDictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const dictionary = importingBrowserState
+      ? normalizeWritingDictionary(state.writingDictionary)
+      : storedDictionary
+    const storedReviewQueue = normalizeWritingReviewQueue(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_review_queue'`).get()?.value ?? '[]',
+      [],
+    ))
+    const previousReviewQueue = importingBrowserState
+      ? normalizeWritingReviewQueue(state.writingReviewQueue)
+      : storedReviewQueue
     if (state.weekContext?.weekId && state.weekContext.weekId !== weekId) {
       throw serviceError('This browser state belongs to an archived week. Refresh before saving.', 409, 'stale_week')
     }
 
     db.exec('BEGIN IMMEDIATE')
     try {
-      db.prepare(`
-        DELETE FROM weekly_daily_completion
-        WHERE week_id = ? AND source IN ('browser', 'self-reported')
-      `).run(weekId)
-      db.prepare('DELETE FROM weekly_optional_completion WHERE week_id = ?').run(weekId)
-      db.exec('DELETE FROM reward_credit; DELETE FROM writing_submission;')
+      db.exec('DELETE FROM writing_submission;')
 
-      for (const day of DAYS) {
-        const activities = Array.isArray(state.requiredByDay[day]) ? state.requiredByDay[day] : []
-        for (const activityId of [...new Set(activities)]) {
-          if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId))) continue
-          insertRequired.run(weekId, day, String(activityId), 'browser', now)
+      if (importingBrowserState) {
+        for (const day of DAYS) {
+          const activities = Array.isArray(state.requiredByDay[day]) ? state.requiredByDay[day] : []
+          for (const activityId of [...new Set(activities)]) {
+            if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId))) continue
+            insertRequired.run(weekId, day, String(activityId), 'browser', now)
+            const hasRecord = db.prepare(`
+              SELECT 1 FROM completion_record
+              WHERE activity_id = ? AND session_key = ? AND details_json LIKE ? LIMIT 1
+            `).get(String(activityId), day, `%"weekId":"${weekId}"%`)
+            if (!hasRecord) {
+              insertCompletion.run(
+                `imported:${weekId}:${day}:${activityId}`, String(activityId), day, 'imported', 'browser-state',
+                null, now, JSON.stringify({ weekId }),
+              )
+            }
+          }
+        }
+
+        for (const sessionKey of [...new Set(state.optionalCompleted)]) {
+          insertOptional.run(weekId, String(sessionKey), now)
+          const activityId = String(sessionKey).split(':')[0]
           const hasRecord = db.prepare(`
-            SELECT 1 FROM completion_record
-            WHERE activity_id = ? AND session_key = ? AND details_json LIKE ? LIMIT 1
-          `).get(String(activityId), day, `%"weekId":"${weekId}"%`)
+            SELECT 1 FROM completion_record WHERE session_key = ? AND details_json LIKE ? LIMIT 1
+          `).get(String(sessionKey), `%"weekId":"${weekId}"%`)
           if (!hasRecord) {
             insertCompletion.run(
-              `imported:${weekId}:${day}:${activityId}`, String(activityId), day, 'imported', 'browser-state',
+              `imported:${weekId}:${sessionKey}`, activityId, String(sessionKey), 'imported', 'browser-state',
               null, now, JSON.stringify({ weekId }),
             )
           }
         }
-      }
 
-      for (const sessionKey of [...new Set(state.optionalCompleted)]) {
-        insertOptional.run(weekId, String(sessionKey), now)
-        const activityId = String(sessionKey).split(':')[0]
-        const hasRecord = db.prepare(`
-          SELECT 1 FROM completion_record WHERE session_key = ? AND details_json LIKE ? LIMIT 1
-        `).get(String(sessionKey), `%"weekId":"${weekId}"%`)
-        if (!hasRecord) {
-          insertCompletion.run(
-            `imported:${weekId}:${sessionKey}`, activityId, String(sessionKey), 'imported', 'browser-state',
-            null, now, JSON.stringify({ weekId }),
+        for (const credit of state.rewardCredits) {
+          insertReward.run(
+            String(credit.id), String(credit.source ?? 'Reward'),
+            Math.max(0, Number(credit.remainingSeconds) || 0), String(credit.earnedAt ?? now),
           )
         }
       }
 
-      for (const credit of state.rewardCredits) {
-        insertReward.run(
-          String(credit.id), String(credit.source ?? 'Reward'),
-          Math.max(0, Number(credit.remainingSeconds) || 0), String(credit.earnedAt ?? now),
-        )
-      }
-
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
-        const dictionary = normalizeWritingDictionary(state.writingDictionary)
         const findings = inspectDraft(body, dictionary)
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
@@ -1072,11 +1083,31 @@ export function createStore(filename, options = {}) {
         )
       }
 
-      importBrowserTimer(state.activeTimer, now, weekId)
-      setSetting.run('entered', state.entered ? '1' : '0')
-      setSetting.run('guardian_connected', state.guardianConnected ? '1' : '0')
-      setSetting.run('writing_dictionary', JSON.stringify(normalizeWritingDictionary(state.writingDictionary)))
-      setSetting.run('writing_review_queue', JSON.stringify(normalizeWritingReviewQueue(state.writingReviewQueue)))
+      const existingReviews = new Map(previousReviewQueue.map((item) => [item.id, item]))
+      const writingReviewQueue = state.drafts.flatMap((draft) => inspectAmbiguousDraft(String(draft.body ?? ''))
+        .map((item) => {
+          const id = `${String(draft.id)}:${item.id}`
+          return existingReviews.get(id) ?? {
+            ...item,
+            id,
+            draftId: String(draft.id),
+            status: 'pending',
+            createdAt: String(draft.updatedAt ?? now),
+          }
+        }))
+      if (importingBrowserState) {
+        const detectedIds = new Set(writingReviewQueue.map((item) => item.id))
+        writingReviewQueue.push(...previousReviewQueue.filter((item) => !detectedIds.has(item.id)))
+      }
+
+      if (importingBrowserState) importBrowserTimer(state.activeTimer, now, weekId)
+      if (importingBrowserState || state.entered === true) {
+        setSetting.run('entered', state.entered ? '1' : '0')
+      }
+      if (importingBrowserState) {
+        setSetting.run('writing_dictionary', JSON.stringify(dictionary))
+      }
+      setSetting.run('writing_review_queue', JSON.stringify(normalizeWritingReviewQueue(writingReviewQueue)))
       setMeta.run('initialized', '1')
       setMeta.run('last_write_at', now)
       db.exec('COMMIT')
@@ -1085,6 +1116,67 @@ export function createStore(filename, options = {}) {
       throw error
     }
 
+    return loadState()
+  }
+
+  function addParentRewardCredit(input = {}) {
+    const seconds = Math.min(60 * 60, Math.max(60, Math.floor(Number(input.seconds) || 300)))
+    const source = String(input.source ?? 'Parent-added credit').trim().slice(0, 160) || 'Parent-added credit'
+    const id = makeId()
+    const earnedAt = asIso(wallNow())
+    insertReward.run(id, source, seconds, earnedAt)
+    addAudit('parent_reward_credit_added', { creditId: id, seconds, source })
+    return loadState()
+  }
+
+  function setWritingDictionary(input) {
+    const dictionary = normalizeWritingDictionary(input)
+    const now = asIso(wallNow())
+    setSetting.run('writing_dictionary', JSON.stringify(dictionary))
+    setMeta.run('last_write_at', now)
+    addAudit('writing_dictionary_updated', {
+      knownNames: dictionary.knownNames.length,
+      knownPlaces: dictionary.knownPlaces.length,
+    })
+    return loadState()
+  }
+
+  function setWritingReviewStatus(id, status) {
+    if (!['pending', 'resolved'].includes(status)) throw serviceError('Invalid writing review status')
+    const current = normalizeWritingReviewQueue(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_review_queue'`).get()?.value ?? '[]',
+      [],
+    ))
+    const index = current.findIndex((item) => item.id === String(id))
+    if (index < 0) throw serviceError('Writing review item was not found', 404, 'review_not_found')
+    const resolvedAt = status === 'resolved' ? asIso(wallNow()) : undefined
+    current[index] = { ...current[index], status, ...(resolvedAt ? { resolvedAt } : {}) }
+    if (!resolvedAt) delete current[index].resolvedAt
+    setSetting.run('writing_review_queue', JSON.stringify(current))
+    addAudit('writing_review_status_changed', { reviewId: String(id), status })
+    return loadState()
+  }
+
+  function resetParentPreviewData() {
+    const weekId = ensureCurrentWeek().weekId
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare('DELETE FROM weekly_daily_completion WHERE week_id = ?').run(weekId)
+      db.prepare('DELETE FROM weekly_optional_completion WHERE week_id = ?').run(weekId)
+      db.prepare('DELETE FROM free_mode_unlock WHERE week_id = ?').run(weekId)
+      db.prepare('DELETE FROM activity_session WHERE week_id = ?').run(weekId)
+      db.prepare('DELETE FROM game_session WHERE week_id = ?').run(weekId)
+      db.exec('DELETE FROM reward_credit; DELETE FROM writing_submission; DELETE FROM completion_record;')
+      setSetting.run('writing_review_queue', '[]')
+      setSetting.run('entered', '1')
+      insertAudit.run('parent_preview_reset', JSON.stringify({ weekId }), now)
+      setMeta.run('last_write_at', now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
     return loadState()
   }
 
@@ -2197,6 +2289,10 @@ export function createStore(filename, options = {}) {
     cancelSession,
     acknowledgeSession,
     setDailyCompletion,
+    addParentRewardCredit,
+    setWritingDictionary,
+    setWritingReviewStatus,
+    resetParentPreviewData,
     getRewardCredit,
     isOptionalComplete,
     recordGuardianHeartbeat,

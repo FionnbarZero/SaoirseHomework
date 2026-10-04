@@ -12,6 +12,7 @@ struct GuardianConfiguration: Codable, Equatable {
   let serviceBaseURL: String
   let heartbeatIntervalSeconds: Double
   let allowEnforcement: Bool
+  let sharedSecret: String?
 
   static var safeDefault: GuardianConfiguration {
     let host = Host.current().localizedName ?? "mac"
@@ -19,7 +20,8 @@ struct GuardianConfiguration: Codable, Equatable {
       guardianId: "\(host)-\(NSUserName())",
       serviceBaseURL: "http://127.0.0.1:4179",
       heartbeatIntervalSeconds: 5,
-      allowEnforcement: false
+      allowEnforcement: false,
+      sharedSecret: nil
     )
   }
 

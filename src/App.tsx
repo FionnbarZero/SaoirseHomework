@@ -61,6 +61,7 @@ import {
 } from './spelling'
 import {
   acknowledgeControlledSession,
+  addParentRewardCredit,
   beginLiveGoogleAuthorization,
   connectMockGoogle,
   disconnectLiveGoogle,
@@ -69,24 +70,34 @@ import {
   heartbeatControlledSession,
   hydrateFromService,
   getReadingGameSession,
+  getParentAuthorizationStatus,
+  getSecurityStatus,
   loadStateFromService,
-  recordAudit,
+  lockParentSession,
+  pollParentAuthorization,
+  resetParentPreviewData,
   retryLiveGoogleDelivery,
   runLiveGoogleDelivery,
   runMockGoogleDelivery,
   saveActivityConfiguration,
   saveLiveGoogleConfiguration,
   saveStateToService,
+  saveWritingDictionary,
+  saveWritingReviewStatus,
   setDailyCompletion,
   startControlledSession,
+  startParentAuthorization,
   startReadingGame as startReadingGameSession,
   ServiceRequestError,
+  type ParentAuthorizationStatus,
+  type SecurityStatus,
   type ServiceMeta,
 } from './service'
 
 type View = 'path' | 'day' | 'options' | 'writing' | 'rewards' | 'parent' | 'session'
 
 const STORAGE_KEY = 'fionnbar-homework-v1'
+const SECURITY_STATUS_KEY = 'fionnbar-homework-security-v1'
 
 function isStaleWeekError(error: unknown) {
   return error instanceof ServiceRequestError && error.code === 'stale_week'
@@ -119,12 +130,22 @@ function loadState(): AppState {
   }
 }
 
+function loadSecurityStatus(): SecurityStatus | null {
+  try {
+    const saved = localStorage.getItem(SECURITY_STATUS_KEY)
+    return saved ? JSON.parse(saved) as SecurityStatus : null
+  } catch {
+    return null
+  }
+}
+
 function App() {
   const [state, setState] = useState<AppState>(loadState)
   const [view, setView] = useState<View>(state.activeTimer ? 'session' : 'path')
   const [selectedDay, setSelectedDay] = useState<DayName>(getToday)
   const [serviceStatus, setServiceStatus] = useState<'connecting' | 'online' | 'offline'>('connecting')
   const [serviceMeta, setServiceMeta] = useState<ServiceMeta | null>(null)
+  const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(loadSecurityStatus)
   const [hydrated, setHydrated] = useState(false)
   const [sessionError, setSessionError] = useState('')
   const latestState = useRef(state)
@@ -256,6 +277,29 @@ function App() {
     const interval = window.setInterval(refresh, 5_000)
     return () => window.clearInterval(interval)
   }, [view, serviceStatus, state.activeTimer])
+
+  useEffect(() => {
+    if (serviceStatus !== 'online') return
+    let cancelled = false
+    const refresh = () => {
+      getSecurityStatus()
+        .then((status) => {
+          if (!cancelled) {
+            localStorage.setItem(SECURITY_STATUS_KEY, JSON.stringify(status))
+            setSecurityStatus(status)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setServiceStatus('offline')
+        })
+    }
+    void refresh()
+    const interval = window.setInterval(refresh, 5_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [serviceStatus, state.entered])
 
   useEffect(() => {
     const gameSessionId = state.activeGameSession?.id
@@ -442,6 +486,18 @@ function App() {
     )
   }
 
+  const recoveryStatus = securityStatus?.mode === 'enforcing' && serviceStatus !== 'online'
+    ? { ...securityStatus, locked: true, reasons: [...new Set([...securityStatus.reasons, 'service_unavailable' as const])] }
+    : securityStatus
+  if (recoveryStatus?.locked && view !== 'parent') {
+    return (
+      <RecoveryScreen
+        status={recoveryStatus}
+        openParent={() => setView('parent')}
+      />
+    )
+  }
+
   return (
     <div className="app-shell">
       <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} />
@@ -478,7 +534,7 @@ function App() {
           {view === 'writing' && <WritingView state={state} setState={setState} />}
           {view === 'rewards' && <RewardsView state={state} startTimer={startTimer} />}
           {view === 'parent' && (
-            <ParentView
+            <ParentRoute
               state={state}
               setState={setState}
               day={selectedDay}
@@ -499,6 +555,32 @@ function App() {
         </div>
       </main>
     </div>
+  )
+}
+
+function RecoveryScreen({ status, openParent }: { status: SecurityStatus; openParent: () => void }) {
+  const guardianMissing = status.reasons.includes('guardian_unavailable')
+  const chromeMissing = status.reasons.includes('managed_chrome_unavailable')
+  const serviceMissing = status.reasons.includes('service_unavailable')
+  const authorizationMissing = status.reasons.includes('parent_authorization_not_configured')
+  return (
+    <main className="recovery-screen">
+      <section className="recovery-card" role="alert">
+        <span className="recovery-icon"><LockKeyhole size={32} /></span>
+        <p className="eyebrow">HOMEWORK MODE PAUSED</p>
+        <h1>Parent repair needed.</h1>
+        <p>No activity time or completion credit is being awarded while a required safety connection is unavailable.</p>
+        <div className="recovery-reasons">
+          {guardianMissing && <div><span className="dot" /><span><strong>macOS guardian is offline</strong><small>Restart the parent-installed guardian from an administrator account.</small></span></div>}
+          {chromeMissing && <div><span className="dot" /><span><strong>Managed Chrome is offline</strong><small>Restore the managed extension and its policy heartbeat.</small></span></div>}
+          {serviceMissing && <div><span className="dot" /><span><strong>Homework service is offline</strong><small>Restart the local service. Offline browser state cannot grant completion or reward credit.</small></span></div>}
+          {authorizationMissing && <div><span className="dot" /><span><strong>Parent authorization is not configured</strong><small>Add the shared secret to the service and parent-owned guardian configuration.</small></span></div>}
+        </div>
+        {status.guardianConnected && !serviceMissing
+          ? <button className="primary-button" onClick={openParent}><ShieldCheck size={17} /> Open Parent repair controls</button>
+          : <p className="recovery-foot">Parent controls remain locked until the guardian reconnects.</p>}
+      </section>
+    </main>
   )
 }
 
@@ -1289,6 +1371,114 @@ function SessionView({
   )
 }
 
+function ParentRoute(props: {
+  state: AppState
+  setState: React.Dispatch<React.SetStateAction<AppState>>
+  day: DayName
+  setDay: (day: DayName) => void
+  serviceStatus: 'connecting' | 'online' | 'offline'
+  serviceMeta: ServiceMeta | null
+  reconnectService: () => void
+}) {
+  const [authorization, setAuthorization] = useState<ParentAuthorizationStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const refreshAuthorization = async () => {
+    const status = await getParentAuthorizationStatus()
+    setAuthorization(status)
+    return status
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      getParentAuthorizationStatus()
+        .then((status) => {
+          if (!cancelled) setAuthorization(status)
+        })
+        .catch((error) => {
+          if (!cancelled) setMessage(error instanceof Error ? error.message : 'Parent authorization status is unavailable.')
+        })
+    }
+    void refresh()
+    const interval = window.setInterval(refresh, 10_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  const authorize = async (purpose: 'dashboard' | 'sensitive') => {
+    setBusy(true)
+    setMessage('Waiting for the macOS administrator authorization window…')
+    try {
+      const { challenge } = await startParentAuthorization(purpose)
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000))
+        const result = await pollParentAuthorization(challenge.id)
+        if (result.status === 'pending') continue
+        if (result.status !== 'approved') {
+          throw new Error(result.status === 'denied'
+            ? 'Administrator authorization was denied.'
+            : 'The authorization request expired. Try again.')
+        }
+        const status = await refreshAuthorization()
+        setMessage(purpose === 'sensitive'
+          ? 'Sensitive action reauthorized by macOS.'
+          : 'Parent controls unlocked.')
+        return status
+      }
+      throw new Error('The authorization request timed out. Try again.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Parent controls could not be unlocked.')
+      throw error
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const lock = async () => {
+    await lockParentSession().catch(() => null)
+    setAuthorization((current) => current ? { ...current, authenticated: false } : current)
+    setMessage('Parent controls are locked.')
+  }
+
+  if (!authorization?.authenticated) {
+    return (
+      <section className="page parent-access-page">
+        <div className="parent-access-card">
+          <span className="parent-access-icon"><LockKeyhole size={30} /></span>
+          <p className="eyebrow">PARENT CONTROLS</p>
+          <h2>Administrator authorization required.</h2>
+          <p>The macOS guardian asks the Security Agent to verify an administrator. This app never receives or stores the administrator password.</p>
+          <div className="authorization-readiness">
+            <div><span className={authorization?.configured ? 'dot good' : 'dot'} /><span><strong>Guardian secret</strong><small>{authorization?.configured ? 'Configured' : 'Add the same 32+ character secret to the service and guardian configuration'}</small></span></div>
+            <div><span className={authorization?.guardianConnected ? 'dot good' : 'dot'} /><span><strong>macOS guardian</strong><small>{authorization?.guardianConnected ? 'Connected and ready to prompt' : 'Start the guardian and wait for its heartbeat'}</small></span></div>
+          </div>
+          <button
+            className="primary-button"
+            disabled={busy || !authorization?.configured || !authorization?.guardianConnected}
+            onClick={() => { void authorize('dashboard').catch(() => {}) }}
+          >
+            <ShieldCheck size={17} /> {busy ? 'Waiting for macOS…' : 'Authorize on this Mac'}
+          </button>
+          {message && <p className="authorization-message" role="status">{message}</p>}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <ParentView
+      {...props}
+      authorization={authorization}
+      lockParent={lock}
+      reauthorize={() => authorize('sensitive')}
+    />
+  )
+}
+
 function ParentView({
   state,
   setState,
@@ -1297,6 +1487,9 @@ function ParentView({
   serviceStatus,
   serviceMeta,
   reconnectService,
+  authorization,
+  lockParent,
+  reauthorize,
 }: {
   state: AppState
   setState: React.Dispatch<React.SetStateAction<AppState>>
@@ -1305,6 +1498,9 @@ function ParentView({
   serviceStatus: 'connecting' | 'online' | 'offline'
   serviceMeta: ServiceMeta | null
   reconnectService: () => void
+  authorization: ParentAuthorizationStatus
+  lockParent: () => Promise<void>
+  reauthorize: () => Promise<ParentAuthorizationStatus>
 }) {
   const [googleAccount, setGoogleAccount] = useState(state.googleProof.accountEmail ?? 'parent-test@example.com')
   const [googleRecipient, setGoogleRecipient] = useState(
@@ -1365,33 +1561,29 @@ function ParentView({
     }
   }
 
-  const saveWritingConfiguration = () => {
+  const saveWritingConfiguration = async () => {
     const writingDictionary = {
       knownNames: parseDictionary(knownNames),
       knownPlaces: parseDictionary(knownPlaces),
     }
-    setState((current) => ({ ...current, writingDictionary }))
-    setWritingConfigurationMessage('The local names and places dictionary was saved. Recheck a draft to apply it.')
-    void recordAudit('writing_dictionary_updated', {
-      knownNames: writingDictionary.knownNames.length,
-      knownPlaces: writingDictionary.knownPlaces.length,
-    }).catch(() => {})
+    setWritingConfigurationMessage('')
+    try {
+      const response = await saveWritingDictionary(writingDictionary)
+      setState(response.state)
+      setWritingConfigurationMessage('The local names and places dictionary was saved. Recheck a draft to apply it.')
+    } catch (error) {
+      setWritingConfigurationMessage(error instanceof Error ? error.message : 'The writing dictionary could not be saved.')
+    }
   }
 
-  const toggleWritingReview = (id: string) => {
+  const toggleWritingReview = async (id: string) => {
     const resolved = state.writingReviewQueue.find((item) => item.id === id)?.status === 'pending'
-    setState((current) => ({
-      ...current,
-      writingReviewQueue: current.writingReviewQueue.map((item) => {
-        if (item.id !== id) return item
-        return {
-          ...item,
-          status: resolved ? 'resolved' : 'pending',
-          ...(resolved ? { resolvedAt: new Date().toISOString() } : { resolvedAt: undefined }),
-        }
-      }),
-    }))
-    void recordAudit('writing_review_status_changed', { reviewId: id, resolved }).catch(() => {})
+    try {
+      const response = await saveWritingReviewStatus(id, resolved ? 'resolved' : 'pending')
+      setState(response.state)
+    } catch (error) {
+      setWritingConfigurationMessage(error instanceof Error ? error.message : 'The review status could not be saved.')
+    }
   }
 
   const connectGoogleProof = async () => {
@@ -1416,6 +1608,7 @@ function ParentView({
     setGoogleBusy(true)
     setGoogleMessage('')
     try {
+      await reauthorize()
       const response = await disconnectMockGoogle()
       setState(response.state)
       setGoogleMessage('Safe test account disconnected. Existing local proof records were preserved.')
@@ -1470,6 +1663,7 @@ function ParentView({
     setLiveGoogleBusy(true)
     setLiveGoogleMessage('')
     try {
+      await reauthorize()
       const authorization = await beginLiveGoogleAuthorization()
       const popup = window.open(authorization.authorizationUrl, 'fionnbar-google-oauth', 'popup,width=620,height=760')
       if (!popup) throw new Error('Allow pop-ups for this local app, then try again.')
@@ -1485,6 +1679,7 @@ function ParentView({
     setLiveGoogleBusy(true)
     setLiveGoogleMessage('')
     try {
+      await reauthorize()
       const response = await disconnectLiveGoogle()
       setState(response.state)
       setLiveGoogleMessage(response.googleLive.lastError ?? 'Google authorization was revoked and the Keychain token was removed.')
@@ -1499,6 +1694,7 @@ function ParentView({
     setLiveGoogleBusy(true)
     setLiveGoogleMessage('')
     try {
+      await reauthorize()
       await saveStateToService(state)
       await saveLiveGoogleConfiguration(liveGoogleRecipient)
       const response = await runLiveGoogleDelivery(liveGoogleRecipient)
@@ -1525,6 +1721,7 @@ function ParentView({
     setLiveGoogleBusy(true)
     setLiveGoogleMessage('')
     try {
+      await reauthorize()
       const response = await retryLiveGoogleDelivery(deliveryId)
       setState(response.state)
       setLiveGoogleMessage('The failed Google delivery completed successfully.')
@@ -1539,60 +1736,51 @@ function ParentView({
 
   const toggleOverride = async (activityId: string) => {
     const wasComplete = state.requiredByDay[day].includes(activityId)
-    if (serviceStatus === 'online') {
-      try {
-        const response = await setDailyCompletion(
-          day,
-          activityId,
-          !wasComplete,
-          'parent-override',
-          state.weekContext.weekId,
-        )
+    if (serviceStatus !== 'online') {
+      setConfigurationMessage('Reconnect the local service before changing completion history.')
+      return
+    }
+    try {
+      const response = await setDailyCompletion(
+        day,
+        activityId,
+        !wasComplete,
+        'parent-override',
+        state.weekContext.weekId,
+      )
+      setState(response.state)
+    } catch (error) {
+      if (isStaleWeekError(error)) {
+        const response = await loadStateFromService()
         setState(response.state)
         return
-      } catch (error) {
-        if (isStaleWeekError(error)) {
-          const response = await loadStateFromService()
-          setState(response.state)
-          return
-        }
-        // Keep the preview usable from browser storage if the service drops out.
       }
+      setConfigurationMessage(error instanceof Error ? error.message : 'Completion history could not be changed.')
     }
-    setState((current) => {
-      const completed = current.requiredByDay[day]
-      return {
-        ...current,
-        requiredByDay: {
-          ...current.requiredByDay,
-          [day]: completed.includes(activityId) ? completed.filter((id) => id !== activityId) : [...completed, activityId],
-        },
-      }
-    })
   }
-  const addCredit = () => {
-    const creditId = crypto.randomUUID()
-    setState((current) => ({
-      ...current,
-      rewardCredits: [...current.rewardCredits, { id: creditId, source: 'Parent-added credit', remainingSeconds: 300, earnedAt: new Date().toISOString() }],
-    }))
-    void recordAudit('parent_reward_credit_added', { creditId, seconds: 300 }).catch(() => {})
+  const addCredit = async () => {
+    try {
+      const response = await addParentRewardCredit(300)
+      setState(response.state)
+    } catch (error) {
+      setConfigurationMessage(error instanceof Error ? error.message : 'The reward credit could not be added.')
+    }
   }
-  const reset = () => {
+  const reset = async () => {
     if (!window.confirm('Reset all preview progress on this Mac? This cannot be undone.')) return
-    void recordAudit('parent_preview_reset', { previousDrafts: state.drafts.length }).catch(() => {})
-    setState({
-      ...structuredClone(defaultState),
-      entered: true,
-      activityConfiguration: state.activityConfiguration,
-      weekContext: state.weekContext,
-    })
+    try {
+      await reauthorize()
+      const response = await resetParentPreviewData()
+      setState(response.state)
+    } catch (error) {
+      setConfigurationMessage(error instanceof Error ? error.message : 'Preview data could not be reset.')
+    }
   }
   return (
     <section className="page parent-page">
       <div className="page-heading split-heading">
-        <div><p className="eyebrow">PARENT DASHBOARD · PREVIEW</p><h2>See what’s happening.</h2><p>Production controls will require macOS administrator authorization.</p></div>
-        <div className="admin-pill"><CircleUserRound size={20} /><span><small>LOCAL PREVIEW</small><strong>Parent controls</strong></span></div>
+        <div><p className="eyebrow">PARENT DASHBOARD · AUTHORIZED</p><h2>See what’s happening.</h2><p>This short-lived session was approved by macOS. Sensitive actions ask again.</p></div>
+        <button className="admin-pill" onClick={() => { void lockParent() }}><CircleUserRound size={20} /><span><small>SESSION EXPIRES</small><strong>{authorization.expiresAt ? new Date(authorization.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Soon'} · Lock</strong></span></button>
       </div>
       <div className="parent-stats">
         <div><small>WEEKLY PRACTICE</small><strong>{state.optionalCompleted.length}<span>/13</span></strong></div>

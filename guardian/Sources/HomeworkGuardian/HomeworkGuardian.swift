@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 
 private let guardianVersion = "0.1.0"
 
@@ -13,6 +14,13 @@ private struct GuardianServiceStatus: Decodable {
   let mode: String
   let homeworkMode: Bool
   let policy: GuardianPolicy
+  let parentAuthorizationChallenge: ParentAuthorizationChallenge?
+}
+
+private struct ParentAuthorizationChallenge: Decodable {
+  let id: String
+  let purpose: String
+  let purposeLabel: String
 }
 
 private struct GuardianHeartbeat: Encodable {
@@ -21,6 +29,11 @@ private struct GuardianHeartbeat: Encodable {
   let activeBundleId: String?
   let decision: String
   let version: String
+}
+
+private struct ParentAuthorizationApproval: Encodable {
+  let challengeId: String
+  let approved: Bool
 }
 
 private struct CommandOptions {
@@ -60,17 +73,21 @@ private struct CommandOptions {
 
 private final class GuardianClient {
   private let baseURL: URL
+  private let sharedSecret: String?
 
-  init(baseURL: String) throws {
+  init(baseURL: String, sharedSecret: String?) throws {
     guard let url = URL(string: baseURL), url.scheme == "http", url.host == "127.0.0.1" else {
       throw GuardianError.invalidArguments("serviceBaseURL must use http://127.0.0.1")
     }
     self.baseURL = url
+    self.sharedSecret = sharedSecret?.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   func status() async throws -> GuardianServiceStatus {
     let url = baseURL.appending(path: "api/guardian/status")
-    let (data, response) = try await URLSession.shared.data(from: url)
+    var request = URLRequest(url: url)
+    authenticate(&request)
+    let (data, response) = try await URLSession.shared.data(for: request)
     try validate(response)
     return try JSONDecoder().decode(GuardianServiceStatus.self, from: data)
   }
@@ -80,14 +97,77 @@ private final class GuardianClient {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    authenticate(&request)
     request.httpBody = try JSONEncoder().encode(heartbeat)
     let (_, response) = try await URLSession.shared.data(for: request)
     try validate(response)
   }
 
+  func answerParentAuthorization(challengeId: String, approved: Bool) async throws {
+    let url = baseURL.appending(path: "api/guardian/parent-approval")
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    authenticate(&request)
+    request.httpBody = try JSONEncoder().encode(ParentAuthorizationApproval(
+      challengeId: challengeId,
+      approved: approved
+    ))
+    let (_, response) = try await URLSession.shared.data(for: request)
+    try validate(response)
+  }
+
+  private func authenticate(_ request: inout URLRequest) {
+    guard let sharedSecret, !sharedSecret.isEmpty else { return }
+    request.setValue("Bearer \(sharedSecret)", forHTTPHeaderField: "Authorization")
+  }
+
   private func validate(_ response: URLResponse) throws {
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard (200..<300).contains(status) else { throw GuardianError.invalidServiceResponse(status) }
+  }
+}
+
+private final class ParentAuthorizationCoordinator {
+  private var decisions: [String: Bool] = [:]
+
+  func decision(for challenge: ParentAuthorizationChallenge) -> Bool {
+    if let decision = decisions[challenge.id] { return decision }
+    print("[parent-authorization] macOS approval requested: \(challenge.purposeLabel)")
+    let decision = requestAdministratorAuthorization()
+    decisions[challenge.id] = decision
+    return decision
+  }
+
+  func markDelivered(_ challengeId: String) {
+    decisions.removeValue(forKey: challengeId)
+  }
+
+  private func requestAdministratorAuthorization() -> Bool {
+    var authorization: AuthorizationRef?
+    let createStatus = AuthorizationCreate(nil, nil, [], &authorization)
+    guard createStatus == errAuthorizationSuccess, let authorization else { return false }
+    defer { AuthorizationFree(authorization, [.destroyRights]) }
+
+    return "system.privilege.admin".withCString { rightName in
+      var item = AuthorizationItem(
+        name: rightName,
+        valueLength: 0,
+        value: nil,
+        flags: 0
+      )
+      return withUnsafeMutablePointer(to: &item) { itemPointer in
+        var rights = AuthorizationRights(count: 1, items: itemPointer)
+        let status = AuthorizationCopyRights(
+          authorization,
+          &rights,
+          nil,
+          [.interactionAllowed, .extendRights, .preAuthorize],
+          nil
+        )
+        return status == errAuthorizationSuccess
+      }
+    }
   }
 }
 
@@ -111,6 +191,7 @@ struct HomeworkGuardian {
         print("Guardian configuration is valid (\(loaded.source)).")
         print("Mode: \(enforcing ? "enforcing" : "dry-run")")
         print("Service: \(loaded.configuration.serviceBaseURL)")
+        print("Parent authorization: \((loaded.configuration.sharedSecret?.count ?? 0) >= 32 ? "configured" : "not configured")")
         return
       }
 
@@ -125,14 +206,19 @@ struct HomeworkGuardian {
         return
       }
 
-      let client = try GuardianClient(baseURL: loaded.configuration.serviceBaseURL)
+      let client = try GuardianClient(
+        baseURL: loaded.configuration.serviceBaseURL,
+        sharedSecret: loaded.configuration.sharedSecret
+      )
+      let authorizationCoordinator = ParentAuthorizationCoordinator()
       repeat {
         do {
           try await runCycle(
             client: client,
             configuration: loaded.configuration,
             enforcing: enforcing,
-            fixtureBundleId: options.fixtureBundleId
+            fixtureBundleId: options.fixtureBundleId,
+            authorizationCoordinator: authorizationCoordinator
           )
         } catch {
           fputs("guardian: \(error.localizedDescription)\n", stderr)
@@ -153,7 +239,8 @@ struct HomeworkGuardian {
     client: GuardianClient,
     configuration: GuardianConfiguration,
     enforcing: Bool,
-    fixtureBundleId: String?
+    fixtureBundleId: String?,
+    authorizationCoordinator: ParentAuthorizationCoordinator
   ) async throws {
     let serviceStatus = try await client.status()
     let frontmost = NSWorkspace.shared.frontmostApplication
@@ -163,6 +250,13 @@ struct HomeworkGuardian {
       activeBundleId: bundleId,
       blockedBundleIds: Set(serviceStatus.policy.blockedBundleIds)
     )
+
+    if let challenge = serviceStatus.parentAuthorizationChallenge {
+      let approved = authorizationCoordinator.decision(for: challenge)
+      try await client.answerParentAuthorization(challengeId: challenge.id, approved: approved)
+      authorizationCoordinator.markDelivered(challenge.id)
+      print("[parent-authorization] \(approved ? "approved" : "denied") purpose=\(challenge.purpose)")
+    }
 
     if enforcing, decision == .blocked, frontmost?.bundleIdentifier == bundleId {
       _ = frontmost?.terminate()

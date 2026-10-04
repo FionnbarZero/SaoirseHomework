@@ -99,6 +99,48 @@ test('SQLite state survives closing and reopening the service', () => {
   }
 })
 
+test('routine browser saves cannot change parent-owned records after migration', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const initial = sampleState()
+  initial.activeTimer = null
+  initial.drafts[0].body = 'I saw the the sign.'
+  initial.writingReviewQueue = [{
+    id: 'draft-1:repeated-word-6',
+    draftId: 'draft-1',
+    category: 'Grammar',
+    message: 'A word may repeat.',
+    excerpt: 'I saw the the sign.',
+    status: 'pending',
+    createdAt: '2026-10-03T07:00:00.000Z',
+  }]
+  const imported = store.saveState(initial)
+  const spoofed = structuredClone(imported)
+  spoofed.requiredByDay.Monday.push('reading-strategies', 'ninja-dojo')
+  spoofed.optionalCompleted.push('du-chinese:1')
+  spoofed.rewardCredits.push({
+    id: 'spoofed-credit',
+    source: 'Browser',
+    remainingSeconds: 3600,
+    earnedAt: '2026-10-03T16:00:00.000Z',
+  })
+  spoofed.writingDictionary.knownNames.push('Spoofed Name')
+  spoofed.writingReviewQueue[0].status = 'resolved'
+  spoofed.entered = false
+
+  const saved = store.saveState(spoofed)
+  assert.deepEqual(saved.requiredByDay.Monday, ['mandarin', 'math'])
+  assert.deepEqual(saved.optionalCompleted, ['voena:0'])
+  assert.equal(saved.rewardCredits.some((credit) => credit.id === 'spoofed-credit'), false)
+  assert.equal(saved.writingDictionary.knownNames.includes('Spoofed Name'), false)
+  assert.equal(saved.writingReviewQueue[0].status, 'pending')
+  assert.equal(saved.entered, true)
+
+  const credited = store.addParentRewardCredit({ seconds: 300 })
+  assert.equal(credited.rewardCredits.length, 2)
+  store.close()
+})
+
 function controlledClock(start = '2026-10-03T16:00:00.000Z') {
   let wallMs = Date.parse(start)
   let monotonicMs = 0
@@ -932,9 +974,26 @@ test('six Sunday sessions and seven Monday sessions share one bank, then archive
   assert.equal(monday.weekContext.weekId, '2026-10-05')
   assert.equal(monday.weekContext.headStart, false)
   assert.equal(monday.optionalCompleted.length, 6)
-  monday.optionalCompleted = allSessions
-  monday.requiredByDay.Monday = ['math']
-  assert.equal(store.saveState(monday).optionalCompleted.length, 13)
+  for (const sessionKey of allSessions.slice(6)) {
+    const session = store.startSession({
+      kind: 'optional',
+      activityId: sessionKey.split(':')[0],
+      sessionKey,
+      label: sessionKey,
+      targetSeconds: 1,
+    })
+    clock.advance(1_000)
+    store.heartbeatSession(session.id, true)
+    store.acknowledgeSession(session.id)
+  }
+  store.setDailyCompletion({
+    day: 'Monday',
+    activityId: 'math',
+    completed: true,
+    method: 'self-reported',
+    weekId: monday.weekContext.weekId,
+  })
+  assert.equal(store.loadState().optionalCompleted.length, 13)
 
   clock.setWall('2026-10-11T10:59:59.000Z')
   assert.equal(store.loadState().optionalCompleted.length, 13)

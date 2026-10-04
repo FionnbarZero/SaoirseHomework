@@ -15,10 +15,11 @@ import {
   writingReviewStatus,
 } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
+import { normalizeProofreadingMatches } from './proofreader.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 21
+const SCHEMA_VERSION = 22
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -316,6 +317,7 @@ export function createStore(filename, options = {}) {
       body TEXT NOT NULL,
       corrected_body TEXT,
       findings_json TEXT NOT NULL,
+      proofreading_matches_json TEXT NOT NULL DEFAULT '[]',
       exercise_progress_json TEXT NOT NULL DEFAULT '{}',
       spelling_words_json TEXT NOT NULL DEFAULT '[]',
       spelling_progress_json TEXT NOT NULL DEFAULT '{}',
@@ -516,6 +518,7 @@ export function createStore(filename, options = {}) {
   ensureColumn('writing_submission', 'revision_group_id', 'TEXT')
   ensureColumn('writing_submission', 'version_number', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
+  ensureColumn('writing_submission', 'proofreading_matches_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'review_status', "TEXT NOT NULL DEFAULT 'draft'")
@@ -548,9 +551,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
-      id, week_id, revision_group_id, version_number, title, body, corrected_body, findings_json, exercise_progress_json,
+      id, week_id, revision_group_id, version_number, title, body, corrected_body, findings_json, proofreading_matches_json, exercise_progress_json,
       spelling_words_json, spelling_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -1239,7 +1242,7 @@ export function createStore(filename, options = {}) {
 
     state.drafts = db
       .prepare(`
-      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+      SELECT id, week_id, title, body, corrected_body, findings_json, proofreading_matches_json, exercise_progress_json,
                revision_group_id, version_number, spelling_words_json, spelling_progress_json,
                review_status, updated_at
         FROM writing_submission ORDER BY updated_at DESC
@@ -1254,6 +1257,7 @@ export function createStore(filename, options = {}) {
         body: row.body,
         correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
+        proofreadingMatches: safeJson(row.proofreading_matches_json, []),
         exerciseProgress: safeJson(row.exercise_progress_json, {}),
         spellingWords: safeJson(row.spelling_words_json, []),
         spellingProgress: safeJson(row.spelling_progress_json, {}),
@@ -1475,7 +1479,8 @@ export function createStore(filename, options = {}) {
 
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
-        const findings = inspectWritingFindings(body, dictionary)
+        const proofreadingMatches = normalizeProofreadingMatches(draft.proofreadingMatches, body)
+        const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
           : {}
@@ -1494,6 +1499,7 @@ export function createStore(filename, options = {}) {
           String(draft.title ?? 'Untitled writing'), body,
           correctedBody,
           JSON.stringify(findings),
+          JSON.stringify(proofreadingMatches),
           JSON.stringify(exerciseProgress),
           JSON.stringify(spellingWords),
           JSON.stringify(spellingProgress),

@@ -1,4 +1,4 @@
-import type { Finding, FindingProgress, SpellingProgress, SpellingWord, WritingDictionary, WritingTrial } from './domain'
+import type { Finding, FindingProgress, ProofreadingMatch, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
 import { inspectSpellingFindings, spellingPracticeComplete } from './spelling.ts'
 
 type Category = Finding['category']
@@ -12,6 +12,9 @@ type FindingInput = {
   end: number
   replacement: string
   wrongReplacement?: string
+  additionalEdits?: WritingEdit[]
+  contextStart?: number
+  contextEnd?: number
 }
 
 type PracticeRow = [correct: string, wrongOne: string, wrongTwo: string]
@@ -362,6 +365,22 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['“Turn left,” the guide said.', '“Turn left, the guide said.', 'Turn left,” the guide said.'],
     ],
   ),
+  'direct-dialogue-quotes': practiceSet(
+    'direct-dialogue-quotes',
+    'Choose the sentence that punctuates direct dialogue correctly.',
+    'Use a comma before spoken words, capitalize the quotation, put its ending mark inside the closing quotation mark, and use a comma before a following dialogue tag.',
+    [
+      ['Maya said, “Let’s begin.”', 'Maya said “let’s begin”.', 'Maya said, Let’s begin.'],
+      ['Dad asked, “Are you ready?”', 'Dad asked “are you ready”?', 'Dad asked, Are you ready?'],
+      ['“Please sit down,” said Mr. Lee.', '“Please sit down.” said Mr. Lee.', '“please sit down”, said Mr. Lee.'],
+      ['Leo shouted, “Wait!”', 'Leo shouted “wait”!', 'Leo shouted, Wait!'],
+      ['“I found it,” Maya said.', '“I found it.” Maya said.', '“i found it”, Maya said.'],
+      ['Mom said, “Dinner is ready.”', 'Mom said “dinner is ready”.', 'Mom said, Dinner is ready.'],
+      ['“Turn left,” the guide said.', '“Turn left.” the guide said.', '“turn left”, the guide said.'],
+      ['Ava asked, “May I help?”', 'Ava asked “may I help”?', 'Ava asked, May I help?'],
+      ['“That was amazing!” Fionnbar said.', '“That was amazing”! Fionnbar said.', '“that was amazing!” fionnbar said.'],
+    ],
+  ),
   'perfect-tense-participle': practiceSet(
     'perfect-tense-participle',
     'Choose the sentence that forms the perfect tense correctly.',
@@ -478,6 +497,12 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
 
 RULE_PRACTICE['known-name'] = RULE_PRACTICE['proper-name-capital']
 RULE_PRACTICE['known-place'] = RULE_PRACTICE['title-capital']
+RULE_PRACTICE['missing-dialogue-quotes'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['dialogue-introduction-comma'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['quotation-capitalization'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['quotation-punctuation-inside'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['dialogue-tag-comma'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['dialogue-tag-capitalization'] = RULE_PRACTICE['direct-dialogue-quotes']
 
 function sentenceBounds(body: string, index: number) {
   let start = index
@@ -489,19 +514,54 @@ function sentenceBounds(body: string, index: number) {
   return { start, end }
 }
 
+function isDirectQuoteStart(body: string, quoteIndex: number) {
+  const prefix = body.slice(sentenceBounds(body, quoteIndex).start, quoteIndex)
+  return !prefix.trim()
+    || /\b(?:said|asked|replied|shouted|whispered|yelled|cried|called)\s*,?\s*$/i.test(prefix)
+    || /\b(?:was|were)\s+like\s*,?\s*$/i.test(prefix)
+}
+
 function rotateChoices(choices: string[], seed: number) {
   const offset = Math.abs(seed) % choices.length
   return [...choices.slice(offset), ...choices.slice(0, offset)]
 }
 
+function applyTextEdits(body: string, edits: WritingEdit[], base = 0) {
+  return [...edits]
+    .sort((left, right) => right.start - left.start || right.end - left.end)
+    .reduce((value, edit) => {
+      const start = edit.start - base
+      const end = edit.end - base
+      return `${value.slice(0, start)}${edit.replacement}${value.slice(end)}`
+    }, body)
+}
+
+function editsOverlap(left: WritingEdit, right: WritingEdit) {
+  if (left.start === left.end) return left.start > right.start && left.start < right.end
+  if (right.start === right.end) return right.start > left.start && right.start < left.end
+  return left.start < right.end && left.end > right.start
+}
+
+function inputEdits(input: FindingInput | Finding): WritingEdit[] {
+  return [
+    { start: input.start, end: input.end, replacement: input.replacement },
+    ...(input.additionalEdits ?? []),
+  ]
+}
+
 function correctionTrial(body: string, input: FindingInput): WritingTrial {
-  const bounds = sentenceBounds(body, input.start)
+  const automaticBounds = sentenceBounds(body, input.start)
+  const bounds = {
+    start: input.contextStart ?? automaticBounds.start,
+    end: input.contextEnd ?? automaticBounds.end,
+  }
   const original = body.slice(bounds.start, bounds.end)
-  const relativeStart = input.start - bounds.start
-  const relativeEnd = input.end - bounds.start
-  const corrected = `${original.slice(0, relativeStart)}${input.replacement}${original.slice(relativeEnd)}`
+  const corrected = applyTextEdits(original, inputEdits(input), bounds.start)
   const wrongReplacement = input.wrongReplacement ?? input.replacement.toUpperCase()
-  let distractor = `${original.slice(0, relativeStart)}${wrongReplacement}${original.slice(relativeEnd)}`
+  let distractor = applyTextEdits(original, [
+    { start: input.start, end: input.end, replacement: wrongReplacement },
+    ...(input.additionalEdits ?? []),
+  ], bounds.start)
   if (distractor === original || distractor === corrected) distractor = `${corrected}.”`
   const choices = rotateChoices([...new Set([original, corrected, distractor])], input.start)
   while (choices.length < 3) choices.push(`${corrected}.`)
@@ -516,7 +576,10 @@ function correctionTrial(body: string, input: FindingInput): WritingTrial {
 }
 
 function addFinding(body: string, findings: Finding[], input: FindingInput) {
-  const overlaps = findings.some((finding) => input.start < finding.end && input.end > finding.start)
+  const edits = inputEdits(input)
+  const overlaps = findings.some((finding) => (
+    inputEdits(finding).some((existingEdit) => edits.some((edit) => editsOverlap(existingEdit, edit)))
+  ))
   if (overlaps) return
   const practice = RULE_PRACTICE[input.ruleId]
   if (!practice) throw new Error(`Missing writing practice for ${input.ruleId}`)
@@ -526,12 +589,111 @@ function addFinding(body: string, findings: Finding[], input: FindingInput) {
     { length: 3 },
     (_, index) => practice[(practiceStart + index) % practice.length],
   )
+  const { contextStart: _contextStart, contextEnd: _contextEnd, wrongReplacement: _wrongReplacement, ...findingInput } = input
   findings.push({
-    ...input,
+    ...findingInput,
     id: `${input.ruleId}-${input.start}`,
     correction: correctionTrial(body, input),
     practice: selectedPractice.map((item) => ({ ...item, choices: [...item.choices] })),
   })
+}
+
+function proofreadingCategory(match: ProofreadingMatch): Category {
+  const rule = match.ruleId.toUpperCase()
+  const description = `${match.category} ${match.issueType}`.toLowerCase()
+  if (rule.includes('UPPERCASE') || description.includes('capitalization') || description.includes('casing')) {
+    return 'Capitalization'
+  }
+  if (rule.includes('COMMA') || rule.includes('PUNCT') || rule.includes('APOSTROPHE') || description.includes('punctuation')) {
+    return 'Punctuation'
+  }
+  if (rule.includes('MORFOLOGIK') || rule.includes('SPELLING') || description.includes('typo') || description.includes('misspelling')) {
+    return 'Spelling'
+  }
+  return 'Grammar'
+}
+
+function proofreadingPracticeRule(match: ProofreadingMatch, replacement: string) {
+  const rule = match.ruleId.toUpperCase()
+  if (rule === 'COMMA_COMPOUND_SENTENCE') return 'compound-sentence-comma'
+  if (rule === 'MISSING_COMMA_AFTER_INTRODUCTORY_PHRASE') return 'intro-comma'
+  if (rule === 'UPPERCASE_SENTENCE_START') return 'sentence-capital'
+  if (rule === 'HE_VERB_AGR') return 'subject-verb-singular'
+  if (rule === 'NON3PRS_VERB') return 'subject-verb-plural'
+  if (rule === 'EN_A_VS_AN') return replacement.toLowerCase() === 'an' ? 'article-an' : 'article-a'
+  if (rule === 'THIS_NNS') return 'demonstrative-agreement'
+  if (rule === 'HAVE_PART_AGREEMENT') return 'perfect-tense-participle'
+  if (rule === 'EN_CONTRACTION_SPELLING') return 'contraction-apostrophe'
+  return null
+}
+
+function dynamicSpellingPractice(
+  match: ProofreadingMatch,
+  original: string,
+  replacement: string,
+): WritingTrial[] {
+  let otherWrong = match.replacements.find((item) => item !== replacement && item !== original) ?? `${original}${original.at(-1) ?? 'x'}`
+  if (otherWrong === replacement || otherWrong === original) otherWrong = replacement.toUpperCase()
+  const frames = [
+    (value: string) => `I wrote the word “${value}” in my notebook.`,
+    (value: string) => `The word “${value}” appears in the passage.`,
+    (value: string) => `Please check the spelling of “${value}” carefully.`,
+  ]
+  return frames.map((frame, index) => trial(
+    `proofreading-${match.ruleId}-${match.offset}-practice-${index + 1}`,
+    `Choose the sentence that spells “${replacement}” correctly.`,
+    `The local proofreading engine recommends “${replacement}” for “${original}”.`,
+    frame(replacement),
+    frame(original),
+    frame(otherWrong),
+  ))
+}
+
+function proofreadingFinding(
+  body: string,
+  match: ProofreadingMatch,
+  sameRuleIndex: number,
+): Finding | null {
+  const original = body.slice(match.offset, match.offset + match.length)
+  const replacement = match.replacements.find((item) => item !== original)
+  if (replacement === undefined) return null
+  const category = proofreadingCategory(match)
+  const safeRule = match.ruleId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'review'
+  const ruleId = `proofreading-${safeRule}`
+  const input: FindingInput = {
+    ruleId,
+    category,
+    start: match.offset,
+    end: match.offset + match.length,
+    replacement,
+    message: match.message,
+    suggestion: `The local proofreading engine recommends “${replacement}”.`,
+    wrongReplacement: match.replacements.find((item) => item !== replacement && item !== original) ?? `${replacement}${replacement}`,
+  }
+  const mappedRule = proofreadingPracticeRule(match, replacement)
+  const reviewedPractice = mappedRule ? RULE_PRACTICE[mappedRule] : null
+  const fallbackRule = category === 'Grammar'
+    ? 'subject-verb-singular'
+    : category === 'Capitalization'
+      ? 'sentence-capital'
+      : 'terminal-punctuation'
+  const practice = category === 'Spelling'
+    ? dynamicSpellingPractice(match, original, replacement)
+    : (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).slice(
+      (sameRuleIndex * 3) % (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).length,
+      ((sameRuleIndex * 3) % (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).length) + 3,
+    )
+  return {
+    ...input,
+    id: `${ruleId}-${match.offset}`,
+    correction: correctionTrial(body, input),
+    practice: practice.map((item) => ({ ...item, choices: [...item.choices] })),
+  }
+}
+
+function findingOverlapsMatch(finding: Finding, match: ProofreadingMatch) {
+  const matchEdit = { start: match.offset, end: match.offset + match.length, replacement: '' }
+  return inputEdits(finding).some((edit) => editsOverlap(edit, matchEdit))
 }
 
 function capitalizeLike(value: string, replacement: string) {
@@ -842,6 +1004,60 @@ export function inspectDraft(
     }
   }
 
+  // These high-confidence patterns recover direct speech when a child writes
+  // the spoken words but leaves out both quotation marks. One finding carries
+  // both edits so the child reviews the quotation error once, while spelling
+  // and grammar inside the quotation remain available as separate findings.
+  const unquotedDialoguePatterns = [
+    /\b(said|replied|shouted|whispered|yelled|cried|called)(\s+)((?:what\s+(?:a|an)\b|hello\b|hi\b|hey\b|wow\b|look\b|stop\b|wait\b|yes\b|no\b|please\b))([^.!?\n]*)([.!?])/gi,
+    /\b(asked)(\s+)((?:are|is|do|does|did|can|could|will|would|why|when|where|who|how|what)\b)([^.!?\n]*)(\?)/gi,
+  ]
+  for (const pattern of unquotedDialoguePatterns) {
+    while ((match = pattern.exec(body)) !== null) {
+      const separatorStart = match.index + match[1].length
+      const firstLetter = match[3][0]
+      const punctuationStart = match.index + match[0].length - match[5].length
+      const contextStart = sentenceBounds(body, match.index).start
+      addFinding(body, findings, {
+        ruleId: 'missing-dialogue-quotes', category: 'Punctuation',
+        start: separatorStart, end: separatorStart + match[2].length + 1,
+        replacement: `, “${firstLetter.toUpperCase()}`,
+        additionalEdits: [{
+          start: punctuationStart,
+          end: punctuationStart + match[5].length,
+          replacement: `${match[5]}”`,
+        }],
+        contextStart,
+        contextEnd: punctuationStart + match[5].length,
+        message: 'These are a character’s exact spoken words, so they need quotation marks.',
+        suggestion: 'Add a comma and opening quotation mark before the dialogue, then a closing quotation mark after its ending punctuation.',
+        wrongReplacement: ` “${firstLetter.toUpperCase()}`,
+      })
+    }
+  }
+
+  const unquotedLikeDialogue = /\b((?:was|were)\s+like)([\s.,:;-]+)((?:what(?:['’]s|\s+is)?\s+up|hello|hi|hey|wow|no\s+way|yes)\b)([^.!?\n]*)([.!?])/gi
+  while ((match = unquotedLikeDialogue.exec(body)) !== null) {
+    const separatorStart = match.index + match[1].length
+    const firstLetter = match[3][0]
+    const punctuationStart = match.index + match[0].length - match[5].length
+    addFinding(body, findings, {
+      ruleId: 'missing-dialogue-quotes', category: 'Punctuation',
+      start: separatorStart, end: separatorStart + match[2].length + 1,
+      replacement: `, “${firstLetter.toUpperCase()}`,
+      additionalEdits: [{
+        start: punctuationStart,
+        end: punctuationStart + match[5].length,
+        replacement: `${match[5]}”`,
+      }],
+      contextStart: sentenceBounds(body, match.index).start,
+      contextEnd: punctuationStart + match[5].length,
+      message: 'The words after “was like” are direct dialogue and need quotation marks.',
+      suggestion: 'Introduce the spoken words with a comma and place them inside quotation marks.',
+      wrongReplacement: ` “${firstLetter.toUpperCase()}`,
+    })
+  }
+
   const sentenceCapital = /(^|[.!?]\s+|\n\s*)([a-z])/gm
   while ((match = sentenceCapital.exec(body)) !== null) {
     const letter = match[2]
@@ -969,19 +1185,152 @@ export function inspectDraft(
     })
   }
 
-  const quoteCount = [...body].filter((character) => character === '“' || character === '”' || character === '"').length
-  if (quoteCount % 2 === 1) {
-    const end = body.trimEnd().length
+  const dialogueIntroduction = /\b(said|asked|replied|shouted|whispered|yelled|cried|called)(\s+)(?=[“"])/gi
+  while ((match = dialogueIntroduction.exec(body)) !== null) {
+    const start = match.index + match[1].length
     addFinding(body, findings, {
-      ruleId: 'paired-quotes', category: 'Punctuation', start: end, end, replacement: '”',
-      message: 'A quotation mark does not have a matching partner.',
-      suggestion: 'Add the closing quotation mark.', wrongReplacement: '””',
+      ruleId: 'dialogue-introduction-comma', category: 'Punctuation', start,
+      end: start + match[2].length, replacement: ', ',
+      message: `The dialogue after “${match[1]}” needs an introductory comma.`,
+      suggestion: 'Place a comma before the opening quotation mark.', wrongReplacement: ' ',
     })
+  }
+
+  const quotationCapital = /[“"]([a-z])/g
+  while ((match = quotationCapital.exec(body)) !== null) {
+    if (!isDirectQuoteStart(body, match.index)) continue
+    const start = match.index + 1
+    addFinding(body, findings, {
+      ruleId: 'quotation-capitalization', category: 'Capitalization', start, end: start + 1,
+      replacement: match[1].toUpperCase(),
+      message: 'The first word of a direct quotation begins with a capital letter.',
+      suggestion: `Capitalize “${match[1]}” at the beginning of the quotation.`,
+      wrongReplacement: `${match[1].toUpperCase()}${match[1]}`,
+    })
+  }
+
+  const punctuationOutsideQuote = /([”"])([,.!?])/g
+  while ((match = punctuationOutsideQuote.exec(body)) !== null) {
+    addFinding(body, findings, {
+      ruleId: 'quotation-punctuation-inside', category: 'Punctuation',
+      start: match.index, end: match.index + match[0].length,
+      replacement: `${match[2]}${match[1]}`,
+      message: 'The ending punctuation for this quotation belongs inside the closing quotation mark.',
+      suggestion: `Move “${match[2]}” before the closing quotation mark.`,
+      wrongReplacement: `${match[1]}${match[2]}${match[2]}`,
+    })
+  }
+
+  const periodBeforeDialogueTag = /(\.)([”"])(\s+)(?=(?:[A-Z][A-Za-z'’-]*|he|she|they|I)\s+(?:said|asked|replied|shouted|whispered|yelled|cried)\b)/g
+  while ((match = periodBeforeDialogueTag.exec(body)) !== null) {
+    const tagEnding = /[.!?]/.exec(body.slice(match.index + match[0].length))
+    addFinding(body, findings, {
+      ruleId: 'dialogue-tag-comma', category: 'Punctuation', start: match.index, end: match.index + 1,
+      replacement: ',', message: 'A quotation followed by a dialogue tag uses a comma instead of a period.',
+      suggestion: 'Use a comma inside the quotation before the speaker tag.', wrongReplacement: ';',
+      contextStart: sentenceBounds(body, match.index).start,
+      contextEnd: tagEnding
+        ? match.index + match[0].length + tagEnding.index + 1
+        : sentenceBounds(body, match.index).end,
+    })
+  }
+
+  const capitalizedDialogueTag = /([”"]\s+)(Said|Asked|Replied|Shouted|Whispered|Yelled|Cried)\b/g
+  while ((match = capitalizedDialogueTag.exec(body)) !== null) {
+    const start = match.index + match[1].length
+    addFinding(body, findings, {
+      ruleId: 'dialogue-tag-capitalization', category: 'Capitalization', start, end: start + match[2].length,
+      replacement: match[2].toLowerCase(), message: 'A dialogue tag continues the sentence, so it begins with a lowercase letter.',
+      suggestion: `Write “${match[2].toLowerCase()}” after the quotation.`, wrongReplacement: match[2].toUpperCase(),
+    })
+  }
+
+  const completeQuotation = /([“"])([^“”"\n]{1,160})([”"])/g
+  while ((match = completeQuotation.exec(body)) !== null) {
+    if (!isDirectQuoteStart(body, match.index)) continue
+    const finalCharacter = match[2].at(-1) ?? ''
+    if (/[,.!?]/.test(finalCharacter)) continue
+    const closingStart = match.index + match[1].length + match[2].length
+    const afterQuote = body.slice(closingStart + match[3].length)
+    const followedByTag = /^\s+(?:(?:said|asked|replied|shouted|whispered|yelled|cried)\b|(?:[A-Z][A-Za-z'’-]*|he|she|they|I)\s+(?:said|asked|replied|shouted|whispered|yelled|cried)\b)/.test(afterQuote)
+    const atSentenceEnd = !afterQuote.trim() || /^\s*[.!?]/.test(afterQuote)
+    if (!followedByTag && !atSentenceEnd) continue
+    const ending = followedByTag ? ',' : '.'
+    addFinding(body, findings, {
+      ruleId: 'quotation-punctuation-inside', category: 'Punctuation',
+      start: closingStart, end: closingStart + match[3].length,
+      replacement: `${ending}${match[3]}`,
+      message: 'The direct quotation needs an ending punctuation mark inside the closing quotation mark.',
+      suggestion: `Place “${ending}” before the closing quotation mark.`, wrongReplacement: `${match[3]}${ending}`,
+    })
+  }
+
+  const missingOpeningQuote = /\b(said|asked|replied|shouted|whispered|yelled|cried|called)(,\s+)(?![“"])([A-Za-z])([^.!?\n]{0,150}[.!?])([”"])/gi
+  while ((match = missingOpeningQuote.exec(body)) !== null) {
+    const start = match.index + match[1].length + match[2].length
+    addFinding(body, findings, {
+      ruleId: 'paired-quotes', category: 'Punctuation', start, end: start + 1,
+      replacement: `“${match[3].toUpperCase()}`,
+      message: 'This quotation has a closing mark but no opening quotation mark.',
+      suggestion: 'Add the opening quotation mark before the spoken words.', wrongReplacement: `${match[3]}“`,
+      contextStart: sentenceBounds(body, match.index).start,
+      contextEnd: match.index + match[0].length,
+    })
+  }
+
+  let openQuote: { index: number; character: string } | null = null
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index]
+    if (character === '“') {
+      if (!openQuote) openQuote = { index, character }
+      continue
+    }
+    if (character === '”') {
+      if (openQuote) openQuote = null
+      continue
+    }
+    if (character !== '"') continue
+    if (openQuote) {
+      openQuote = null
+      continue
+    }
+    const previous = body[index - 1] ?? ''
+    const next = body[index + 1] ?? ''
+    const looksLikeClosingMark = /[A-Za-z0-9.!?]/.test(previous) && (!next || /\s/.test(next))
+    if (!looksLikeClosingMark) openQuote = { index, character }
+  }
+  if (openQuote) {
+    const closingMark = openQuote.character === '“' ? '”' : '"'
+    const afterOpening = body.slice(openQuote.index + 1)
+    const endingMatch = /[.!?]/.exec(afterOpening)
+    if (endingMatch) {
+      const start = openQuote.index + 1 + endingMatch.index
+      addFinding(body, findings, {
+        ruleId: 'paired-quotes', category: 'Punctuation', start, end: start + 1,
+        replacement: `${body[start]}${closingMark}`,
+        message: 'This quotation has an opening mark but no closing quotation mark.',
+        suggestion: 'Add the closing quotation mark after the spoken sentence’s ending punctuation.',
+        wrongReplacement: `${closingMark}${body[start]}`,
+      })
+    } else {
+      const end = body.trimEnd().length
+      addFinding(body, findings, {
+        ruleId: 'paired-quotes', category: 'Punctuation', start: end, end,
+        replacement: `.${closingMark}`,
+        message: 'This quotation needs ending punctuation and a closing quotation mark.',
+        suggestion: 'End the spoken sentence, then close its quotation marks.', wrongReplacement: closingMark,
+      })
+    }
   }
 
   const trimmedEnd = body.trimEnd().length
   const trimmedBody = body.slice(0, trimmedEnd)
-  if (trimmedEnd > 0 && !/[.!?](?:[”"'])?$/.test(trimmedBody)) {
+  const pairedQuoteCompletesEnding = findings.some((finding) => (
+    finding.ruleId === 'paired-quotes'
+      && finding.start === trimmedEnd
+      && /[.!?]/.test(finding.replacement)
+  ))
+  if (trimmedEnd > 0 && !pairedQuoteCompletesEnding && !/[.!?](?:[”"'])?$/.test(trimmedBody)) {
     const closingQuote = /[”"]$/.test(trimmedBody) ? trimmedBody.at(-1) ?? '' : ''
     const start = closingQuote ? trimmedEnd - 1 : trimmedEnd
     addFinding(body, findings, {
@@ -998,9 +1347,20 @@ export function inspectDraft(
 export function inspectWritingFindings(
   body: string,
   dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+  proofreadingMatches: ProofreadingMatch[] = [],
 ) {
-  return [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
-    .sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
+  const findings = [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
+  const ruleCounts = new Map<string, number>()
+  for (const match of proofreadingMatches) {
+    if (findings.some((finding) => findingOverlapsMatch(finding, match))) continue
+    if (match.offset < 0 || match.length < 0 || match.offset + match.length > body.length) continue
+    const count = ruleCounts.get(match.ruleId) ?? 0
+    const finding = proofreadingFinding(body, match, count)
+    if (!finding || findings.some((item) => finding.start < item.end && finding.end > item.start)) continue
+    findings.push(finding)
+    ruleCounts.set(match.ruleId, count + 1)
+  }
+  return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
 }
 
 export type AmbiguousWritingFinding = {
@@ -1057,11 +1417,11 @@ export function applyCompletedCorrections(
 ) {
   return findings
     .filter((finding) => progress[finding.id]?.correctionComplete)
-    .sort((left, right) => right.start - left.start)
-    .reduce(
-      (corrected, finding) => `${corrected.slice(0, finding.start)}${finding.replacement}${corrected.slice(finding.end)}`,
-      body,
-    )
+    .flatMap((finding) => inputEdits(finding))
+    .sort((left, right) => right.start - left.start || right.end - left.end)
+    .reduce((corrected, edit) => (
+      `${corrected.slice(0, edit.start)}${edit.replacement}${corrected.slice(edit.end)}`
+    ), body)
 }
 
 export function advanceFindingProgress(

@@ -6,12 +6,15 @@ A local-first homework application for Fionnbar's weekly path. The product plan 
 
 ```bash
 npm install
+npm run setup:proofreader
 npm run dev
 ```
 
 Open `http://127.0.0.1:4180`.
 
 `npm run dev` starts both the Vite interface and the loopback data service. The service listens only on `127.0.0.1:4179` and stores its SQLite database in `data/homework.sqlite`.
+
+Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API.
 
 After `npm run build`, `npm start` serves the production build and API together from `http://127.0.0.1:4179`.
 
@@ -30,7 +33,7 @@ npm run build
 - Cumulative nine-session weekly music practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
-- Local writing drafts with deterministic grammar, capitalization, punctuation, and reviewed common-misspelling checks
+- Local writing drafts with layered LanguageTool, reviewed contextual rules, and browser spelling assistance
 - One original-sentence correction plus three three-choice practice trials for every supported finding
 - Reviewed spelling mistakes use the same original correction plus three multiple-choice reviews as the other writing areas
 - A separate full-width correction-game frame followed by child revision and rechecking until no supported errors remain

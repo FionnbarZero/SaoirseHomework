@@ -44,8 +44,15 @@ export type Finding = {
   start: number
   end: number
   replacement: string
+  additionalEdits?: WritingEdit[]
   correction: WritingTrial
   practice: WritingTrial[]
+}
+
+export type WritingEdit = {
+  start: number
+  end: number
+  replacement: string
 }
 
 export type WritingTrial = {
@@ -82,6 +89,17 @@ export type WritingDictionary = {
   knownPlaces: string[]
 }
 
+export type ProofreadingMatch = {
+  offset: number
+  length: number
+  message: string
+  shortMessage: string
+  replacements: string[]
+  ruleId: string
+  category: string
+  issueType: string
+}
+
 export type WritingReviewItem = {
   id: string
   draftId: string
@@ -103,6 +121,7 @@ export type Draft = {
   correctedBody?: string
   updatedAt: string
   findings: Finding[]
+  proofreadingMatches?: ProofreadingMatch[]
   exerciseProgress?: Record<string, FindingProgress>
   spellingWords?: SpellingWord[]
   spellingProgress?: Record<string, SpellingProgress>

@@ -8,6 +8,7 @@ import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
+import { createProofreader } from './proofreader.mjs'
 import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
@@ -31,6 +32,7 @@ const lifecycleKeyFile = String(process.env.HOMEWORK_LIFECYCLE_KEY_FILE ?? '').t
 const requireRootOwnership = process.env.HOMEWORK_REQUIRE_ROOT_OWNERSHIP === '1'
 const securityMode = process.env.HOMEWORK_SECURITY_MODE === 'enforcing' ? 'enforcing' : 'preview'
 const parentAuthorization = createParentAuthorization()
+const proofreader = createProofreader()
 const parentSessionCookie = 'fionnbar_parent_session'
 if (requireRootOwnership) {
   enforceRootOwnedRuntime({ dataDirectory, keyFile: lifecycleKeyFile, serviceRoot: projectRoot })
@@ -482,6 +484,12 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/security/status' && request.method === 'GET') {
       return sendJson(response, 200, securityResponse())
+    }
+
+    if (url.pathname === '/api/proofread' && request.method === 'POST') {
+      const body = await readJson(request)
+      const result = await proofreader.check(body.text)
+      return sendJson(response, 200, result)
     }
 
     if (url.pathname === '/api/guardian/lifecycle' && request.method === 'GET') {

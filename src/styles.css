@@ -296,6 +296,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .exercise-progress i { height: 100%; display: block; border-radius: inherit; background: var(--teal); transition: width .25s ease; }
 .skip-game-button { margin: -5px 0 15px auto; border: 1px dashed #b98958; border-radius: 9px; padding: 8px 10px; display: block; color: #7e542f; background: #fff7e8; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
 .skip-game-button:hover { border-style: solid; background: #f9ecd5; }
+.proofreading-status { margin: 12px 0 0; border-radius: 10px; padding: 10px 12px; color: #405851; background: #edf6f1; font-size: 14px; font-weight: 700; line-height: 1.4; }
 .exercise-area-summary { margin: 0 0 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .exercise-area-summary > div { padding: 9px 10px; border: 1px solid #ddd8ce; border-radius: 10px; color: #65706b; background: #f7f4ed; }
 .exercise-area-summary > div.active { border-color: #6d9a90; color: #285d52; background: #e4f0ec; }

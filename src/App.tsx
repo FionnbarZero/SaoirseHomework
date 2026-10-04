@@ -80,6 +80,7 @@ import {
   loadStateFromService,
   lockParentSession,
   pollParentAuthorization,
+  proofreadWriting,
   resetParentPreviewData,
   retryLiveGoogleDelivery,
   runLiveGoogleDelivery,
@@ -1068,6 +1069,8 @@ function WritingView({
   const [spellingAnswer, setSpellingAnswer] = useState('')
   const [finishingWriting, setFinishingWriting] = useState(false)
   const [finishMessage, setFinishMessage] = useState('')
+  const [checkingWriting, setCheckingWriting] = useState(false)
+  const [proofreadingMessage, setProofreadingMessage] = useState('')
   const questionHeadingRef = useRef<HTMLHeadingElement>(null)
   const analysis = useMemo(() => ({
     findings: inspectWritingFindings(body, state.writingDictionary),
@@ -1148,60 +1151,83 @@ function WritingView({
     showReview,
   ])
 
-  const save = () => {
+  const save = async () => {
     if (!title.trim() && !body.trim()) return
-    const revisionSource = revisingFromDraftId
-      ? state.drafts.find((draft) => draft.id === revisingFromDraftId)
-      : undefined
-    const existingDraft = !revisionSource && workingDraft?.reviewStatus !== 'complete'
-      ? workingDraft
-      : undefined
-    const draftId = existingDraft?.id ?? crypto.randomUUID()
-    const revisionGroupId = revisionSource?.revisionGroupId ?? revisionSource?.id ??
-      existingDraft?.revisionGroupId ?? existingDraft?.id ?? draftId
-    const versionNumber = revisionSource
-      ? (revisionSource.versionNumber ?? 1) + 1
-      : existingDraft?.versionNumber ?? 1
-    const draft: Draft = {
-      id: draftId,
-      weekId: state.weekContext.weekId,
-      revisionGroupId,
-      versionNumber,
-      title: title.trim() || 'Untitled writing',
-      body,
-      correctedBody: body,
-      updatedAt: new Date().toISOString(),
-      findings,
-      exerciseProgress: {},
-      spellingWords: analysis.spellingWords,
-      spellingProgress: {},
-      reviewStatus: writingReviewStatus(findings, {}, analysis.spellingWords, {}),
-    }
-    const createdAt = new Date().toISOString()
-    setState((current) => {
-      const existing = new Map(current.writingReviewQueue.map((item) => [item.id, item]))
-      const reviewItems = analysis.reviewItems.map((item) => {
-        const id = `${draft.id}:${item.id}`
-        return existing.get(id) ?? {
-          ...item,
-          id,
-          draftId: draft.id,
-          status: 'pending' as const,
-          createdAt,
+    const submittedBody = body
+    setCheckingWriting(true)
+    setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation on this Mac…')
+    try {
+      const proofreading = await proofreadWriting(submittedBody).catch(() => ({
+        available: false,
+        engine: 'reviewed offline rules',
+        matches: [],
+      }))
+      const checkedFindings = inspectWritingFindings(
+        submittedBody,
+        state.writingDictionary,
+        proofreading.matches,
+      )
+      const revisionSource = revisingFromDraftId
+        ? state.drafts.find((draft) => draft.id === revisingFromDraftId)
+        : undefined
+      const existingDraft = !revisionSource && workingDraft?.reviewStatus !== 'complete'
+        ? workingDraft
+        : undefined
+      const draftId = existingDraft?.id ?? crypto.randomUUID()
+      const revisionGroupId = revisionSource?.revisionGroupId ?? revisionSource?.id ??
+        existingDraft?.revisionGroupId ?? existingDraft?.id ?? draftId
+      const versionNumber = revisionSource
+        ? (revisionSource.versionNumber ?? 1) + 1
+        : existingDraft?.versionNumber ?? 1
+      const draft: Draft = {
+        id: draftId,
+        weekId: state.weekContext.weekId,
+        revisionGroupId,
+        versionNumber,
+        title: title.trim() || 'Untitled writing',
+        body: submittedBody,
+        correctedBody: submittedBody,
+        updatedAt: new Date().toISOString(),
+        findings: checkedFindings,
+        proofreadingMatches: proofreading.matches,
+        exerciseProgress: {},
+        spellingWords: analysis.spellingWords,
+        spellingProgress: {},
+        reviewStatus: writingReviewStatus(checkedFindings, {}, analysis.spellingWords, {}),
+      }
+      const createdAt = new Date().toISOString()
+      setState((current) => {
+        const existing = new Map(current.writingReviewQueue.map((item) => [item.id, item]))
+        const reviewItems = analysis.reviewItems.map((item) => {
+          const id = `${draft.id}:${item.id}`
+          return existing.get(id) ?? {
+            ...item,
+            id,
+            draftId: draft.id,
+            status: 'pending' as const,
+            createdAt,
+          }
+        })
+        return {
+          ...current,
+          drafts: [draft, ...current.drafts.filter((item) => item.id !== draft.id)],
+          writingReviewQueue: [
+            ...current.writingReviewQueue.filter((item) => item.draftId !== draft.id),
+            ...reviewItems,
+          ],
         }
       })
-      return {
-        ...current,
-        drafts: [draft, ...current.drafts.filter((item) => item.id !== draft.id)],
-        writingReviewQueue: [
-          ...current.writingReviewQueue.filter((item) => item.draftId !== draft.id),
-          ...reviewItems,
-        ],
-      }
-    })
-    setReviewDraftId(draft.id)
-    setRevisingFromDraftId(null)
-    setShowReview(true)
+      setProofreadingMessage(proofreading.available
+        ? `${proofreading.engine} checked this version locally.`
+        : 'The professional proofreader was unavailable, so reviewed offline rules were used.')
+      setReviewDraftId(draft.id)
+      setRevisingFromDraftId(null)
+      setShowReview(true)
+    } catch (error) {
+      setProofreadingMessage(error instanceof Error ? error.message : 'The writing could not be checked.')
+    } finally {
+      setCheckingWriting(false)
+    }
   }
 
   const beginRevision = () => {
@@ -1211,6 +1237,7 @@ function WritingView({
     setRevisingFromDraftId(reviewDraft.id)
     setReviewDraftId(null)
     setFinishMessage('')
+    setProofreadingMessage('')
     setShowReview(false)
   }
 
@@ -1351,29 +1378,30 @@ function WritingView({
       </div>
       <div className={`writing-grid${showReview ? ' game-open' : ''}`}>
         <div className="editor-card">
-          <input className="title-input" value={title} disabled={showReview} onChange={(event) => setTitle(event.target.value)} placeholder={dailyWritingActive ? 'Name the passage you read…' : 'Give your writing a title…'} spellCheck={false} />
+          <input className="title-input" value={title} disabled={showReview || checkingWriting} onChange={(event) => setTitle(event.target.value)} placeholder={dailyWritingActive ? 'Name the passage you read…' : 'Give your writing a title…'} spellCheck />
           <textarea
             value={body}
-            disabled={showReview}
+            disabled={showReview || checkingWriting}
             onChange={(event) => setBody(event.target.value)}
             placeholder={dailyWritingActive ? 'What happened in the passage? What did you learn, notice, or think about?' : 'Start writing here…'}
-            spellCheck={false}
-            autoCorrect="off"
-            autoCapitalize="off"
+            spellCheck
+            autoCorrect="on"
+            autoCapitalize="sentences"
             aria-label="Writing draft"
           />
-          <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Hints are off · Your work stays yours</span></div>
+          <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Local spelling help is on · Your work stays on this Mac</span></div>
         </div>
         <aside className="review-card" role={showReview ? 'dialog' : undefined} aria-modal={showReview || undefined} aria-label={showReview ? 'Correction game' : undefined}>
           <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div></div>
+          {proofreadingMessage && <p className="proofreading-status" role="status">{proofreadingMessage}</p>}
           {!showReview ? (
             <div className="review-empty">
               {revisingFromDraftId && <div className="revision-callout"><strong>Revise version {state.drafts.find((draft) => draft.id === revisingFromDraftId)?.versionNumber ?? 1}</strong><span>Correct the errors you practiced, then check the new version.</span></div>}
               <div className="review-category"><span>✓</span><p><strong>Grammar</strong><small>Agreement, articles, and basic tense</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
-              <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Reviewed common misspellings only</small></p></div>
-              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>{revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
+              <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Local professional dictionary and reviewed context</small></p></div>
+              <button className="primary-button full-button" disabled={!body.trim() || checkingWriting} onClick={save}>{checkingWriting ? 'Checking on this Mac…' : revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
             </div>
           ) : activeFinding && activeTrial ? (
             <div className="writing-exercise">

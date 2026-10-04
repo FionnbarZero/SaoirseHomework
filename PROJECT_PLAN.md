@@ -136,7 +136,7 @@ There are no extra wildcard sessions in the revised model.
 
 - Fionnbar chooses and reads a passage, then writes what happened and what he learned, noticed, or thought.
 - Save the untouched original response before analysis.
-- Detect only supported high-confidence capitalization, grammar, punctuation, and spelling errors. Ambiguous language goes to the parent review queue instead of being silently changed.
+- Layer a loopback-only LanguageTool service beneath reviewed contextual capitalization, grammar, punctuation, and spelling rules. Reviewed contextual replacements take priority when a general dictionary suggestion conflicts. Ambiguous language goes to the parent review queue instead of being silently changed.
 - The reviewed Grade 5 library includes simple and perfect tense, safe past-tense consistency patterns, subject–verb and pronoun agreement, articles, correlative conjunctions, object pronouns after prepositions, capitalization, contractions, introductory and list commas, interjections, direct address, quotations, and ending punctuation. Extend it only with reviewed positive, negative, and ambiguous regression cases.
 - For every supported error, first show Fionnbar’s actual sentence, then present three reviewed examples of the same rule before moving to the next error.
 - When the same rule appears more than once in a draft, assign the next reviewed three-example set instead of repeating earlier questions; each rule has three non-overlapping sets. Spelling examples use the child’s specific reviewed word.
@@ -230,14 +230,14 @@ Writing tasks are supported but are not automatically equivalent to Daily Englis
 ### Drafting
 
 - Fionnbar writes in the homework app, not directly in Google Docs.
-- Disable browser spellcheck, autocorrect, grammar hints, punctuation hints, and automatic capitalization in the editor.
+- Enable browser spelling and sentence-capitalization assistance while keeping the submitted original version unchanged in the version history.
 - Save the untouched draft before correction begins.
-- Analyze writing locally; do not send it to an AI service.
+- Analyze writing locally with reviewed rules and a loopback-only LanguageTool process; never send child writing to the public LanguageTool API.
 - Recognized findings use four categories: spelling, grammar, punctuation, and capitalization.
 - Only high-confidence supported rules generate mandatory exercises.
 - Unsupported or ambiguous findings enter the parent review queue and do not block completion.
 
-### Version-one deterministic rule set
+### Version-one layered rule set
 
 - Grammar:
   - Basic subject–verb agreement
@@ -268,7 +268,7 @@ Each rule requires reviewed positive examples, distractors, and regression tests
 - Incorrect first attempts receive immediate feedback and stay scored incorrect. The child must select the correct answer before **Continue** appears, and that correction adds no score.
 - Reviewed spelling mistakes join the multiple-choice sequence: correct the child’s sentence, answer three similar reviewed spelling questions, then move to the next detected error.
 - The writing task completes only after every supported correction exercise completes.
-- Spelling detection stays conservative: only reviewed common misspellings generate mandatory practice, and unknown words are never guessed.
+- Reviewed common misspellings and contextual replacements take priority. Other misspellings may enter mandatory practice only when the local professional dictionary returns a concrete replacement; the stored engine match lets the service reproduce and audit that finding.
 
 ## 9. Google document and Friday delivery
 
@@ -439,7 +439,7 @@ Default retention:
 - Confirm the game returns to an editable revision step, every version remains unchanged, and another game is required when the revision still contains supported errors.
 - Confirm the final percentage and cumulative-accuracy line graph match the stored response sequence.
 - Confirm screen readers receive selected/correct/incorrect state and immediate feedback, and keyboard focus moves to each new question.
-- Confirm reviewed misspellings enter the multiple-choice sequence and unreviewed words remain unchanged.
+- Confirm reviewed contextual spellings override general dictionary suggestions, and confirm new local-dictionary findings enter the multiple-choice sequence with three unique choices.
 
 ### Google and Chrome
 
@@ -462,5 +462,5 @@ Default retention:
 2. **Core learning path:** entry screen, weekly path, daily lists, self-reporting, segmented optional pool, Sunday head start, banking, persistence, and parent dashboard.
 3. **Controlled activities:** generic timer shell, Ninja Dojo, practice timers, Du Chinese, Level Chinese, and verified reading-response writing integration.
 4. **Rewards:** earning ledger, banked credits, controlled YouTube playback, recovery, and focus restoration.
-5. **Writing:** deterministic language rules, correction games, spelling-module integration, weekly Google document, and Friday delivery.
+5. **Writing:** layered local proofreading, correction games, spelling-module integration, weekly Google document, and Friday delivery.
 6. **Hardening:** failure recovery, privacy controls, accessibility, Chrome-update testing, child-account bypass testing, and optional MDM evaluation.

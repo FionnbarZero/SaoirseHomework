@@ -69,4 +69,4 @@ Use **Revoke Google access** to call Google's revoke endpoint and delete the Key
 
 ## Writing eligibility
 
-Live delivery includes only drafts whose review status is `complete`. A draft reaches that state only after every supported grammar, punctuation, capitalization, and spelling exercise is finished. Unknown words are not guessed or silently corrected; the spelling adapter creates mandatory practice only for its reviewed common-misspelling list.
+Live delivery includes only drafts whose review status is `complete`. A draft reaches that state only after every supported grammar, punctuation, capitalization, and spelling exercise is finished. The writing screen combines reviewed contextual rules with a loopback-only LanguageTool service. The browser stores the sanitized LanguageTool findings with each version so the server can reproduce the same mandatory practice without sending child writing to a public proofreading API.

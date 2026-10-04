@@ -156,7 +156,11 @@ test('the checker fails closed on ambiguous read tense and fixes audited capital
   assert.deepEqual(inspectDraft('She read the book last night.'), [])
   assert.deepEqual(
     inspectDraft('He said "hello"').map((finding) => [finding.ruleId, finding.replacement]),
-    [['terminal-punctuation', '."']],
+    [
+      ['dialogue-introduction-comma', ', '],
+      ['quotation-capitalization', 'H'],
+      ['quotation-punctuation-inside', '."'],
+    ],
   )
   assert.deepEqual(
     inspectDraft('MONDAY and DR. Lee met dr. smith.').map((finding) => [finding.ruleId, finding.replacement]),
@@ -165,6 +169,43 @@ test('the checker fails closed on ambiguous read tense and fixes audited capital
       ['title-capital', 'Dr. Lee'],
       ['title-capital', 'Dr. Smith'],
     ],
+  )
+})
+
+test('the checker recognizes missing and incorrectly punctuated direct quotations', () => {
+  const samples = [
+    ['Maya said "hello".', 'Maya said, "Hello."'],
+    ['Maya said, “Hello”.', 'Maya said, “Hello.”'],
+    ['“Hello.” Maya said.', '“Hello,” Maya said.'],
+    ['Maya said, “Hello.', 'Maya said, “Hello.”'],
+    ['Maya said, Hello.”', 'Maya said, “Hello.”'],
+  ]
+
+  for (const [body, expected] of samples) {
+    const findings = inspectDraft(body)
+    const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+      correctionComplete: true,
+      practiceCompleted: finding.practice.length,
+      incorrectAttempts: 0,
+    }]))
+    assert.equal(applyCompletedCorrections(body, findings, progress), expected)
+    assert.equal(findings.every((finding) => finding.practice.length === 3), true)
+  }
+
+  const childPassage = 'The lady therewas nice she said what a bueatiful fish I got. I was happy. and then the gus was like. what up!'
+  const findings = inspectDraft(childPassage)
+  const dialogueFindings = findings.filter((finding) => finding.ruleId === 'missing-dialogue-quotes')
+  assert.equal(dialogueFindings.length, 2)
+  assert.equal(dialogueFindings.every((finding) => finding.additionalEdits?.length === 1), true)
+
+  const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+  }]))
+  assert.equal(
+    applyCompletedCorrections(childPassage, findings, progress),
+    'The lady therewas nice she said, “What a bueatiful fish I got.” I was happy. And then the gus was like, “What up!”',
   )
 })
 
@@ -302,6 +343,39 @@ test('the checker repairs the audited Eddie passage without teaching comma splic
     applyCompletedCorrections(body, findings, progress),
     'The main character, Eddie, went to the store and bought a hamster. It died, and he was sad.',
   )
+})
+
+test('local proofreader findings add broad spelling coverage without overriding reviewed corrections', () => {
+  const body = 'Eddie cbouts a qwick snack.'
+  const findings = inspectWritingFindings(body, undefined, [
+    {
+      offset: 6,
+      length: 6,
+      message: 'Possible spelling mistake found.',
+      shortMessage: '',
+      replacements: ['bouts', 'clouts'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    },
+    {
+      offset: 15,
+      length: 5,
+      message: 'Possible spelling mistake found.',
+      shortMessage: '',
+      replacements: ['quick', 'quirk'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    },
+  ])
+
+  assert.equal(findings.find((finding) => finding.start === 6)?.replacement, 'bought')
+  const broadFinding = findings.find((finding) => finding.start === 15)
+  assert.equal(broadFinding?.replacement, 'quick')
+  assert.equal(broadFinding?.category, 'Spelling')
+  assert.equal(broadFinding?.practice.length, 3)
+  assert.equal(broadFinding?.practice.every((trial) => trial.correctAnswer.includes('quick')), true)
 })
 
 test('ambiguous writing suggestions enter a non-blocking parent review queue', () => {

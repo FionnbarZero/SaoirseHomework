@@ -89,12 +89,41 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 21)
+    assert.equal(reopened.info().schemaVersion, 22)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('server-validated local proofreading matches persist and are recomputed into findings', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.drafts[0] = {
+    ...state.drafts[0],
+    body: 'A qwick fox arrived.',
+    correctedBody: 'A qwick fox arrived.',
+    proofreadingMatches: [{
+      offset: 2,
+      length: 5,
+      message: 'Possible spelling mistake found.',
+      shortMessage: '',
+      replacements: ['quick', 'quirk'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    }],
+    findings: [],
+    exerciseProgress: {},
+    reviewStatus: 'complete',
+  }
+
+  const saved = store.saveState(state)
+  assert.deepEqual(saved.drafts[0].proofreadingMatches.map((match) => match.replacements), [['quick', 'quirk']])
+  assert.equal(saved.drafts[0].findings.find((finding) => finding.start === 2)?.replacement, 'quick')
+  assert.equal(saved.drafts[0].reviewStatus, 'practice')
+  store.close()
 })
 
 test('unfinished five-example writing drafts migrate to three examples without losing completed responses', () => {

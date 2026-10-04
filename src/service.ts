@@ -8,6 +8,7 @@ import type {
   GoogleLiveDelivery,
   GoogleLiveState,
   GoogleProofState,
+  ProofreadingMatch,
   WritingDictionary,
 } from './domain'
 
@@ -106,6 +107,13 @@ type WritingGameCompletionResponse = GameSessionResponse & {
     wordCount: number
     edited: boolean
   }
+}
+
+export type ProofreadingResponse = {
+  available: boolean
+  engine: string
+  matches: ProofreadingMatch[]
+  error?: string
 }
 
 type GoogleProofResponse = StateResponse & {
@@ -301,6 +309,13 @@ export function completeWritingGame(sessionId: string, draftId: string) {
   return request<WritingGameCompletionResponse>(`/api/game-sessions/${encodeURIComponent(sessionId)}/complete-writing`, {
     method: 'POST',
     body: JSON.stringify({ draftId }),
+  })
+}
+
+export function proofreadWriting(text: string) {
+  return request<ProofreadingResponse>('/api/proofread', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
   })
 }
 

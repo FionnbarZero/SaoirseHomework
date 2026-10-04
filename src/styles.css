@@ -53,6 +53,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .entry-card h1 em { color: var(--orange); font-weight: 400; }
 .entry-copy { font-size: 18px; line-height: 1.6; color: #66706c; max-width: 430px; margin: 0 auto 28px; }
 .entry-note { display: flex; justify-content: center; align-items: center; gap: 7px; color: #89908d; font-size: 12px; margin: 18px 0 0; }
+.entry-error { color: #a53d2d; font-size: 14px; line-height: 1.45; margin: 16px auto 0; max-width: 460px; }
 .enter-button { margin: auto; min-width: 230px; justify-content: center; padding: 15px 22px !important; box-shadow: 0 13px 30px rgba(186,75,35,.18); }
 .entry-orbit { position: absolute; inset: -24px -70px; pointer-events: none; }
 .entry-orbit span { position: absolute; width: 54px; height: 54px; border-radius: 18px; display: grid; place-items: center; font-family: Georgia, serif; font-size: 20px; font-weight: 700; box-shadow: var(--shadow); transform: rotate(-7deg); }

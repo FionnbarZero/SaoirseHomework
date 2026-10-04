@@ -13,7 +13,7 @@ import { emptyActivityConfiguration, normalizeActivityConfiguration } from './ac
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 13
+const SCHEMA_VERSION = 14
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -204,6 +204,7 @@ export function createStore(filename, options = {}) {
   const wallNow = options.wallNow ?? (() => new Date())
   const monotonicNow = options.monotonicNow ?? (() => performance.now())
   const makeId = options.makeId ?? (() => randomUUID())
+  const makeLearningSessionId = options.makeLearningSessionId ?? (() => randomUUID())
   const makeNonce = options.makeNonce ?? (() => randomBytes(32).toString('base64url'))
   const runtimeId = options.runtimeId ?? randomUUID()
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE
@@ -267,6 +268,18 @@ export function createStore(filename, options = {}) {
       unlocked_at TEXT NOT NULL,
       PRIMARY KEY (week_id, day)
     );
+
+    CREATE TABLE IF NOT EXISTS guardian_learning_session (
+      service_session_id TEXT PRIMARY KEY,
+      week_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('requested', 'completion-eligible', 'superseded')),
+      created_at TEXT NOT NULL,
+      completion_eligible_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS guardian_learning_session_day
+      ON guardian_learning_session (week_id, day, created_at);
 
     CREATE TABLE IF NOT EXISTS reward_credit (
       id TEXT PRIMARY KEY,
@@ -962,6 +975,129 @@ export function createStore(filename, options = {}) {
     state.activeGameSession = gameSessionFromRow(getPendingGameSessionRow())
     state.completionRecords = listCompletions(50)
     return state
+  }
+
+  function getGuardianLifecycle() {
+    const state = loadState()
+    const serviceTime = asIso(wallNow())
+    if (!state.entered) return { mode: 'inactive', session: null, serviceTime }
+
+    const weekId = state.weekContext.weekId
+    const day = state.weekContext.localDay
+    const unlock = state.freeModeByDay[day]
+    let row = db.prepare(`
+      SELECT * FROM guardian_learning_session
+      WHERE week_id = ? AND day = ? AND status != 'superseded'
+      ORDER BY created_at DESC, rowid DESC LIMIT 1
+    `).get(weekId, day)
+    let lifecycleChanged = false
+
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      if (row?.status === 'completion-eligible' && !unlock) {
+        db.prepare(`
+          UPDATE guardian_learning_session SET status = 'superseded'
+          WHERE service_session_id = ?
+        `).run(row.service_session_id)
+        insertAudit.run(
+          'guardian_learning_session_superseded',
+          JSON.stringify({ serviceSessionId: row.service_session_id, weekId, day }),
+          serviceTime,
+        )
+        lifecycleChanged = true
+        row = null
+      }
+
+      if (!row) {
+        const serviceSessionId = String(makeLearningSessionId())
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(serviceSessionId)) {
+          throw new Error('Generated guardian learning-session ID is not a UUID')
+        }
+        db.prepare(`
+          INSERT INTO guardian_learning_session (
+            service_session_id, week_id, day, status, created_at, completion_eligible_at
+          ) VALUES (?, ?, ?, 'requested', ?, NULL)
+        `).run(serviceSessionId, weekId, day, serviceTime)
+        insertAudit.run(
+          'guardian_learning_session_requested',
+          JSON.stringify({ serviceSessionId, weekId, day }),
+          serviceTime,
+        )
+        lifecycleChanged = true
+        row = db.prepare(`
+          SELECT * FROM guardian_learning_session WHERE service_session_id = ?
+        `).get(serviceSessionId)
+      }
+
+      if (unlock && row.status !== 'completion-eligible') {
+        db.prepare(`
+          UPDATE guardian_learning_session
+          SET status = 'completion-eligible', completion_eligible_at = ?
+          WHERE service_session_id = ?
+        `).run(unlock, row.service_session_id)
+        insertAudit.run(
+          'guardian_learning_session_completion_eligible',
+          JSON.stringify({ serviceSessionId: row.service_session_id, weekId, day, eligibleAt: unlock }),
+          serviceTime,
+        )
+        lifecycleChanged = true
+        row = { ...row, status: 'completion-eligible', completion_eligible_at: unlock }
+      }
+      if (lifecycleChanged) setMeta.run('last_write_at', serviceTime)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    const requiredCompleted = Number(db.prepare(`
+      SELECT count(*) AS count FROM weekly_daily_completion
+      WHERE week_id = ? AND day = ? AND activity_id IN (?, ?, ?, ?, ?)
+    `).get(weekId, day, ...REQUIRED_ACTIVITY_IDS).count)
+    const optionalCompleted = Number(db.prepare(`
+      SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?
+    `).get(weekId).count)
+    const completionProof = unlock
+      ? {
+          serviceSessionId: row.service_session_id,
+          weekId,
+          day,
+          eligibleAt: unlock,
+          requiredCompleted,
+          requiredTarget: REQUIRED_ACTIVITY_IDS.length,
+          optionalCompleted,
+          optionalTarget: OPTIONAL_TARGETS[day],
+        }
+      : null
+
+    return {
+      mode: unlock ? 'free' : 'homework',
+      session: {
+        serviceSessionId: row.service_session_id,
+        weekId,
+        day,
+        status: row.status,
+        startedAt: row.created_at,
+        completionProof,
+      },
+      serviceTime,
+    }
+  }
+
+  function startLearningSession() {
+    const now = asIso(wallNow())
+    ensureCurrentWeek()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      setSetting.run('entered', '1')
+      setMeta.run('initialized', '1')
+      setMeta.run('last_write_at', now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getGuardianLifecycle()
   }
 
   function importBrowserTimer(timer, now, weekId) {
@@ -2281,6 +2417,8 @@ export function createStore(filename, options = {}) {
     db,
     loadState,
     saveState,
+    startLearningSession,
+    getGuardianLifecycle,
     startGameSession,
     getGameSession,
     completeGameSession,

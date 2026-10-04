@@ -57,6 +57,33 @@ public final class GuardianDaemonClient {
     try perform { service, reply in service.fetchStatus(withReply: reply) }
   }
 
+  public func evaluateApplication(
+    _ request: GuardianApplicationEvaluationRequest
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.evaluateApplication(encodedRequest, withReply: reply)
+    }
+  }
+
+  public func beginChildSession(
+    _ request: GuardianBeginChildSessionRequest
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.beginChildSession(encodedRequest, withReply: reply)
+    }
+  }
+
+  public func completeChildSession(
+    _ request: GuardianCompleteChildSessionRequest
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.completeChildSession(encodedRequest, withReply: reply)
+    }
+  }
+
   public func setHomeworkMode(
     _ request: GuardianSetHomeworkModeRequest,
     authorizationExternalForm: Data
@@ -64,6 +91,20 @@ public final class GuardianDaemonClient {
     let encodedRequest = try GuardianWireCodec.encode(request)
     return try perform { service, reply in
       service.setHomeworkMode(
+        encodedRequest,
+        authorizationExternalForm: authorizationExternalForm,
+        withReply: reply
+      )
+    }
+  }
+
+  public func replacePolicy(
+    _ request: GuardianReplacePolicyRequest,
+    authorizationExternalForm: Data
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.replacePolicy(
         encodedRequest,
         authorizationExternalForm: authorizationExternalForm,
         withReply: reply

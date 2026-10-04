@@ -1,18 +1,22 @@
 # Guardian deployment
 
-## Production security-boundary foundation
+## Production enforcement boundary
 
-Version 0.3.0 adds a reviewable parent app with the structure required by Apple's Service Management framework:
+Version 0.5.0 adds a reviewable parent app with the structure required by Apple's Service Management framework and connects child learning sessions to its privileged boundary:
 
 - `Fionnbar Homework Parent.app` registers an embedded per-user LaunchAgent and privileged LaunchDaemon through `SMAppService`.
 - The agent and parent connect only to the daemon's named XPC service.
 - The daemon automatically rejects peers unless their code signature has the same Apple team and one of the two exact allowed identifiers.
-- The protocol exposes only status and a typed Homework-mode change. It has no generic command, path, shell, or arbitrary payload operation.
-- A mode change requires a 32-byte Authorization Services external reference. The daemon revalidates `system.privilege.admin` without allowing UI immediately before changing state.
+- The protocol exposes only status, application evaluation, typed child-session transitions, Homework-mode changes, and complete policy replacement. It has no generic command, path, shell, or arbitrary payload operation.
+- Mode and policy changes require a 32-byte Authorization Services external reference. The daemon revalidates `system.privilege.admin` without allowing UI immediately before changing state.
 - Requests expire after 30 seconds, reject clock movement into the future, require a printable audit reason, and persist a bounded replay and audit log in a root-owned state file.
+- The daemon owns the blocked-app policy and returns one of four decisions: `inactive`, `allowed`, `blocked`, or `unavailable`.
+- The signed session agent asks the daemon about the still-frontmost application every five seconds and sends an ordinary termination request only for a daemon-issued `blocked` decision. It never force-terminates an app.
+- Child entry creates a persistent service-session UUID. The signed agent may use it only to begin or maintain a restrictive daemon session.
+- Verified Free mode closes that session only when the agent presents both the matching server proof and the daemon's random completion capability. Completed and parent-overridden service-session IDs cannot restart.
 - Unsigned and ad-hoc builds refuse to run, and the release report stays non-installable until every component has one hardened team signature and the app has a stapled notarization ticket.
 
-Application enforcement is intentionally not connected yet. The embedded release metadata records `enforcementIncluded: false` and the builder cannot change it.
+The embedded release metadata records `enforcementIncluded: true` but keeps `productionReady: false`. Parent/root ownership for the loopback service and SQLite store, signed upgrade/rollback, and the second-Mac acceptance matrix remain release gates.
 
 ### Build a production review app
 
@@ -40,7 +44,7 @@ node guardian/deployment/build-production-app.mjs \
   --output "guardian/build/Fionnbar Homework Parent.app"
 ```
 
-The final report must show `Signing ready: yes`, `Notarization ready: yes`, and `Install ready: yes`. A signed daemon embedded in an app must be notarized; signing alone is not a release gate.
+The final report must show `Signing ready: yes`, `Notarization ready: yes`, and `Install ready: yes`. It will still show `Production ready: no` until the remaining acceptance work is implemented. A signed daemon embedded in an app must be notarized; signing alone is not a release gate.
 
 The parent executable supports these narrow operations once the app is signed and located in `/Applications`:
 
@@ -48,10 +52,15 @@ The parent executable supports these narrow operations once the app is signed an
 "/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" --register
 "/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" --status
 "/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" \
+  --replace-policy --reason "Reviewed blocked apps" \
+  --blocked-bundle-id com.apple.Safari \
+  --blocked-bundle-id com.apple.Terminal \
+  --blocked-bundle-id com.roblox.Roblox
+"/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" \
   --disable-homework --reason "Parent-authorized maintenance"
 ```
 
-Registration may still require explicit daemon approval in **System Settings → General → Login Items**. Do not register this foundation on the daily-use child account until enforcement integration and the second-Mac tests below are complete.
+Registration may still require explicit daemon approval in **System Settings → General → Login Items**. Do not register this build on the daily-use child account until the local-service ownership boundary and the second-Mac tests below are complete.
 
 ## Legacy dry-run review bundle
 
@@ -128,10 +137,9 @@ No command deletes homework data, logs, or backups. There is intentionally no fo
 
 Before this package can enforce Homework mode on the daily-use child account:
 
-1. Move the reviewed blocked-app policy and enforcement state behind the new daemon/agent protocol without adding generic privileged operations.
-2. Connect child-initiated session start and verified session completion while retaining administrator authorization for parent-only exits and configuration changes.
-3. Obtain the Developer ID Application identity, notarize and staple the app, and confirm all three components share the expected team.
-4. Add signed upgrade and recoverable rollback handling for the app bundle.
-5. Run release, upgrade, rollback, crash, logout, sleep, restart, and child-account bypass tests on the second Mac.
+1. Package the fixed loopback service and SQLite store behind a parent/root-owned boundary so the child cannot stop, replace, redirect, or forge lifecycle responses.
+2. Obtain the Developer ID Application identity, notarize and staple the app, and confirm all three components share the expected team.
+3. Add signed upgrade and recoverable rollback handling for the app bundle.
+4. Run release, upgrade, rollback, crash, logout, sleep, restart, service-impersonation, and child-account bypass tests on the second Mac.
 
 The current direct shared-secret flow remains a local feasibility test only.

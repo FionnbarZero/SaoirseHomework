@@ -149,13 +149,16 @@ function buildProductionApp(options) {
       join(launchDaemons, 'com.fionnbar.homework.guardian.daemon.plist'),
     )
     writeFileSync(join(resources, 'guardian-security.json'), `${JSON.stringify({
-      protocolVersion: 1,
+      protocolVersion: 3,
       version,
       daemonMachService: identifiers.daemon,
       allowedDaemonClients: [identifiers.parent, identifiers.agent],
       authorizationRight: 'system.privilege.admin',
       sharedSecret: false,
-      enforcementIncluded: false,
+      policyAuthority: 'privileged-daemon',
+      childSessionStart: 'signed-agent-restrictive-only',
+      completionAuthority: 'daemon-capability-plus-service-proof',
+      enforcementIncluded: true,
     }, null, 2)}\n`)
 
     for (const plist of [
@@ -192,9 +195,10 @@ function buildProductionApp(options) {
     version,
     builtAt: new Date().toISOString(),
     minimumMacOS: '13.0',
-    architecture: 'SMAppService agent + daemon with authenticated XPC',
-    enforcementIncluded: false,
+    architecture: 'SMAppService enforcement agent + policy daemon with authenticated XPC',
+    enforcementIncluded: true,
     installReady: signingReady && notarizationReady,
+    productionReady: false,
     signingReady,
     notarizationReady,
     signatures,
@@ -224,3 +228,4 @@ if (result.archivePath) console.log(`Archive: ${relative(projectRoot, result.arc
 console.log(`Signing ready: ${result.metadata.signingReady ? 'yes' : 'no'}`)
 console.log(`Notarization ready: ${result.metadata.notarizationReady ? 'yes' : 'no'}`)
 console.log(`Install ready: ${result.metadata.installReady ? 'yes' : 'no — sign every component and staple a notarization ticket'}`)
+console.log('Production ready: no — signed second-Mac acceptance testing is still required')

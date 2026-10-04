@@ -42,7 +42,7 @@ public enum GuardianSigningRequirement {
 
     let bundleIdentifiers = try allowedBundleIdentifiers.sorted().map { identifier -> String in
       guard identifier.range(
-        of: #"^[A-Za-z0-9][A-Za-z0-9.-]{2,127}$"#,
+        of: #"^[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9][A-Za-z0-9-]*)+$"#,
         options: .regularExpression
       ) != nil else {
         throw GuardianCodeSigningError.invalidBundleIdentifier(identifier)

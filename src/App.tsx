@@ -86,6 +86,7 @@ import {
   saveWritingReviewStatus,
   setDailyCompletion,
   startControlledSession,
+  startLearningSession,
   startParentAuthorization,
   startReadingGame as startReadingGameSession,
   ServiceRequestError,
@@ -148,6 +149,8 @@ function App() {
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(loadSecurityStatus)
   const [hydrated, setHydrated] = useState(false)
   const [sessionError, setSessionError] = useState('')
+  const [entryStarting, setEntryStarting] = useState(false)
+  const [entryError, setEntryError] = useState('')
   const latestState = useRef(state)
   const heartbeatInFlight = useRef(false)
   const sessionWantsRunning = useRef(Boolean(state.activeTimer?.running))
@@ -475,13 +478,33 @@ function App() {
     }
   }
 
+  const enterHomework = async () => {
+    if (entryStarting) return
+    setEntryStarting(true)
+    setEntryError('')
+    try {
+      const response = await startLearningSession()
+      setState(response.state)
+      setServiceMeta(response.meta)
+      setServiceStatus('online')
+      setView('path')
+    } catch (error) {
+      setServiceStatus('offline')
+      setEntryError(error instanceof Error
+        ? error.message
+        : 'Homework mode could not start. Ask a parent to restart the local service.')
+    } finally {
+      setEntryStarting(false)
+    }
+  }
+
   if (!state.entered) {
     return (
       <EntryScreen
-        onEnter={() => {
-          setState((current) => ({ ...current, entered: true }))
-          setView('path')
-        }}
+        onEnter={() => { void enterHomework() }}
+        starting={entryStarting}
+        ready={hydrated}
+        error={entryError}
       />
     )
   }
@@ -584,7 +607,17 @@ function RecoveryScreen({ status, openParent }: { status: SecurityStatus; openPa
   )
 }
 
-function EntryScreen({ onEnter }: { onEnter: () => void }) {
+function EntryScreen({
+  onEnter,
+  starting,
+  ready,
+  error,
+}: {
+  onEnter: () => void
+  starting: boolean
+  ready: boolean
+  error: string
+}) {
   return (
     <main className="entry-screen">
       <div className="entry-decoration entry-star-one">✦</div>
@@ -601,9 +634,11 @@ function EntryScreen({ onEnter }: { onEnter: () => void }) {
         <p className="eyebrow">FIONNBAR’S</p>
         <h1>Homework<br /><em>Quest</em></h1>
         <p className="entry-copy">A little progress every day adds up to a brilliant week.</p>
-        <button className="primary-button enter-button" onClick={onEnter}>
-          Enter this week <ChevronRight size={20} />
+        <button className="primary-button enter-button" onClick={onEnter} disabled={starting || !ready}>
+          {!ready ? 'Connecting…' : starting ? 'Starting Homework mode…' : 'Enter this week'}
+          {ready && !starting && <ChevronRight size={20} />}
         </button>
+        {error && <p className="entry-error" role="alert">{error}</p>}
         <p className="entry-note"><ShieldCheck size={14} /> Homework mode begins when you enter</p>
       </section>
     </main>

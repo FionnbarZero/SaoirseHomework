@@ -452,6 +452,19 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, securityResponse())
     }
 
+    if (url.pathname === '/api/guardian/lifecycle' && request.method === 'GET') {
+      return sendJson(response, 200, store.getGuardianLifecycle())
+    }
+
+    if (url.pathname === '/api/learning-session/start' && request.method === 'POST') {
+      const lifecycle = store.startLearningSession()
+      return sendJson(response, 200, {
+        lifecycle,
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
     if (url.pathname === '/api/parent/auth/status' && request.method === 'GET') {
       return sendJson(response, 200, parentStatus(request))
     }

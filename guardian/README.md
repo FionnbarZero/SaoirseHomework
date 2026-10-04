@@ -3,9 +3,9 @@
 The guardian now contains two deliberately separate paths:
 
 - `homework-guardian` is the original local feasibility executable. It uses the loopback service and an optional shared secret, and remains dry-run by default.
-- `Fionnbar Homework Parent.app` is the production security-boundary foundation. It embeds an `SMAppService` user agent and privileged daemon that communicate over an authenticated XPC protocol. It does not yet contain application enforcement.
+- `Fionnbar Homework Parent.app` is the production enforcement-boundary foundation. It embeds an `SMAppService` user agent and privileged daemon that communicate over authenticated XPC. The daemon owns the blocked-app policy; the agent enforces only its narrow application decisions.
 
-The production components refuse to run without a non-ad-hoc Apple team signature and their exact expected signing identifiers. The daemon accepts only the signed parent app and signed agent from that same team. Homework-mode changes require a fresh macOS administrator authorization reference, are replay-protected, and are written to a root-owned audit state file.
+The production components refuse to run without a non-ad-hoc Apple team signature and their exact expected signing identifiers. The daemon accepts only the signed parent app and signed agent from that same team. Parent Homework-mode and policy changes require a fresh macOS administrator authorization reference. Child entry is restrictive-only; verified completion requires a service proof plus a random capability held by the daemon and signed agent. All transitions are replay-protected and written to a root-owned audit state file.
 
 ## Feasibility executable
 
@@ -54,4 +54,4 @@ See `../PARENT_AUTH_SETUP.md` for the shared-secret and native authorization tes
 
 Do not enable enforcement or manually load the template LaunchAgent on a daily-use account. The reviewed deployment tooling in [`deployment/`](deployment/) can build and validate a signed dry-run-only bundle, install root-owned files, run health checks, and perform recoverable uninstall or rollback. It intentionally refuses unsigned binaries, administrator child accounts, enforcement, and embedded shared secrets.
 
-The `SMAppService` and authenticated-XPC foundation is implemented, but the release builder explicitly records `enforcementIncluded: false`. Do not install it as a daily-use enforcement tool yet. The next gate is to move the reviewed policy and enforcement flow behind this daemon/agent boundary, then sign, notarize, and run the second-Mac test matrix. The command-line prototype and JSON secret remain a local feasibility path, not a production installation boundary.
+The `SMAppService` agent now synchronizes server-issued child-session IDs, requests daemon-owned application decisions, and enforces only `blocked` results while Homework mode is active. A Free-mode proof cannot release the session without the daemon's matching one-time capability. The release builder records `enforcementIncluded: true` and `productionReady: false`. Do not install it as a daily-use enforcement tool yet: the loopback service/SQLite ownership boundary, signing, notarization, and the second-Mac test matrix remain incomplete. The command-line prototype and JSON secret remain a local feasibility path, not a production installation boundary.

@@ -91,7 +91,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 13)
+    assert.equal(reopened.info().schemaVersion, 14)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -138,6 +138,92 @@ test('routine browser saves cannot change parent-owned records after migration',
 
   const credited = store.addParentRewardCredit({ seconds: 300 })
   assert.equal(credited.rewardCredits.length, 2)
+  store.close()
+})
+
+test('child entry creates one persistent restrictive guardian lifecycle', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-lifecycle-'))
+  const filename = join(directory, 'homework.sqlite')
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+
+  try {
+    const first = createStore(filename, clock.options())
+    assert.deepEqual(first.getGuardianLifecycle().mode, 'inactive')
+    const started = first.startLearningSession()
+    assert.equal(started.mode, 'homework')
+    assert.equal(started.session.weekId, '2026-10-05')
+    assert.equal(started.session.day, 'Monday')
+    assert.match(started.session.serviceSessionId, /^[0-9a-f-]{36}$/i)
+    assert.equal(started.session.completionProof, null)
+    assert.equal(first.startLearningSession().session.serviceSessionId, started.session.serviceSessionId)
+    assert.equal(first.loadState().entered, true)
+    assert.equal(
+      first.db.prepare('SELECT count(*) AS count FROM guardian_learning_session').get().count,
+      1,
+    )
+    first.close()
+
+    const reopened = createStore(filename, clock.options('reopened-runtime'))
+    assert.equal(reopened.getGuardianLifecycle().session.serviceSessionId, started.session.serviceSessionId)
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('verified completion proof unlocks free mode and a correction rotates the lifecycle', () => {
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  const started = store.startLearningSession()
+  const weekId = started.session.weekId
+
+  for (const activityId of ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']) {
+    store.setDailyCompletion({
+      day: 'Monday',
+      activityId,
+      completed: true,
+      method: 'parent-override',
+      weekId,
+    })
+  }
+  for (const sessionKey of ['voena:0', 'drums:0', 'band:0']) {
+    store.db.prepare(`
+      INSERT INTO weekly_optional_completion (week_id, session_key, completed_at)
+      VALUES (?, ?, ?)
+    `).run(weekId, sessionKey, '2026-10-05T16:05:00.000Z')
+  }
+
+  const free = store.getGuardianLifecycle()
+  assert.equal(free.mode, 'free')
+  assert.equal(free.session.serviceSessionId, started.session.serviceSessionId)
+  assert.deepEqual(free.session.completionProof, {
+    serviceSessionId: started.session.serviceSessionId,
+    weekId,
+    day: 'Monday',
+    eligibleAt: free.session.completionProof.eligibleAt,
+    requiredCompleted: 5,
+    requiredTarget: 5,
+    optionalCompleted: 3,
+    optionalTarget: 3,
+  })
+
+  store.setDailyCompletion({
+    day: 'Monday',
+    activityId: 'math',
+    completed: false,
+    method: 'parent-override',
+    weekId,
+  })
+  const relocked = store.getGuardianLifecycle()
+  assert.equal(relocked.mode, 'homework')
+  assert.notEqual(relocked.session.serviceSessionId, started.session.serviceSessionId)
+  assert.equal(relocked.session.completionProof, null)
+  assert.equal(
+    store.db.prepare(`
+      SELECT status FROM guardian_learning_session WHERE service_session_id = ?
+    `).get(started.session.serviceSessionId).status,
+    'superseded',
+  )
   store.close()
 })
 

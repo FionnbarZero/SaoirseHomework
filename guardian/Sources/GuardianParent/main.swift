@@ -8,36 +8,63 @@ private enum ParentCommand: String {
   case unregister
   case enableHomework = "enable-homework"
   case disableHomework = "disable-homework"
+  case replacePolicy = "replace-policy"
 }
 
 private struct ParentOptions {
   let command: ParentCommand
   let reason: String?
+  let blockedBundleIdentifiers: [String]
 
   static func parse(_ arguments: [String]) throws -> ParentOptions {
-    guard let first = arguments.first,
-          let command = ParentCommand(rawValue: first.replacingOccurrences(of: "--", with: "")) else {
+    guard let first = arguments.first, first.hasPrefix("--"),
+          let command = ParentCommand(rawValue: String(first.dropFirst(2))) else {
       throw ParentError.invalidArguments
     }
     var reason: String?
+    var blockedBundleIdentifiers: [String] = []
     var index = 1
     while index < arguments.count {
-      guard arguments[index] == "--reason", index + 1 < arguments.count else {
+      guard index + 1 < arguments.count else { throw ParentError.invalidArguments }
+      switch arguments[index] {
+      case "--reason":
+        guard reason == nil else { throw ParentError.invalidArguments }
+        reason = arguments[index + 1]
+      case "--blocked-bundle-id":
+        blockedBundleIdentifiers.append(arguments[index + 1])
+      default:
         throw ParentError.invalidArguments
       }
-      reason = arguments[index + 1]
       index += 2
     }
     if (command == .enableHomework || command == .disableHomework), reason == nil {
       throw ParentError.missingReason
     }
-    return ParentOptions(command: command, reason: reason)
+    if command == .replacePolicy, reason == nil {
+      throw ParentError.missingReason
+    }
+    if command == .replacePolicy, blockedBundleIdentifiers.isEmpty {
+      throw ParentError.missingPolicy
+    }
+    if command != .replacePolicy, !blockedBundleIdentifiers.isEmpty {
+      throw ParentError.invalidArguments
+    }
+    if command != .replacePolicy && command != .enableHomework && command != .disableHomework,
+       reason != nil {
+      throw ParentError.invalidArguments
+    }
+    return ParentOptions(
+      command: command,
+      reason: reason,
+      blockedBundleIdentifiers: blockedBundleIdentifiers
+    )
   }
 }
 
 private enum ParentError: Error, LocalizedError {
   case incorrectCodeIdentity(String)
   case invalidArguments
+  case missingPolicy
   case missingReason
   case rejected(String)
   case requiresAppBundle
@@ -48,8 +75,10 @@ private enum ParentError: Error, LocalizedError {
       "The parent app has the wrong signing identifier: \(identifier)."
     case .invalidArguments:
       "Invalid command. Run with --help for usage."
+    case .missingPolicy:
+      "--replace-policy requires at least one --blocked-bundle-id."
     case .missingReason:
-      "--reason is required for Homework-mode changes."
+      "--reason is required for privileged Homework-mode and policy changes."
     case .rejected(let message):
       "The guardian daemon rejected the request: \(message)"
     case .requiresAppBundle:
@@ -139,6 +168,11 @@ private struct GuardianParentApplication {
           enabled: options.command == .enableHomework,
           reason: options.reason ?? ""
         )
+      case .replacePolicy:
+        try replacePolicy(
+          blockedBundleIdentifiers: options.blockedBundleIdentifiers,
+          reason: options.reason ?? ""
+        )
       }
     } catch {
       fputs("parent: \(error.localizedDescription)\n", stderr)
@@ -163,7 +197,27 @@ private struct GuardianParentApplication {
       throw ParentError.rejected(response.message)
     }
     print("Homework mode: \(status.homeworkMode ? "enabled" : "disabled")")
+    print("Policy revision: \(status.policy.revision)")
+    print("Blocked applications: \(status.policy.blockedBundleIdentifiers.joined(separator: ", "))")
     print("Protocol: \(status.protocolVersion); service: \(status.serviceVersion)")
+  }
+
+  private static func replacePolicy(
+    blockedBundleIdentifiers: [String],
+    reason: String
+  ) throws {
+    try GuardianRequestValidator.validatePolicy(blockedBundleIdentifiers)
+    let authorization = try GuardianAuthorization.requestAdministratorExternalForm()
+    let request = GuardianReplacePolicyRequest(
+      blockedBundleIdentifiers: blockedBundleIdentifiers,
+      auditReason: reason
+    )
+    let response = try GuardianDaemonClient().replacePolicy(
+      request,
+      authorizationExternalForm: authorization
+    )
+    guard response.success else { throw ParentError.rejected(response.message) }
+    print(response.message)
   }
 
   private static func printHelp() {
@@ -174,6 +228,7 @@ private struct GuardianParentApplication {
       --status
       --enable-homework --reason TEXT
       --disable-homework --reason TEXT
+      --replace-policy --reason TEXT --blocked-bundle-id ID [--blocked-bundle-id ID ...]
       --unregister
 
     Registration must run from the signed parent app in /Applications. Homework-

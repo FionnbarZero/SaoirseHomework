@@ -9,7 +9,7 @@ import test from 'node:test'
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const builder = join(projectRoot, 'guardian', 'deployment', 'build-production-app.mjs')
 
-test('production builder assembles an unsigned, non-installable SMAppService review app', {
+test('production builder assembles an unsigned, non-production SMAppService enforcement review app', {
   skip: process.platform !== 'darwin',
 }, () => {
   const directory = mkdtempSync(join(tmpdir(), 'fionnbar-production-guardian-'))
@@ -32,7 +32,8 @@ test('production builder assembles an unsigned, non-installable SMAppService rev
     const release = JSON.parse(readFileSync(`${output}.release.json`, 'utf8'))
     assert.equal(release.installReady, false)
     assert.equal(release.signingReady, false)
-    assert.equal(release.enforcementIncluded, false)
+    assert.equal(release.enforcementIncluded, true)
+    assert.equal(release.productionReady, false)
 
     const security = JSON.parse(readFileSync(join(
       output,
@@ -41,7 +42,11 @@ test('production builder assembles an unsigned, non-installable SMAppService rev
       'guardian-security.json',
     ), 'utf8'))
     assert.equal(security.sharedSecret, false)
-    assert.equal(security.enforcementIncluded, false)
+    assert.equal(security.enforcementIncluded, true)
+    assert.equal(security.policyAuthority, 'privileged-daemon')
+    assert.equal(security.protocolVersion, 3)
+    assert.equal(security.childSessionStart, 'signed-agent-restrictive-only')
+    assert.equal(security.completionAuthority, 'daemon-capability-plus-service-proof')
     assert.deepEqual(security.allowedDaemonClients, [
       'com.fionnbar.homework.parent',
       'com.fionnbar.homework.guardian.agent',

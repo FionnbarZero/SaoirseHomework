@@ -23,6 +23,34 @@ type StateResponse = {
   meta: ServiceMeta
 }
 
+export type GuardianCompletionProof = {
+  serviceSessionId: string
+  weekId: string
+  day: string
+  eligibleAt: string
+  requiredCompleted: number
+  requiredTarget: number
+  optionalCompleted: number
+  optionalTarget: number
+}
+
+export type GuardianLifecycle = {
+  mode: 'inactive' | 'homework' | 'free'
+  session: null | {
+    serviceSessionId: string
+    weekId: string
+    day: string
+    status: 'requested' | 'completion-eligible'
+    startedAt: string
+    completionProof: GuardianCompletionProof | null
+  }
+  serviceTime: string
+}
+
+type LearningSessionResponse = StateResponse & {
+  lifecycle: GuardianLifecycle
+}
+
 export type ParentAuthorizationStatus = {
   configured: boolean
   guardianConnected: boolean
@@ -155,6 +183,10 @@ export function saveStateToService(state: AppState) {
     method: 'PUT',
     body: JSON.stringify({ state }),
   })
+}
+
+export function startLearningSession() {
+  return request<LearningSessionResponse>('/api/learning-session/start', { method: 'POST' })
 }
 
 export function saveActivityConfiguration(configuration: ActivityConfiguration) {

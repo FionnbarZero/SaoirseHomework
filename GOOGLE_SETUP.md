@@ -65,6 +65,6 @@ Open `http://127.0.0.1:4179`, go to the Parent screen, save the school recipient
 
 Use **Revoke Google access** to call Google's revoke endpoint and delete the Keychain token. Delivery history and local PDFs are retained for the audit trail.
 
-## Readiness limitation
+## Writing eligibility
 
-Live delivery includes only drafts whose review status is `complete`. The current writing flow ends at `spelling-pending`, so no production writing will leave the Mac until the spelling-practice module is implemented and explicitly advances a draft to `complete`. This is intentional fail-closed behavior.
+Live delivery includes only drafts whose review status is `complete`. A draft reaches that state only after every supported grammar, punctuation, capitalization, and spelling exercise is finished. Unknown words are not guessed or silently corrected; the spelling adapter creates mandatory practice only for its reviewed common-misspelling list.

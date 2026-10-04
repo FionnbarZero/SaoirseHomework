@@ -53,6 +53,13 @@ import {
   writingReviewStatus,
 } from './writing'
 import {
+  applyCompletedSpellingCorrections,
+  completedSpellingSteps,
+  inspectSpelling,
+  nextSpellingStep,
+  submitSpellingAnswer,
+} from './spelling'
+import {
   acknowledgeControlledSession,
   beginLiveGoogleAuthorization,
   connectMockGoogle,
@@ -866,14 +873,22 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   const [showReview, setShowReview] = useState(false)
   const [reviewDraftId, setReviewDraftId] = useState<string | null>(latest?.id ?? null)
   const [answerMessage, setAnswerMessage] = useState('')
+  const [spellingAnswer, setSpellingAnswer] = useState('')
   const analysis = useMemo(() => ({
     findings: inspectDraft(body, state.writingDictionary),
     reviewItems: inspectAmbiguousDraft(body),
+    spellingWords: inspectSpelling(body, state.writingDictionary),
   }), [body, state.writingDictionary])
   const findings = analysis.findings
   const reviewDraft = state.drafts.find((draft) => draft.id === reviewDraftId)
   const reviewFindings = reviewDraft?.findings ?? findings
   const reviewProgress = reviewDraft?.exerciseProgress ?? {}
+  const legacySpellingNeedsAnalysis = reviewDraft?.reviewStatus === 'spelling-pending' &&
+    (reviewDraft.spellingWords?.length ?? 0) === 0
+  const reviewSpellingWords = legacySpellingNeedsAnalysis && reviewDraft
+    ? inspectSpelling(reviewDraft.body, state.writingDictionary)
+    : reviewDraft?.spellingWords ?? analysis.spellingWords
+  const reviewSpellingProgress = reviewDraft?.spellingProgress ?? {}
   const activeFinding = reviewFindings.find((finding) => {
     const progress = reviewProgress[finding.id]
     return !progress?.correctionComplete || progress.practiceCompleted < finding.practice.length
@@ -886,15 +901,47 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
       ? activeFinding.practice[activeProgress.practiceCompleted]
       : activeFinding.correction
     : null
+  const activeSpellingStep = activeFinding ? null : nextSpellingStep(reviewSpellingWords, reviewSpellingProgress)
+  const activeSpellingWord = activeSpellingStep
+    ? reviewSpellingWords.find((word) => word.id === activeSpellingStep.wordId)
+    : null
   const totalExerciseSteps = reviewFindings.length * 6
   const completedExerciseSteps = reviewFindings.reduce((total, finding) => {
     const progress = reviewProgress[finding.id]
     return total + (progress?.correctionComplete ? 1 : 0) + Math.min(5, progress?.practiceCompleted ?? 0)
   }, 0)
+  const totalSpellingSteps = reviewSpellingWords.length * 9
+  const spellingStepsComplete = completedSpellingSteps(reviewSpellingWords, reviewSpellingProgress)
 
   useEffect(() => {
     setAnswerMessage('')
-  }, [activeTrial?.id])
+    setSpellingAnswer('')
+  }, [activeTrial?.id, activeSpellingStep?.wordId, activeSpellingStep?.phase, activeSpellingStep?.attempt])
+
+  useEffect(() => {
+    if (!showReview || !reviewDraft || !legacySpellingNeedsAnalysis) return
+    const migratedStatus = writingReviewStatus(
+      reviewFindings,
+      reviewProgress,
+      reviewSpellingWords,
+      reviewSpellingProgress,
+    )
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+        ? { ...draft, spellingWords: reviewSpellingWords, spellingProgress: {}, reviewStatus: migratedStatus }
+        : draft),
+    }))
+  }, [
+    legacySpellingNeedsAnalysis,
+    reviewDraft,
+    reviewFindings,
+    reviewProgress,
+    reviewSpellingProgress,
+    reviewSpellingWords,
+    setState,
+    showReview,
+  ])
 
   const save = () => {
     if (!title.trim() && !body.trim()) return
@@ -906,7 +953,9 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
       updatedAt: new Date().toISOString(),
       findings,
       exerciseProgress: {},
-      reviewStatus: findings.length ? 'practice' : 'spelling-pending',
+      spellingWords: analysis.spellingWords,
+      spellingProgress: {},
+      reviewStatus: writingReviewStatus(findings, {}, analysis.spellingWords, {}),
     }
     const createdAt = new Date().toISOString()
     setState((current) => {
@@ -939,7 +988,12 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
     const correct = choice === activeTrial.correctAnswer
     const nextItem = advanceFindingProgress(activeProgress, correct, activeFinding.practice.length)
     const nextProgress = { ...reviewProgress, [activeFinding.id]: nextItem }
-    const correctedBody = applyCompletedCorrections(reviewDraft.body, reviewFindings, nextProgress)
+    const grammarCorrected = applyCompletedCorrections(reviewDraft.body, reviewFindings, nextProgress)
+    const correctedBody = applyCompletedSpellingCorrections(
+      grammarCorrected,
+      reviewSpellingWords,
+      reviewSpellingProgress,
+    )
     setState((current) => ({
       ...current,
       drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
@@ -947,12 +1001,67 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
             ...draft,
             correctedBody,
             exerciseProgress: nextProgress,
-            reviewStatus: writingReviewStatus(reviewFindings, nextProgress),
+            spellingWords: reviewSpellingWords,
+            spellingProgress: reviewSpellingProgress,
+            reviewStatus: writingReviewStatus(
+              reviewFindings,
+              nextProgress,
+              reviewSpellingWords,
+              reviewSpellingProgress,
+            ),
             updatedAt: new Date().toISOString(),
           }
         : draft),
     }))
     setAnswerMessage(correct ? 'Correct! Keep going.' : 'Try again. That answer does not advance your practice count.')
+  }
+
+  const speakSpellingWord = () => {
+    if (!activeSpellingWord || !('speechSynthesis' in window)) {
+      setAnswerMessage('Speech is unavailable on this Mac. Ask a parent to read the word aloud.')
+      return
+    }
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(activeSpellingWord.correctWord)
+    utterance.rate = 0.78
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const submitSpelling = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!reviewDraft || !activeSpellingStep || !activeSpellingWord || !spellingAnswer.trim()) return
+    const result = submitSpellingAnswer(
+      reviewSpellingWords,
+      reviewSpellingProgress,
+      activeSpellingStep,
+      spellingAnswer,
+    )
+    const grammarCorrected = applyCompletedCorrections(reviewDraft.body, reviewFindings, reviewProgress)
+    const correctedBody = applyCompletedSpellingCorrections(
+      grammarCorrected,
+      reviewSpellingWords,
+      result.progress,
+    )
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+        ? {
+            ...draft,
+            correctedBody,
+            spellingWords: reviewSpellingWords,
+            spellingProgress: result.progress,
+            reviewStatus: writingReviewStatus(
+              reviewFindings,
+              reviewProgress,
+              reviewSpellingWords,
+              result.progress,
+            ),
+            updatedAt: new Date().toISOString(),
+          }
+        : draft),
+    }))
+    setAnswerMessage(result.correct ? 'Correct! That spelling response counts.' : 'Try again. Listen once more—the counter did not advance.')
+    if (result.correct) setSpellingAnswer('')
   }
 
   return (
@@ -983,6 +1092,7 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
               <div className="review-category"><span>✓</span><p><strong>Grammar</strong><small>Agreement, articles, and basic tense</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
+              <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Reviewed common misspellings only</small></p></div>
               <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>Save & check my writing</button>
             </div>
           ) : activeFinding && activeTrial ? (
@@ -1002,19 +1112,47 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
               {answerMessage && <p className={answerMessage.startsWith('Correct') ? 'answer-message correct' : 'answer-message'} aria-live="polite">{answerMessage}</p>}
               <button className="text-button" onClick={() => setShowReview(false)}>Return to draft</button>
             </div>
+          ) : activeSpellingStep && activeSpellingWord ? (
+            <form className="writing-exercise spelling-exercise" onSubmit={submitSpelling}>
+              <div className="exercise-progress">
+                <span>{spellingStepsComplete} of {totalSpellingSteps} spelling responses</span>
+                <div><i style={{ width: `${totalSpellingSteps ? (spellingStepsComplete / totalSpellingSteps) * 100 : 100}%` }} /></div>
+              </div>
+              <small className="exercise-category">Spelling · {activeSpellingStep.phase === 'copy' ? 'show & copy' : activeSpellingStep.phase === 'hidden' ? 'hide & spell' : 'mixed review'} · {activeSpellingStep.attempt} of 3</small>
+              <h4>{activeSpellingStep.prompt}</h4>
+              <button className="speak-word-button" type="button" onClick={speakSpellingWord}><Volume2 size={17} /> Hear the word</button>
+              <div className={activeSpellingStep.visible ? 'spelling-word visible' : 'spelling-word hidden'} aria-label={activeSpellingStep.visible ? activeSpellingWord.correctWord : 'Word hidden'}>
+                {activeSpellingStep.visible ? activeSpellingWord.correctWord : '••••••'}
+              </div>
+              <label className="spelling-answer">
+                <span>Type the word</span>
+                <input
+                  value={spellingAnswer}
+                  onChange={(event) => setSpellingAnswer(event.target.value)}
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  autoComplete="off"
+                  aria-label="Spelling answer"
+                />
+              </label>
+              <button className="primary-button full-button" type="submit" disabled={!spellingAnswer.trim()}>Check spelling</button>
+              {answerMessage && <p className={answerMessage.startsWith('Correct') ? 'answer-message correct' : 'answer-message'} aria-live="polite">{answerMessage}</p>}
+              <button className="text-button" type="button" onClick={() => setShowReview(false)}>Return to draft</button>
+            </form>
           ) : (
             <div className="writing-complete">
               <span><Check size={24} /></span>
-              <h3>{reviewFindings.length ? 'Correction practice complete!' : 'No supported issues found.'}</h3>
+              <h3>{reviewFindings.length || reviewSpellingWords.length ? 'Writing practice complete!' : 'No supported issues found.'}</h3>
               <p>Your untouched original and corrected copy are saved separately.</p>
               {reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
-              <div className="spelling-pending"><LockKeyhole size={16} /><p><strong>Spelling is still pending.</strong> Writing cannot be marked complete until the supplied spelling-practice module is integrated.</p></div>
+              <div className="spelling-complete"><Check size={16} /><p><strong>Ready for Friday delivery.</strong> Every supported correction and spelling exercise is complete.</p></div>
               <button className="secondary-button full-button" onClick={() => setShowReview(false)}>Keep writing</button>
             </div>
           )}
         </aside>
       </div>
-      <div className="integration-note"><Clock3 size={19} /><div><strong>Friday delivery is still in safe test mode.</strong><p>The Parent screen can generate a local document and PDF proof. Real Google authorization and the spelling-practice module are still required before writing can be sent.</p></div></div>
+      <div className="integration-note"><Clock3 size={19} /><div><strong>Completed writing is ready for Friday.</strong><p>Safe test mode stays local. When a parent enables and authorizes live Google delivery, only writing that finishes every supported exercise can be sent.</p></div></div>
     </section>
   )
 }

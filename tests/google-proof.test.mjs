@@ -24,6 +24,11 @@ test('safe Google proof creates a real PDF and an escaped local document', async
         correctedBody: 'Today I wrote a great story.\nIt has two paragraphs.',
         findings: [{ id: 'grammar-1', category: 'Grammar' }],
         exerciseProgress: { 'grammar-1': { correctionComplete: true, practiceCompleted: 5 } },
+        spellingWords: [{ id: 'spelling-story', word: 'storry', correctWord: 'story', occurrences: 1 }],
+        spellingProgress: {
+          'spelling-story': { copyCompleted: 3, hiddenCompleted: 3, mixedCompleted: 3, incorrectAttempts: 1 },
+        },
+        reviewStatus: 'complete',
         updatedAt: '2026-10-03T16:00:00.000Z',
       }],
       generatedAt: new Date('2026-10-03T16:00:00.000Z'),
@@ -38,6 +43,7 @@ test('safe Google proof creates a real PDF and an escaped local document', async
     assert.match(document, /Corrected copy/)
     assert.match(document, /Today I wrote a great story/)
     assert.match(document, /6 of 6 correction and practice steps completed/)
+    assert.match(document, /9 of 9 spelling-practice responses completed/)
     assert.doesNotMatch(document, /<h2>The <Great>/)
     assert.match(document, /No Google account, Drive file, share, or email was created/)
   } finally {

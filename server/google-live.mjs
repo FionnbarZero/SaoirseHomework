@@ -90,6 +90,14 @@ export function buildWeeklyDocumentText(delivery, drafts) {
       0,
     )
     const totalSteps = (draft.findings ?? []).length * 6
+    const spellingWords = draft.spellingWords ?? []
+    const spellingSteps = spellingWords.reduce((total, word) => {
+      const item = draft.spellingProgress?.[word.id]
+      return total + Math.min(3, Number(item?.copyCompleted) || 0) +
+        Math.min(3, Number(item?.hiddenCompleted) || 0) +
+        Math.min(3, Number(item?.mixedCompleted) || 0)
+    }, 0)
+    const spellingTotal = spellingWords.length * 9
     sections.push(
       draft.title || 'Untitled writing',
       `Completed ${new Date(draft.updatedAt).toLocaleDateString('en-US', { timeZone: 'UTC' })}`,
@@ -100,7 +108,10 @@ export function buildWeeklyDocumentText(delivery, drafts) {
       'Corrected copy',
       draft.correctedBody || draft.body,
       '',
-      `Practice summary: ${completeSteps} of ${totalSteps} correction and practice steps completed.`,
+      `Practice summary: ${completeSteps} of ${totalSteps} grammar, punctuation, and capitalization steps completed. ` +
+        (spellingWords.length
+          ? `${spellingSteps} of ${spellingTotal} spelling responses completed for ${spellingWords.length} ${spellingWords.length === 1 ? 'word' : 'words'}.`
+          : 'No supported common misspellings were detected.'),
       '',
       '────────────────────────────────────────',
       '',

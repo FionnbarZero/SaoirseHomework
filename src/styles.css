@@ -303,6 +303,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .spelling-pending { margin: 12px 0; padding: 11px; display: flex; align-items: flex-start; gap: 8px; border-radius: 11px; color: #80672e; background: #f6edd5; text-align: left; }
 .spelling-pending svg { flex: 0 0 auto; }
 .spelling-pending p { margin: 0; font-size: 9px; line-height: 1.45; }
+.spelling-complete { margin: 12px 0; padding: 11px; display: flex; align-items: flex-start; gap: 8px; border-radius: 11px; color: #336d64; background: #e3efeb; text-align: left; }
+.spelling-complete svg { flex: 0 0 auto; }
+.spelling-complete p { margin: 0; font-size: 9px; line-height: 1.45; }
+.spelling-exercise { display: grid; gap: 11px; }
+.spelling-exercise .exercise-progress { margin-bottom: 7px; }
+.spelling-exercise h4 { margin: 0; }
+.speak-word-button { width: 100%; border: 1px solid #c7d8d3; border-radius: 11px; padding: 10px; display: flex; align-items: center; justify-content: center; gap: 7px; color: #336d64; background: #edf4f1; font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+.spelling-word { min-height: 54px; border-radius: 11px; display: grid; place-items: center; font-family: Georgia, serif; font-size: 22px; letter-spacing: .05em; }
+.spelling-word.visible { color: #283733; background: #f4eddc; }
+.spelling-word.hidden { color: #8b918d; background: #efede7; letter-spacing: .16em; }
+.spelling-answer { display: grid; gap: 6px; text-align: left; }
+.spelling-answer > span { color: #737b77; font-size: 8px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.spelling-answer input { width: 100%; border: 1px solid #d6d0c5; border-radius: 10px; padding: 11px; color: var(--ink); background: white; font: inherit; font-family: Georgia, serif; font-size: 16px; text-align: center; }
 
 .rewards-hero { padding: 30px; border-radius: 23px; display: flex; align-items: center; justify-content: space-between; color: white; background: #315f58; position: relative; overflow: hidden; }
 .rewards-hero::after { content: "★"; position: absolute; right: 180px; bottom: -45px; color: rgba(255,255,255,.05); font-size: 180px; }

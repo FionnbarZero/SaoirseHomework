@@ -1,4 +1,5 @@
-import type { Finding, FindingProgress, WritingDictionary, WritingTrial } from './domain'
+import type { Finding, FindingProgress, SpellingProgress, SpellingWord, WritingDictionary, WritingTrial } from './domain'
+import { spellingPracticeComplete } from './spelling.ts'
 
 type Category = Finding['category']
 
@@ -413,10 +414,14 @@ export function advanceFindingProgress(
 export function writingReviewStatus(
   findings: Finding[],
   progress: Record<string, FindingProgress>,
-): 'practice' | 'spelling-pending' {
+  spellingWords?: SpellingWord[],
+  spellingProgress: Record<string, SpellingProgress> = {},
+): 'practice' | 'spelling-pending' | 'complete' {
   const complete = findings.every((finding) => {
     const item = progress[finding.id]
     return item?.correctionComplete && item.practiceCompleted >= finding.practice.length
   })
-  return complete ? 'spelling-pending' : 'practice'
+  if (!complete) return 'practice'
+  if (!spellingWords) return 'spelling-pending'
+  return spellingPracticeComplete(spellingWords, spellingProgress) ? 'complete' : 'spelling-pending'
 }

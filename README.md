@@ -29,8 +29,9 @@ npm run build
 - Cumulative 13-session weekly practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
-- Local writing drafts with deterministic grammar, capitalization, and punctuation checks
+- Local writing drafts with deterministic grammar, capitalization, punctuation, and reviewed common-misspelling checks
 - One original-sentence correction plus five three-choice practice trials for every supported finding
+- Restart-safe spelling practice with three visible copies, three hidden responses, and three mixed-review responses per word
 - Restart-safe exercise progress, unchanged original drafts, and separately persisted corrected copies
 - Parent-editable capitalization dictionaries for known names and places
 - Persistent, non-blocking parent review queue for ambiguous repeated-word, tense, and run-on suggestions
@@ -78,7 +79,6 @@ The UI labels the following honestly as pending because they require external in
 - Chrome Web Store publication and parent-installed policy on the second Mac
 - The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
 - Parent-created Google Cloud credentials and Family Link approval for the implemented live Google delivery path
-- Existing spelling-practice module
 
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
 
@@ -90,6 +90,6 @@ To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its l
 
 The Parent screen's Google delivery proof remains deliberately local and is the default. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`.
 
-The live path is implemented but fail-closed until explicitly configured. It uses Authorization Code with PKCE, a loopback callback, macOS Keychain refresh-token storage, `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The existing spelling-practice milestone must mark writing `complete` before any draft is eligible for live delivery.
+The live path is implemented but fail-closed until explicitly configured. It uses Authorization Code with PKCE, a loopback callback, macOS Keychain refresh-token storage, `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The writing flow marks a draft `complete` only after every supported correction and spelling response is finished; only complete drafts are eligible for live delivery.
 
 Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

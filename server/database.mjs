@@ -3,11 +3,17 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  applyCompletedSpellingCorrections,
+  inspectSpelling,
+  spellingPracticeComplete,
+} from '../src/spelling.ts'
+import { applyCompletedCorrections, inspectDraft } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 12
+const SCHEMA_VERSION = 13
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -276,6 +282,8 @@ export function createStore(filename, options = {}) {
       corrected_body TEXT,
       findings_json TEXT NOT NULL,
       exercise_progress_json TEXT NOT NULL DEFAULT '{}',
+      spelling_words_json TEXT NOT NULL DEFAULT '[]',
+      spelling_progress_json TEXT NOT NULL DEFAULT '{}',
       review_status TEXT NOT NULL DEFAULT 'draft',
       updated_at TEXT NOT NULL
     );
@@ -470,6 +478,8 @@ export function createStore(filename, options = {}) {
   ensureColumn('game_session', 'week_id', 'TEXT')
   ensureColumn('writing_submission', 'corrected_body', 'TEXT')
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
+  ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn('writing_submission', 'spelling_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'review_status', "TEXT NOT NULL DEFAULT 'draft'")
 
   const setMeta = db.prepare(`
@@ -497,8 +507,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
-      id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      id, title, body, corrected_body, findings_json, exercise_progress_json,
+      spelling_words_json, spelling_progress_json, review_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -929,7 +940,8 @@ export function createStore(filename, options = {}) {
 
     state.drafts = db
       .prepare(`
-        SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+        SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
+               spelling_words_json, spelling_progress_json, review_status, updated_at
         FROM writing_submission ORDER BY updated_at DESC
       `)
       .all()
@@ -940,6 +952,8 @@ export function createStore(filename, options = {}) {
         correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
         exerciseProgress: safeJson(row.exercise_progress_json, {}),
+        spellingWords: safeJson(row.spelling_words_json, []),
+        spellingProgress: safeJson(row.spelling_progress_json, {}),
         reviewStatus: row.review_status ?? 'draft',
         updatedAt: row.updated_at,
       }))
@@ -1020,12 +1034,40 @@ export function createStore(filename, options = {}) {
       }
 
       for (const draft of state.drafts) {
+        const body = String(draft.body ?? '')
+        const dictionary = normalizeWritingDictionary(state.writingDictionary)
+        const findings = inspectDraft(body, dictionary)
+        const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
+          ? draft.exerciseProgress
+          : {}
+        const spellingWords = inspectSpelling(body, dictionary)
+        const spellingProgress = draft.spellingProgress && typeof draft.spellingProgress === 'object'
+          ? draft.spellingProgress
+          : {}
+        const grammarComplete = findings.every((finding) => {
+          const progress = exerciseProgress[finding.id]
+          return progress?.correctionComplete === true &&
+            Number(progress.practiceCompleted) >= finding.practice.length
+        })
+        const reviewStatus = !grammarComplete
+          ? 'practice'
+          : spellingPracticeComplete(spellingWords, spellingProgress)
+            ? 'complete'
+            : 'spelling-pending'
+        const grammarCorrected = applyCompletedCorrections(body, findings, exerciseProgress)
+        const correctedBody = applyCompletedSpellingCorrections(
+          grammarCorrected,
+          spellingWords,
+          spellingProgress,
+        )
         insertDraft.run(
-          String(draft.id), String(draft.title ?? 'Untitled writing'), String(draft.body ?? ''),
-          String(draft.correctedBody ?? draft.body ?? ''),
-          JSON.stringify(Array.isArray(draft.findings) ? draft.findings : []),
-          JSON.stringify(draft.exerciseProgress && typeof draft.exerciseProgress === 'object' ? draft.exerciseProgress : {}),
-          ['draft', 'practice', 'spelling-pending', 'complete'].includes(draft.reviewStatus) ? draft.reviewStatus : 'draft',
+          String(draft.id), String(draft.title ?? 'Untitled writing'), body,
+          correctedBody,
+          JSON.stringify(findings),
+          JSON.stringify(exerciseProgress),
+          JSON.stringify(spellingWords),
+          JSON.stringify(spellingProgress),
+          reviewStatus,
           String(draft.updatedAt ?? now),
         )
       }
@@ -1643,7 +1685,8 @@ export function createStore(filename, options = {}) {
     const idempotencyKey = `${weekId}:${documentId}`
     const existing = db.prepare('SELECT * FROM google_delivery WHERE idempotency_key = ?').get(idempotencyKey)
     const draftRows = db.prepare(`
-      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
+             spelling_words_json, spelling_progress_json, review_status, updated_at
       FROM writing_submission
       WHERE length(trim(body)) > 0
       ORDER BY updated_at
@@ -1655,6 +1698,8 @@ export function createStore(filename, options = {}) {
       correctedBody: row.corrected_body ?? row.body,
       findings: safeJson(row.findings_json, []),
       exerciseProgress: safeJson(row.exercise_progress_json, {}),
+      spellingWords: safeJson(row.spelling_words_json, []),
+      spellingProgress: safeJson(row.spelling_progress_json, {}),
       reviewStatus: row.review_status ?? 'draft',
       updatedAt: row.updated_at,
     }))
@@ -1895,7 +1940,8 @@ export function createStore(filename, options = {}) {
 
   function completedWritingSnapshots() {
     return db.prepare(`
-      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json,
+             spelling_words_json, spelling_progress_json, review_status, updated_at
       FROM writing_submission
       WHERE review_status = 'complete' AND length(trim(body)) > 0
       ORDER BY updated_at
@@ -1906,6 +1952,8 @@ export function createStore(filename, options = {}) {
       correctedBody: row.corrected_body ?? row.body,
       findings: safeJson(row.findings_json, []),
       exerciseProgress: safeJson(row.exercise_progress_json, {}),
+      spellingWords: safeJson(row.spelling_words_json, []),
+      spellingProgress: safeJson(row.spelling_progress_json, {}),
       reviewStatus: row.review_status,
       updatedAt: row.updated_at,
     }))

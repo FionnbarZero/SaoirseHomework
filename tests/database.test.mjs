@@ -26,11 +26,15 @@ function sampleState() {
     drafts: [{
       id: 'draft-1',
       title: 'A test draft',
-      body: 'Today I tested persistence.',
-      correctedBody: 'Today I tested persistence.',
+      body: 'Today I recieve a persistence test.',
+      correctedBody: 'Today I recieve a persistence test.',
       updatedAt: '2026-10-03T07:00:00.000Z',
       findings: [],
       exerciseProgress: { example: { correctionComplete: true, practiceCompleted: 5, incorrectAttempts: 1 } },
+      spellingWords: [{ id: 'spelling-recieve-receive', word: 'recieve', correctWord: 'receive', occurrences: 1 }],
+      spellingProgress: {
+        'spelling-recieve-receive': { copyCompleted: 3, hiddenCompleted: 2, mixedCompleted: 0, incorrectAttempts: 1 },
+      },
       reviewStatus: 'spelling-pending',
     }],
     writingDictionary: { knownNames: ['Fionnbar', 'Ms. Rivera'], knownPlaces: ['San Francisco'] },
@@ -77,15 +81,17 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.deepEqual(restored.optionalCompleted, ['voena:0'])
     assert.equal(restored.rewardCredits[0].remainingSeconds, 300)
     assert.equal(restored.drafts[0].title, 'A test draft')
-    assert.equal(restored.drafts[0].correctedBody, 'Today I tested persistence.')
+    assert.equal(restored.drafts[0].correctedBody, 'Today I recieve a persistence test.')
     assert.equal(restored.drafts[0].exerciseProgress.example.practiceCompleted, 5)
+    assert.equal(restored.drafts[0].spellingWords[0].correctWord, 'receive')
+    assert.equal(restored.drafts[0].spellingProgress['spelling-recieve-receive'].hiddenCompleted, 2)
     assert.equal(restored.drafts[0].reviewStatus, 'spelling-pending')
     assert.deepEqual(restored.writingDictionary.knownPlaces, ['San Francisco'])
     assert.equal(restored.writingReviewQueue[0].status, 'pending')
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 12)
+    assert.equal(reopened.info().schemaVersion, 13)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -783,6 +789,31 @@ test('mock Google proof records a duplicate-safe skip when no writing exists', (
   store.close()
 })
 
+test('the service recomputes writing completion instead of trusting browser status', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.drafts[0] = {
+    ...state.drafts[0],
+    body: 'today i recieve a letter',
+    correctedBody: 'A spoofed completed copy.',
+    findings: [],
+    exerciseProgress: {},
+    spellingWords: [],
+    spellingProgress: {},
+    reviewStatus: 'complete',
+  }
+  const saved = store.saveState(state)
+  const draft = saved.drafts[0]
+
+  assert.equal(draft.reviewStatus, 'practice')
+  assert.deepEqual(draft.findings.map((finding) => finding.ruleId), [
+    'sentence-capital', 'pronoun-i', 'terminal-punctuation',
+  ])
+  assert.equal(draft.spellingWords[0].word, 'recieve')
+  assert.equal(draft.correctedBody, draft.body)
+  store.close()
+})
+
 test('live Google delivery snapshots complete writing and remains duplicate-safe', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', {
@@ -791,6 +822,9 @@ test('live Google delivery snapshots complete writing and remains duplicate-safe
   })
   const state = sampleState()
   state.drafts[0].reviewStatus = 'complete'
+  state.drafts[0].spellingProgress['spelling-recieve-receive'] = {
+    copyCompleted: 3, hiddenCompleted: 3, mixedCompleted: 3, incorrectAttempts: 1,
+  }
   store.saveState(state)
   store.configureLiveGoogle({ recipient: 'Teacher@School.org' })
   store.connectLiveGoogle({
@@ -836,6 +870,9 @@ test('live Google failures receive an exponential retry time and can be manually
   })
   const state = sampleState()
   state.drafts[0].reviewStatus = 'complete'
+  state.drafts[0].spellingProgress['spelling-recieve-receive'] = {
+    copyCompleted: 3, hiddenCompleted: 3, mixedCompleted: 3, incorrectAttempts: 1,
+  }
   store.saveState(state)
   store.connectLiveGoogle({ accountEmail: 'fionnbar@example.com', scopes: [] })
   store.configureLiveGoogle({ recipient: 'teacher@school.org' })

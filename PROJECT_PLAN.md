@@ -249,12 +249,12 @@ Each rule requires reviewed positive examples, distractors, and regression tests
 - Punctuation: use the same original-error plus five-practice-trials model.
 - Capitalization: show three versions with different capitalization; after the correct selection, require five similar trials.
 - Incorrect answers receive immediate feedback and do not advance the five-trial counter.
-- Spelling uses the separately developed show/copy and hide/respond module through an adapter:
+- Spelling uses the local show/copy and hide/respond module through an adapter:
   1. Hear and see the word, then copy it three times.
   2. Hear the hidden word, then type it correctly three times.
   3. Complete a mixed hidden review of every misspelled word three times.
 - The writing task completes only after every supported correction exercise completes.
-- Until the spelling module is supplied and integrated, the writing feature remains pre-release rather than silently ignoring spelling errors.
+- Spelling detection stays conservative: only reviewed common misspellings generate mandatory practice, and unknown words are never guessed.
 
 ## 9. Google document and Friday delivery
 
@@ -418,7 +418,7 @@ Default retention:
 - Confirm each original supported error produces one correction plus five practice trials.
 - Confirm incorrect choices do not advance the counter.
 - Confirm original drafts remain unchanged and corrected drafts contain only accepted changes.
-- Run the supplied spelling module's regression tests before enabling writing completion.
+- Run the spelling adapter's regression tests before enabling writing completion.
 
 ### Google and Chrome
 
@@ -432,7 +432,6 @@ Default retention:
 - The 5th Grade Learning Hub entry URL and required redirect origins.
 - The Du Chinese reading and flashcard URLs.
 - The Clever login, district identity-provider, and Level Learning origins.
-- The existing modular spelling-practice code.
 - The school delivery email address.
 - Access to the second Mac for child-account, guardian, and Chrome-policy testing.
 - Parent approval of the homework app in Family Link's third-party app controls.

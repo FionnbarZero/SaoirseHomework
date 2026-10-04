@@ -43,12 +43,29 @@ function practiceSummary(draft) {
   }, 0)
   const total = draft.findings.length * 6
   const categories = [...new Set(draft.findings.map((finding) => finding.category))]
+  const spellingWords = Array.isArray(draft.spellingWords) ? draft.spellingWords : []
+  const spellingProgress = draft.spellingProgress && typeof draft.spellingProgress === 'object'
+    ? draft.spellingProgress
+    : {}
+  const spellingCompleted = spellingWords.reduce((total, word) => {
+    const item = spellingProgress[word.id]
+    return total + Math.min(3, Number(item?.copyCompleted) || 0) +
+      Math.min(3, Number(item?.hiddenCompleted) || 0) +
+      Math.min(3, Number(item?.mixedCompleted) || 0)
+  }, 0)
+  const spellingTotal = spellingWords.length * 9
+  const spellingText = draft.reviewStatus === 'complete'
+    ? spellingWords.length
+      ? `${spellingCompleted} of ${spellingTotal} spelling-practice responses completed for ${spellingWords.length} ${spellingWords.length === 1 ? 'word' : 'words'}.`
+      : 'No supported common misspellings were detected.'
+    : 'Spelling practice is not complete.'
   return {
     completed,
     total,
     text: draft.findings.length
       ? `${completed} of ${total} correction and practice steps completed across ${categories.join(', ').toLowerCase()}.`
       : 'No supported grammar, punctuation, or capitalization findings were detected.',
+    spellingText,
   }
 }
 
@@ -64,7 +81,7 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
       <div class="body">${escapeHtml(draft.body).replaceAll('\n', '<br />')}</div>
       <h3>Corrected copy</h3>
       <div class="body corrected">${escapeHtml(draft.correctedBody ?? draft.body).replaceAll('\n', '<br />')}</div>
-      <p class="practice">${escapeHtml(summary.text)} Spelling practice remains pending until its module is integrated.</p>
+      <p class="practice">${escapeHtml(summary.text)} ${escapeHtml(summary.spellingText)}</p>
     </section>
   `
   }).join('')
@@ -185,7 +202,7 @@ async function writePdf(path, details) {
       pdf.moveDown(0.9)
       pdf.font('Helvetica-Oblique').fontSize(8).fillColor(COLORS.muted)
         .text(
-          `${summary.text} Spelling practice remains pending until its module is integrated.`,
+          `${summary.text} ${summary.spellingText}`,
           { lineGap: 2 },
         )
       pdf.moveDown(1.4)

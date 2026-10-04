@@ -48,7 +48,8 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
   const text = buildWeeklyDocumentText(delivery, drafts)
   assert.match(text, /Original\nthe original/)
   assert.match(text, /Corrected copy\nThe original\./)
-  assert.match(text, /6 of 6 correction and practice steps completed/)
+  assert.match(text, /6 of 6 grammar, punctuation, and capitalization steps completed/)
+  assert.match(text, /No supported common misspellings were detected/)
   assert.equal(schoolYearForWeek('2026-09-28'), '2026-2027')
 
   const raw = buildGmailRawMessage({

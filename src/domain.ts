@@ -59,6 +59,20 @@ export type FindingProgress = {
   incorrectAttempts: number
 }
 
+export type SpellingWord = {
+  id: string
+  word: string
+  correctWord: string
+  occurrences: number
+}
+
+export type SpellingProgress = {
+  copyCompleted: number
+  hiddenCompleted: number
+  mixedCompleted: number
+  incorrectAttempts: number
+}
+
 export type WritingDictionary = {
   knownNames: string[]
   knownPlaces: string[]
@@ -83,6 +97,8 @@ export type Draft = {
   updatedAt: string
   findings: Finding[]
   exerciseProgress?: Record<string, FindingProgress>
+  spellingWords?: SpellingWord[]
+  spellingProgress?: Record<string, SpellingProgress>
   reviewStatus?: 'draft' | 'practice' | 'spelling-pending' | 'complete'
 }
 

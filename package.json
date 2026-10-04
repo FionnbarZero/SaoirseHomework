@@ -8,7 +8,7 @@
     "dev:web": "vite --host 127.0.0.1",
     "dev:server": "node server/index.mjs",
     "start": "node server/index.mjs",
-    "test": "node --test tests/domain.test.ts tests/activity-config.test.mjs tests/database.test.mjs tests/chrome-extension.test.mjs tests/google-proof.test.mjs tests/google-live.test.mjs",
+    "test": "node --test tests/domain.test.ts tests/spelling.test.ts tests/activity-config.test.mjs tests/database.test.mjs tests/chrome-extension.test.mjs tests/google-proof.test.mjs tests/google-live.test.mjs",
     "build": "tsc -b && vite build",
     "build:chrome": "node scripts/build-chrome-extension.mjs",
     "preview": "vite preview --host 127.0.0.1"

@@ -1,4 +1,59 @@
-# Guardian second-Mac deployment
+# Guardian deployment
+
+## Production security-boundary foundation
+
+Version 0.3.0 adds a reviewable parent app with the structure required by Apple's Service Management framework:
+
+- `Fionnbar Homework Parent.app` registers an embedded per-user LaunchAgent and privileged LaunchDaemon through `SMAppService`.
+- The agent and parent connect only to the daemon's named XPC service.
+- The daemon automatically rejects peers unless their code signature has the same Apple team and one of the two exact allowed identifiers.
+- The protocol exposes only status and a typed Homework-mode change. It has no generic command, path, shell, or arbitrary payload operation.
+- A mode change requires a 32-byte Authorization Services external reference. The daemon revalidates `system.privilege.admin` without allowing UI immediately before changing state.
+- Requests expire after 30 seconds, reject clock movement into the future, require a printable audit reason, and persist a bounded replay and audit log in a root-owned state file.
+- Unsigned and ad-hoc builds refuse to run, and the release report stays non-installable until every component has one hardened team signature and the app has a stapled notarization ticket.
+
+Application enforcement is intentionally not connected yet. The embedded release metadata records `enforcementIncluded: false` and the builder cannot change it.
+
+### Build a production review app
+
+From the repository root:
+
+```bash
+npm run build:guardian-app
+```
+
+This creates the app, release report, archive, and archive checksum under `guardian/build/`. With no Apple signing identity, the output is for code and bundle review only and reports `Install ready: no`.
+
+After a Developer ID Application identity and notarization profile exist, build without creating the pre-notarization archive:
+
+```bash
+node guardian/deployment/build-production-app.mjs \
+  --identity "Developer ID Application: Parent Name (TEAMID)" \
+  --no-archive
+```
+
+Submit a ZIP made with `ditto` to Apple's notary service, wait for acceptance, and staple the ticket to the app. Then create the final verified archive without rebuilding or disturbing the ticket:
+
+```bash
+node guardian/deployment/build-production-app.mjs \
+  --verify-only \
+  --output "guardian/build/Fionnbar Homework Parent.app"
+```
+
+The final report must show `Signing ready: yes`, `Notarization ready: yes`, and `Install ready: yes`. A signed daemon embedded in an app must be notarized; signing alone is not a release gate.
+
+The parent executable supports these narrow operations once the app is signed and located in `/Applications`:
+
+```bash
+"/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" --register
+"/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" --status
+"/Applications/Fionnbar Homework Parent.app/Contents/MacOS/fionnbar-homework-parent" \
+  --disable-homework --reason "Parent-authorized maintenance"
+```
+
+Registration may still require explicit daemon approval in **System Settings → General → Login Items**. Do not register this foundation on the daily-use child account until enforcement integration and the second-Mac tests below are complete.
+
+## Legacy dry-run review bundle
 
 This directory builds a reviewable macOS deployment bundle for the guardian. The bundle is deliberately limited to a signed **dry-run agent**. It cannot enable enforcement and it cannot deploy the feasibility prototype's shared secret into the child account.
 
@@ -69,14 +124,14 @@ sudo ./guardian-admin rollback \
 
 No command deletes homework data, logs, or backups. There is intentionally no force flag and no installer path that adds `--enforce`.
 
-## Next security gate
+## Remaining release gate
 
-Before this package can carry Parent authorization or application enforcement, implement and review:
+Before this package can enforce Homework mode on the daily-use child account:
 
-1. A signed parent application that registers its agent and daemon with `SMAppService`.
-2. An XPC protocol between the user-session agent and privileged daemon.
-3. Peer code-signature validation and narrow message schemas at that boundary.
-4. Administrator authorization passed as an external authorization reference and revalidated immediately before sensitive work.
-5. Signed release, upgrade, rollback, crash, logout, and child-account bypass tests on the second Mac.
+1. Move the reviewed blocked-app policy and enforcement state behind the new daemon/agent protocol without adding generic privileged operations.
+2. Connect child-initiated session start and verified session completion while retaining administrator authorization for parent-only exits and configuration changes.
+3. Obtain the Developer ID Application identity, notarize and staple the app, and confirm all three components share the expected team.
+4. Add signed upgrade and recoverable rollback handling for the app bundle.
+5. Run release, upgrade, rollback, crash, logout, sleep, restart, and child-account bypass tests on the second Mac.
 
 The current direct shared-secret flow remains a local feasibility test only.

@@ -7,9 +7,20 @@ let package = Package(
   platforms: [.macOS(.v13)],
   products: [
     .executable(name: "homework-guardian", targets: ["HomeworkGuardian"]),
+    .executable(name: "fionnbar-homework-parent", targets: ["GuardianParent"]),
+    .executable(name: "homework-guardian-agent", targets: ["GuardianAgent"]),
+    .executable(name: "homework-guardian-daemon", targets: ["GuardianDaemon"]),
+    .library(name: "GuardianXPC", targets: ["GuardianXPC"]),
   ],
   targets: [
     .executableTarget(name: "HomeworkGuardian"),
-    .testTarget(name: "HomeworkGuardianTests", dependencies: ["HomeworkGuardian"]),
+    .target(name: "GuardianXPC"),
+    .executableTarget(name: "GuardianParent", dependencies: ["GuardianXPC"]),
+    .executableTarget(name: "GuardianAgent", dependencies: ["GuardianXPC"]),
+    .executableTarget(name: "GuardianDaemon", dependencies: ["GuardianXPC"]),
+    .testTarget(
+      name: "HomeworkGuardianTests",
+      dependencies: ["HomeworkGuardian", "GuardianXPC"]
+    ),
   ]
 )

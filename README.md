@@ -42,6 +42,10 @@ npm run build
 - Enforcing-mode recovery lock when the guardian, managed Chrome, or local service fails during Homework mode
 - Checksum-protected second-Mac guardian review bundles with signed-binary, standard-user, ownership, dry-run, and secret-exclusion gates
 - Root-owned dry-run installation, health checks, recoverable uninstall, and exact-backup rollback tooling
+- `SMAppService` parent-app, user-agent, and privileged-daemon production foundation
+- Authenticated XPC pinned to one Apple team and exact parent/agent/daemon identifiers
+- Fresh, replay-protected administrator authorization references with a root-owned mode-change audit log
+- Production-app signing and notarization release reports that remain fail-closed without enforcement integration
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations
 - Five-second focus heartbeats using monotonic elapsed time
@@ -90,7 +94,7 @@ The browser does not claim to enforce applications or URLs by itself. Those cont
 
 The managed Chrome extension supplies approved-origin and YouTube playback signals for external activities and rewards. The macOS guardian remains a prototype until it is parent-installed and tested on the child account, so application-level blocking is not yet a production enforcement boundary.
 
-Parent controls now fail closed behind a native guardian authorization protocol. See [PARENT_AUTH_SETUP.md](PARENT_AUTH_SETUP.md). The native prompt and server boundary are implemented, but the guardian remains a feasibility build until its signed, parent-owned installation and second-Mac bypass testing are complete.
+Parent controls now fail closed behind a native guardian authorization protocol. See [PARENT_AUTH_SETUP.md](PARENT_AUTH_SETUP.md). The signed-process and authenticated-XPC foundation is implemented separately from the current loopback feasibility flow. It deliberately excludes enforcement until policy integration, notarization, and second-Mac bypass testing are complete.
 
 Configure tracked school activities from the Parent screen. Launch URLs must use HTTPS (loopback HTTP is accepted for local testing), and any login or redirect origins must be entered explicitly. A configured external activity still cannot start until the managed Chrome extension is connected.
 

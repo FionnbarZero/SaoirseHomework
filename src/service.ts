@@ -1,4 +1,14 @@
-import type { ActivityConfiguration, ActiveTimer, AppState, DayName, GameSession, GoogleDelivery, GoogleProofState } from './domain'
+import type {
+  ActivityConfiguration,
+  ActiveTimer,
+  AppState,
+  DayName,
+  GameSession,
+  GoogleDelivery,
+  GoogleLiveDelivery,
+  GoogleLiveState,
+  GoogleProofState,
+} from './domain'
 
 export type ServiceMeta = {
   database: string
@@ -31,6 +41,15 @@ type GoogleProofResponse = StateResponse & {
 type GoogleDeliveryResponse = StateResponse & {
   delivery: GoogleDelivery
   duplicate: boolean
+}
+
+type GoogleLiveResponse = StateResponse & {
+  googleLive: GoogleLiveState
+}
+
+type GoogleLiveDeliveryResponse = StateResponse & {
+  delivery: GoogleLiveDelivery
+  duplicate?: boolean
 }
 
 export class ServiceRequestError extends Error {
@@ -164,5 +183,40 @@ export function runMockGoogleDelivery(recipient: string) {
     method: 'POST',
     body: JSON.stringify({ recipient }),
     signal: AbortSignal.timeout(15_000),
+  })
+}
+
+export function saveLiveGoogleConfiguration(recipient: string) {
+  return request<GoogleLiveResponse>('/api/google/live/configuration', {
+    method: 'POST',
+    body: JSON.stringify({ recipient }),
+  })
+}
+
+export function beginLiveGoogleAuthorization() {
+  return request<{ authorizationUrl: string; expiresAt: string }>('/api/google/live/authorize', {
+    method: 'POST',
+  })
+}
+
+export function disconnectLiveGoogle() {
+  return request<GoogleLiveResponse>('/api/google/live/disconnect', {
+    method: 'POST',
+    signal: AbortSignal.timeout(15_000),
+  })
+}
+
+export function runLiveGoogleDelivery(recipient: string) {
+  return request<GoogleLiveDeliveryResponse>('/api/google/live/deliveries', {
+    method: 'POST',
+    body: JSON.stringify({ recipient }),
+    signal: AbortSignal.timeout(90_000),
+  })
+}
+
+export function retryLiveGoogleDelivery(deliveryId: string) {
+  return request<GoogleLiveDeliveryResponse>(`/api/google/live/deliveries/${encodeURIComponent(deliveryId)}/retry`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(90_000),
   })
 }

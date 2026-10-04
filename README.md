@@ -51,6 +51,10 @@ npm run build
 - Persistent safe-mode Google connection and weekly delivery records
 - Duplicate-safe local document assembly, original/corrected writing sections, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
+- Safe-by-default live Google foundation with Desktop OAuth PKCE and macOS Keychain refresh-token storage
+- Drive/Docs weekly document creation, verified PDF export, view-only sharing, and Gmail attachment delivery
+- Friday 4 p.m. queue, weekly idempotency, restart recovery, exponential retry, and parent retry/revoke controls
+- Fail-closed delivery eligibility: only writing explicitly marked complete can leave the Mac
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
 - Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock
 - Parent-reviewed URL and exact-origin configuration for Ninja Dojo, Du Chinese, and Level Chinese
@@ -73,7 +77,7 @@ The UI labels the following honestly as pending because they require external in
 - Parent-authorized guardian installation and enforcement on the second Mac
 - Chrome Web Store publication and parent-installed policy on the second Mac
 - The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
-- Live Google OAuth, Drive/Docs/Gmail delivery, Keychain storage, and Family Link approval (a no-network local proof is implemented)
+- Parent-created Google Cloud credentials and Family Link approval for the implemented live Google delivery path
 - Existing spelling-practice module
 
 The browser prototype does not claim to enforce applications or URLs. Those controls belong to the guardian and extension described in the project plan.
@@ -84,6 +88,8 @@ Configure tracked school activities from the Parent screen. Launch URLs must use
 
 To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.
 
-The Parent screen's Google delivery proof is deliberately local. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`. Live mode must use Authorization Code with PKCE, macOS Keychain token storage, minimal Drive/Gmail scopes, and explicit Family Link approval before it can replace the simulator.
+The Parent screen's Google delivery proof remains deliberately local and is the default. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`.
+
+The live path is implemented but fail-closed until explicitly configured. It uses Authorization Code with PKCE, a loopback callback, macOS Keychain refresh-token storage, `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The existing spelling-practice milestone must mark writing `complete` before any draft is eligible for live delivery.
 
 Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

@@ -83,7 +83,7 @@ export type Draft = {
   updatedAt: string
   findings: Finding[]
   exerciseProgress?: Record<string, FindingProgress>
-  reviewStatus?: 'draft' | 'practice' | 'spelling-pending'
+  reviewStatus?: 'draft' | 'practice' | 'spelling-pending' | 'complete'
 }
 
 export type RewardCredit = {
@@ -196,6 +196,41 @@ export type GoogleProofState = {
   deliveries: GoogleDelivery[]
 }
 
+export type GoogleLiveDelivery = {
+  id: string
+  weekId: string
+  mode: 'live'
+  status: 'queued' | 'creating' | 'sent' | 'skipped' | 'failed'
+  accountEmail: string
+  recipient: string
+  documentId: string | null
+  documentName: string
+  documentUrl: string | null
+  pdfUrl: string | null
+  shareStatus: 'pending' | 'shared' | 'failed'
+  emailMessageId: string | null
+  draftCount: number
+  attemptCount: number
+  nextAttemptAt: string | null
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+  deliveredAt: string | null
+}
+
+export type GoogleLiveState = {
+  mode: 'safe-test' | 'live'
+  enabled: boolean
+  clientConfigured: boolean
+  keychainAvailable: boolean
+  connected: boolean
+  accountEmail: string | null
+  connectedAt: string | null
+  recipient: string | null
+  lastError: string | null
+  deliveries: GoogleLiveDelivery[]
+}
+
 export type AppState = {
   entered: boolean
   requiredByDay: Record<DayName, string[]>
@@ -212,6 +247,7 @@ export type AppState = {
   chromeConnected: boolean
   activityConfiguration: ActivityConfiguration
   googleProof: GoogleProofState
+  googleLive: GoogleLiveState
   weekContext: WeekContext
 }
 
@@ -373,6 +409,18 @@ export const defaultState: AppState = {
     connected: false,
     accountEmail: null,
     connectedAt: null,
+    deliveries: [],
+  },
+  googleLive: {
+    mode: 'safe-test',
+    enabled: false,
+    clientConfigured: false,
+    keychainAvailable: false,
+    connected: false,
+    accountEmail: null,
+    connectedAt: null,
+    recipient: null,
+    lastError: null,
     deliveries: [],
   },
   weekContext: getBrowserWeekContext(),

@@ -54,7 +54,9 @@ import {
 } from './writing'
 import {
   acknowledgeControlledSession,
+  beginLiveGoogleAuthorization,
   connectMockGoogle,
+  disconnectLiveGoogle,
   disconnectMockGoogle,
   endControlledSession,
   heartbeatControlledSession,
@@ -62,8 +64,11 @@ import {
   getReadingGameSession,
   loadStateFromService,
   recordAudit,
+  retryLiveGoogleDelivery,
+  runLiveGoogleDelivery,
   runMockGoogleDelivery,
   saveActivityConfiguration,
+  saveLiveGoogleConfiguration,
   saveStateToService,
   setDailyCompletion,
   startControlledSession,
@@ -1169,12 +1174,31 @@ function ParentView({
   )
   const [googleBusy, setGoogleBusy] = useState(false)
   const [googleMessage, setGoogleMessage] = useState('')
+  const [liveGoogleRecipient, setLiveGoogleRecipient] = useState(state.googleLive.recipient ?? '')
+  const [liveGoogleBusy, setLiveGoogleBusy] = useState(false)
+  const [liveGoogleMessage, setLiveGoogleMessage] = useState('')
   const [activityConfig, setActivityConfig] = useState<ActivityConfiguration>(() => structuredClone(state.activityConfiguration))
   const [configurationBusy, setConfigurationBusy] = useState(false)
   const [configurationMessage, setConfigurationMessage] = useState('')
   const [knownNames, setKnownNames] = useState(state.writingDictionary.knownNames.join('\n'))
   const [knownPlaces, setKnownPlaces] = useState(state.writingDictionary.knownPlaces.join('\n'))
   const [writingConfigurationMessage, setWritingConfigurationMessage] = useState('')
+
+  useEffect(() => {
+    const receiveAuthorization = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== 'fionnbar-google-oauth') return
+      loadStateFromService()
+        .then((response) => {
+          setState(response.state)
+          setLiveGoogleMessage(event.data.success
+            ? 'Google authorization completed. The refresh token is secured in macOS Keychain.'
+            : 'Google authorization was not completed.')
+        })
+        .catch((error) => setLiveGoogleMessage(error instanceof Error ? error.message : 'Google status could not be refreshed.'))
+    }
+    window.addEventListener('message', receiveAuthorization)
+    return () => window.removeEventListener('message', receiveAuthorization)
+  }, [setState])
 
   const parseOrigins = (value: string) => value.split(/[\n,]+/).map((origin) => origin.trim()).filter(Boolean)
   const parseDictionary = (value: string) => [...new Map(
@@ -1289,6 +1313,92 @@ function ParentView({
     }
   }
 
+  const saveLiveGoogleRecipient = async () => {
+    setLiveGoogleBusy(true)
+    setLiveGoogleMessage('')
+    try {
+      const response = await saveLiveGoogleConfiguration(liveGoogleRecipient)
+      setState(response.state)
+      setLiveGoogleRecipient(response.googleLive.recipient ?? liveGoogleRecipient)
+      setLiveGoogleMessage('The school recipient was saved locally.')
+    } catch (error) {
+      setLiveGoogleMessage(error instanceof Error ? error.message : 'The school recipient could not be saved.')
+    } finally {
+      setLiveGoogleBusy(false)
+    }
+  }
+
+  const authorizeLiveGoogle = async () => {
+    setLiveGoogleBusy(true)
+    setLiveGoogleMessage('')
+    try {
+      const authorization = await beginLiveGoogleAuthorization()
+      const popup = window.open(authorization.authorizationUrl, 'fionnbar-google-oauth', 'popup,width=620,height=760')
+      if (!popup) throw new Error('Allow pop-ups for this local app, then try again.')
+      setLiveGoogleMessage('Finish authorization in the Google window. This page will update when it returns.')
+    } catch (error) {
+      setLiveGoogleMessage(error instanceof Error ? error.message : 'Google authorization could not start.')
+    } finally {
+      setLiveGoogleBusy(false)
+    }
+  }
+
+  const revokeLiveGoogle = async () => {
+    setLiveGoogleBusy(true)
+    setLiveGoogleMessage('')
+    try {
+      const response = await disconnectLiveGoogle()
+      setState(response.state)
+      setLiveGoogleMessage(response.googleLive.lastError ?? 'Google authorization was revoked and the Keychain token was removed.')
+    } catch (error) {
+      setLiveGoogleMessage(error instanceof Error ? error.message : 'Google authorization could not be revoked.')
+    } finally {
+      setLiveGoogleBusy(false)
+    }
+  }
+
+  const deliverLiveGoogle = async () => {
+    setLiveGoogleBusy(true)
+    setLiveGoogleMessage('')
+    try {
+      await saveStateToService(state)
+      await saveLiveGoogleConfiguration(liveGoogleRecipient)
+      const response = await runLiveGoogleDelivery(liveGoogleRecipient)
+      setState(response.state)
+      setLiveGoogleMessage(
+        response.duplicate
+          ? 'Duplicate prevented: this week already has a live delivery record.'
+          : response.delivery.status === 'skipped'
+            ? 'Nothing was sent because no writing is marked complete.'
+            : response.delivery.shareStatus === 'failed'
+              ? 'The PDF was emailed, but the Google Doc could not be shared. The failure was recorded.'
+              : 'The Google Doc was shared view-only and its PDF was emailed.',
+      )
+    } catch (error) {
+      const refreshed = await loadStateFromService().catch(() => null)
+      if (refreshed) setState(refreshed.state)
+      setLiveGoogleMessage(error instanceof Error ? error.message : 'The live Google delivery failed and was queued for retry.')
+    } finally {
+      setLiveGoogleBusy(false)
+    }
+  }
+
+  const retryLiveGoogle = async (deliveryId: string) => {
+    setLiveGoogleBusy(true)
+    setLiveGoogleMessage('')
+    try {
+      const response = await retryLiveGoogleDelivery(deliveryId)
+      setState(response.state)
+      setLiveGoogleMessage('The failed Google delivery completed successfully.')
+    } catch (error) {
+      const refreshed = await loadStateFromService().catch(() => null)
+      if (refreshed) setState(refreshed.state)
+      setLiveGoogleMessage(error instanceof Error ? error.message : 'The retry did not complete.')
+    } finally {
+      setLiveGoogleBusy(false)
+    }
+  }
+
   const toggleOverride = async (activityId: string) => {
     const wasComplete = state.requiredByDay[day].includes(activityId)
     if (serviceStatus === 'online') {
@@ -1369,6 +1479,7 @@ function ParentView({
           <div className="connection-row"><span className={state.guardianConnected ? 'dot good' : 'dot'} /><div><strong>macOS guardian</strong><small>{state.guardianConnected ? 'Heartbeat received within 15 seconds' : 'No live guardian heartbeat'}</small></div><b>{state.guardianConnected ? 'Connected' : 'Pending'}</b></div>
           <div className="connection-row"><span className={state.chromeConnected ? 'dot good' : 'dot'} /><div><strong>Managed Chrome</strong><small>{state.chromeConnected ? 'Extension heartbeat received within 45 seconds' : 'Policy and extension not installed'}</small></div><b>{state.chromeConnected ? 'Connected' : 'Pending'}</b></div>
           <div className="connection-row"><span className={state.googleProof.connected ? 'dot good' : 'dot'} /><div><strong>Google delivery proof</strong><small>{state.googleProof.connected ? `${state.googleProof.accountEmail} · no external access` : 'Safe test account not connected'}</small></div><b>{state.googleProof.connected ? 'Test ready' : 'Pending'}</b></div>
+          <div className="connection-row"><span className={state.googleLive.connected ? 'dot good' : 'dot'} /><div><strong>Live Google delivery</strong><small>{state.googleLive.connected ? `${state.googleLive.accountEmail} · token in Keychain` : state.googleLive.enabled ? 'Waiting for parent authorization' : 'Disabled while safe-test mode is active'}</small></div><b>{state.googleLive.connected ? 'Connected' : state.googleLive.enabled ? 'Pending' : 'Off'}</b></div>
           <div className="connection-row"><span className="dot good" /><div><strong>Reading game contract</strong><small>Local simulator and verified completion are ready</small></div><b>Test ready</b></div>
           <button className="secondary-button full-button" onClick={addCredit}><Plus size={17} /> Add a 5-minute credit</button>
         </div>
@@ -1478,6 +1589,64 @@ function ParentView({
                   <b className={`delivery-status ${delivery.status}`}>{delivery.status === 'simulated' ? 'Test delivered' : delivery.status}</b>
                   {delivery.documentUrl && <a href={delivery.documentUrl}><FileText size={14} /> Document</a>}
                   {delivery.pdfUrl && <a href={delivery.pdfUrl}><Download size={14} /> PDF</a>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="parent-panel google-proof-panel live-google-panel">
+        <div className="panel-heading">
+          <div><h3>Live Friday Google delivery</h3><p>Creates the weekly Google Doc, exports a verified PDF, shares view-only, and emails the school recipient after Friday at 4 p.m.</p></div>
+          <span className={`mock-badge ${state.googleLive.enabled ? 'live-badge' : ''}`}>{state.googleLive.enabled ? 'LIVE MODE' : 'SAFE MODE ACTIVE'}</span>
+        </div>
+        <div className="google-proof-content">
+          <div className="google-proof-form">
+            <div className="live-readiness">
+              <small>Desktop OAuth client <b>{state.googleLive.clientConfigured ? 'ready' : 'missing'}</b></small>
+              <small>macOS Keychain <b>{state.googleLive.keychainAvailable ? 'ready' : 'unavailable'}</b></small>
+            </div>
+            <label>
+              <span>School recipient</span>
+              <input type="email" placeholder="teacher@school.org" value={liveGoogleRecipient} onChange={(event) => setLiveGoogleRecipient(event.target.value)} disabled={liveGoogleBusy} />
+            </label>
+            <button className="secondary-button" onClick={saveLiveGoogleRecipient} disabled={liveGoogleBusy || serviceStatus !== 'online'}>
+              <ShieldCheck size={16} /> Save recipient
+            </button>
+            {!state.googleLive.connected ? (
+              <button className="secondary-button" onClick={authorizeLiveGoogle} disabled={liveGoogleBusy || serviceStatus !== 'online' || !state.googleLive.enabled || !state.googleLive.clientConfigured || !state.googleLive.keychainAvailable}>
+                <ShieldCheck size={16} /> Authorize Google
+              </button>
+            ) : (
+              <button className="text-button danger" onClick={revokeLiveGoogle} disabled={liveGoogleBusy}>
+                <X size={16} /> Revoke Google access
+              </button>
+            )}
+            <button className="primary-button" onClick={deliverLiveGoogle} disabled={liveGoogleBusy || serviceStatus !== 'online' || !state.googleLive.enabled || !state.googleLive.connected || !liveGoogleRecipient}>
+              <Send size={16} /> {liveGoogleBusy ? 'Working…' : 'Send this week now'}
+            </button>
+            {!state.googleLive.enabled && <p className="google-setup-note">Live calls remain blocked until the local service starts with <code>HOMEWORK_GOOGLE_MODE=live</code>.</p>}
+            {state.googleLive.lastError && <p className="delivery-error google-setup-note">{state.googleLive.lastError}</p>}
+            {liveGoogleMessage && <p className="google-proof-message" role="status">{liveGoogleMessage}</p>}
+          </div>
+          <div className="delivery-history">
+            <div className="delivery-heading"><strong>Live delivery queue</strong><small>Restart-safe · one record per week</small></div>
+            {state.googleLive.deliveries.length === 0 ? (
+              <div className="completion-empty">No live deliveries yet. Only writing marked complete is eligible.</div>
+            ) : state.googleLive.deliveries.slice(0, 5).map((delivery) => (
+              <div className="delivery-row" key={delivery.id}>
+                <span className={`delivery-icon ${delivery.status}`}><Send size={17} /></span>
+                <span>
+                  <strong>Week of {delivery.weekId}</strong>
+                  <small>{delivery.draftCount} complete {delivery.draftCount === 1 ? 'draft' : 'drafts'} · {delivery.recipient} · attempt {delivery.attemptCount}</small>
+                  <small>Share: {delivery.shareStatus}{delivery.nextAttemptAt ? ` · retry ${new Date(delivery.nextAttemptAt).toLocaleString()}` : ''}</small>
+                  {delivery.lastError && <small className="delivery-error">{delivery.lastError}</small>}
+                </span>
+                <span className="delivery-actions">
+                  <b className={`delivery-status ${delivery.status}`}>{delivery.status}</b>
+                  {delivery.documentUrl && <a href={delivery.documentUrl} target="_blank" rel="noreferrer"><FileText size={14} /> Doc</a>}
+                  {delivery.pdfUrl && <a href={delivery.pdfUrl}><Download size={14} /> PDF</a>}
+                  {delivery.status === 'failed' && <button className="row-button" onClick={() => retryLiveGoogle(delivery.id)} disabled={liveGoogleBusy}>Retry</button>}
                 </span>
               </div>
             ))}

@@ -85,7 +85,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 11)
+    assert.equal(reopened.info().schemaVersion, 12)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -780,6 +780,77 @@ test('mock Google proof records a duplicate-safe skip when no writing exists', (
   })
   assert.equal(duplicate.created, false)
   assert.equal(store.getGoogleProofState().deliveries.length, 1)
+  store.close()
+})
+
+test('live Google delivery snapshots complete writing and remains duplicate-safe', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', {
+    ...clock.options(),
+    googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
+  })
+  const state = sampleState()
+  state.drafts[0].reviewStatus = 'complete'
+  store.saveState(state)
+  store.configureLiveGoogle({ recipient: 'Teacher@School.org' })
+  store.connectLiveGoogle({
+    accountEmail: 'Fionnbar@example.com',
+    scopes: ['openid', 'https://www.googleapis.com/auth/drive.file'],
+  })
+
+  const prepared = store.prepareLiveGoogleDelivery({ weekId: '2026-09-28' })
+  assert.equal(prepared.created, true)
+  assert.equal(prepared.delivery.status, 'queued')
+  assert.equal(prepared.delivery.recipient, 'teacher@school.org')
+  assert.equal(prepared.drafts.length, 1)
+
+  const attempt = store.beginLiveGoogleDeliveryAttempt(prepared.delivery.id)
+  assert.equal(attempt.delivery.status, 'creating')
+  assert.equal(attempt.delivery.attemptCount, 1)
+  store.recordLiveGoogleDocument(prepared.delivery.id, {
+    documentId: 'google-doc-1',
+    documentUrl: 'https://docs.google.com/document/d/google-doc-1/edit',
+  })
+  store.recordLiveGooglePdf(prepared.delivery.id, '/tmp/fionnbar-live.pdf')
+  store.recordLiveGoogleShare(prepared.delivery.id, 'shared')
+  const sent = store.completeLiveGoogleDelivery(prepared.delivery.id, { messageId: 'gmail-1' })
+  assert.equal(sent.status, 'sent')
+  assert.equal(sent.shareStatus, 'shared')
+  assert.equal(sent.emailMessageId, 'gmail-1')
+
+  const duplicate = store.prepareLiveGoogleDelivery({
+    weekId: '2026-09-28',
+    recipient: 'someone-else@school.org',
+  })
+  assert.equal(duplicate.created, false)
+  assert.equal(duplicate.delivery.id, prepared.delivery.id)
+  assert.equal(store.getLiveGoogleState().deliveries.length, 1)
+  store.close()
+})
+
+test('live Google failures receive an exponential retry time and can be manually requeued', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', {
+    ...clock.options(),
+    googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
+  })
+  const state = sampleState()
+  state.drafts[0].reviewStatus = 'complete'
+  store.saveState(state)
+  store.connectLiveGoogle({ accountEmail: 'fionnbar@example.com', scopes: [] })
+  store.configureLiveGoogle({ recipient: 'teacher@school.org' })
+
+  const prepared = store.prepareLiveGoogleDelivery({ weekId: '2026-10-05' })
+  store.beginLiveGoogleDeliveryAttempt(prepared.delivery.id)
+  const failed = store.failLiveGoogleDelivery(prepared.delivery.id, new Error('offline'))
+  assert.equal(failed.status, 'failed')
+  assert.match(failed.lastError, /offline/)
+  assert.equal(store.listRetryableLiveGoogleDeliveries().length, 0)
+
+  clock.advance(5 * 60 * 1000)
+  assert.equal(store.listRetryableLiveGoogleDeliveries()[0].id, prepared.delivery.id)
+  const queued = store.retryLiveGoogleDelivery(prepared.delivery.id)
+  assert.equal(queued.status, 'queued')
   store.close()
 })
 

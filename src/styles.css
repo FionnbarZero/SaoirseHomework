@@ -424,6 +424,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .writing-review-row.resolved { opacity: .58; }
 .google-proof-panel { margin-top: 18px; }
 .mock-badge { flex: 0 0 auto; border-radius: 999px; padding: 7px 10px; color: #775a22; background: #f3e8c9; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+.mock-badge.live-badge { color: #23685e; background: #dceee9; }
+.live-google-panel { border-color: #bfd9d2; }
+.live-readiness { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.live-readiness small { padding: 8px; border-radius: 8px; color: #737b77; background: #f0eee8; font-size: 8px; }
+.live-readiness b { display: block; margin-top: 2px; color: var(--ink); text-transform: uppercase; }
+.google-setup-note { margin: 0; color: #7d837f; font-size: 8px; line-height: 1.5; }
+.google-setup-note code { padding: 1px 4px; border-radius: 4px; background: #ece9e1; }
 .google-proof-content { display: grid; grid-template-columns: minmax(230px, .65fr) minmax(360px, 1.35fr); }
 .google-proof-form { padding: 18px; border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: stretch; gap: 11px; }
 .google-proof-form label { display: grid; gap: 6px; }
@@ -442,6 +449,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .delivery-row:last-child { border-bottom: 0; }
 .delivery-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; color: #8a7040; background: #f2ead7; }
 .delivery-icon.simulated { color: #34736a; background: #e2efeb; }
+.delivery-icon.sent { color: #34736a; background: #e2efeb; }
+.delivery-icon.queued, .delivery-icon.creating { color: #846b38; background: #f3ead5; }
 .delivery-icon.failed { color: #934d43; background: #f4e2df; }
 .delivery-row > span:nth-child(2) { min-width: 0; }
 .delivery-row strong, .delivery-row small { display: block; }
@@ -453,6 +462,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .delivery-actions a { color: #346d65; background: #e5efec; }
 .delivery-status { color: #836a38; background: #f3ead5; }
 .delivery-status.simulated { color: #34736a; background: #e2efeb; }
+.delivery-status.sent { color: #34736a; background: #e2efeb; }
 .delivery-status.failed { color: #934d43; background: #f4e2df; }
 .completion-panel { margin-top: 18px; }
 .completion-panel .panel-heading > svg { color: var(--teal); }

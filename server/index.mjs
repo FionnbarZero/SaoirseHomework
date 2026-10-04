@@ -4,7 +4,9 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildActivitySessionPlan } from './activity-config.mjs'
 import { createStore } from './database.mjs'
+import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
+import { createMacOSKeychain } from './keychain.mjs'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -14,9 +16,31 @@ const serviceOrigin = `http://${host}:${port}`
 const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
 const googleProofDirectory = process.env.HOMEWORK_GOOGLE_PROOF_DIR || join(dataDirectory, 'google-proof')
+const googleLiveDirectory = process.env.HOMEWORK_GOOGLE_LIVE_DIR || join(dataDirectory, 'google-live')
 const distDirectory = join(projectRoot, 'dist')
 const timeZone = process.env.HOMEWORK_TIME_ZONE || 'America/Los_Angeles'
-const store = createStore(databasePath, { timeZone })
+const googleMode = process.env.HOMEWORK_GOOGLE_MODE === 'live' ? 'live' : 'safe-test'
+const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim()
+const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
+const googleKeychain = createMacOSKeychain()
+const store = createStore(databasePath, {
+  timeZone,
+  googleLiveConfiguration: {
+    mode: googleMode,
+    clientConfigured: Boolean(googleClientId),
+    keychainAvailable: googleKeychain.available,
+  },
+})
+const googleLive = createGoogleLiveIntegration({
+  store,
+  keychain: googleKeychain,
+  clientId: googleClientId,
+  clientSecret: googleClientSecret,
+  redirectUri: serviceOrigin,
+  outputDirectory: googleLiveDirectory,
+  mode: googleMode,
+  timeZone,
+})
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
 const readingGameUrl = new URL(
   process.env.HOMEWORK_READING_GAME_URL || `${serviceOrigin}/reading-game-simulator.html`,
@@ -83,6 +107,25 @@ function sendJson(response, status, value, extraHeaders = {}) {
 function sendEmpty(response, status, extraHeaders = {}) {
   response.writeHead(status, { 'Cache-Control': 'no-store', ...extraHeaders })
   response.end()
+}
+
+function sendHtml(response, status, body) {
+  response.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store',
+  })
+  response.end(body)
+}
+
+function oauthResultPage(success, message) {
+  const title = success ? 'Google connected' : 'Google connection failed'
+  const safeMessage = String(message)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><style>body{font-family:system-ui,sans-serif;background:#f5f2ea;color:#26342f;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:520px;background:#fff;padding:32px;border-radius:18px;box-shadow:0 12px 40px #0002}h1{font-size:24px}p{line-height:1.55;color:#5d6965}</style></head><body><main class="card"><h1>${title}</h1><p>${safeMessage}</p><p>You can close this window and return to Fionnbar Homework.</p></main><script>window.opener?.postMessage({type:'fionnbar-google-oauth',success:${success}},window.location.origin)</script></body></html>`
 }
 
 function gameCorsHeaders(origin) {
@@ -352,6 +395,87 @@ const server = createServer(async (request, response) => {
       })
     }
 
+    if (url.pathname === '/api/google/live/status' && request.method === 'GET') {
+      return sendJson(response, 200, {
+        googleLive: store.getLiveGoogleState(),
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    if (url.pathname === '/api/google/live/configuration' && request.method === 'POST') {
+      const body = await readJson(request)
+      const googleLiveState = store.configureLiveGoogle(body)
+      return sendJson(response, 200, {
+        googleLive: googleLiveState,
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    if (url.pathname === '/api/google/live/authorize' && request.method === 'POST') {
+      const authorization = await googleLive.beginAuthorization()
+      return sendJson(response, 200, authorization)
+    }
+
+    const googleOAuthCallback = request.method === 'GET' && (
+      url.pathname === '/api/google/live/oauth/callback' ||
+      (url.pathname === '/' && url.searchParams.has('state') && (url.searchParams.has('code') || url.searchParams.has('error')))
+    )
+    if (googleOAuthCallback) {
+      try {
+        const googleLiveState = await googleLive.completeAuthorization({
+          state: url.searchParams.get('state'),
+          code: url.searchParams.get('code'),
+          error: url.searchParams.get('error'),
+        })
+        return sendHtml(
+          response,
+          200,
+          oauthResultPage(true, `${googleLiveState.accountEmail} is authorized. The refresh token is stored in macOS Keychain.`),
+        )
+      } catch (error) {
+        return sendHtml(
+          response,
+          Number.isInteger(error?.status) ? error.status : 500,
+          oauthResultPage(false, error instanceof Error ? error.message : 'Google authorization could not be completed.'),
+        )
+      }
+    }
+
+    if (url.pathname === '/api/google/live/disconnect' && request.method === 'POST') {
+      const googleLiveState = await googleLive.disconnect()
+      return sendJson(response, 200, {
+        googleLive: googleLiveState,
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    if (url.pathname === '/api/google/live/deliveries' && request.method === 'POST') {
+      const body = await readJson(request)
+      const prepared = await googleLive.queueDelivery({ recipient: body.recipient, weekId: body.weekId })
+      return sendJson(response, prepared.created ? 201 : 200, {
+        delivery: prepared.delivery,
+        duplicate: !prepared.created,
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    const googleLiveRetryMatch = url.pathname.match(/^\/api\/google\/live\/deliveries\/([^/]+)\/retry$/)
+    if (googleLiveRetryMatch && request.method === 'POST') {
+      const delivery = await googleLive.retryDelivery(decodeURIComponent(googleLiveRetryMatch[1]))
+      return sendJson(response, 200, { delivery, state: store.loadState(), meta: store.info() })
+    }
+
+    const googleLivePdfMatch = url.pathname.match(/^\/api\/google\/live\/deliveries\/([^/]+)\/pdf$/)
+    if (googleLivePdfMatch && request.method === 'GET') {
+      const artifact = store.getLiveGoogleDeliveryArtifact(decodeURIComponent(googleLivePdfMatch[1]))
+      if (serveArtifact(artifact, response)) return
+      return sendJson(response, 404, { error: 'Delivery PDF file not found', code: 'artifact_not_found' })
+    }
+
     if (url.pathname === '/api/google/mock/connect' && request.method === 'POST') {
       const body = await readJson(request)
       const googleProof = store.connectMockGoogle(body)
@@ -537,9 +661,21 @@ server.listen(port, host, () => {
   console.log(`Homework service listening at ${serviceOrigin}`)
   console.log(`SQLite database: ${databasePath}`)
   console.log(`Reading game origin: ${readingGameOrigin}`)
+  console.log(`Google delivery mode: ${googleMode}`)
 })
 
+const googleQueueInterval = setInterval(() => {
+  void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
+}, 60_000)
+googleQueueInterval.unref()
+const initialGoogleQueueRun = setTimeout(() => {
+  void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
+}, 2_000)
+initialGoogleQueueRun.unref()
+
 function close() {
+  clearInterval(googleQueueInterval)
+  clearTimeout(initialGoogleQueueRun)
   server.close(() => {
     store.close()
     process.exit(0)

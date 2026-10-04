@@ -7,7 +7,7 @@ import { emptyActivityConfiguration, normalizeActivityConfiguration } from './ac
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 11
+const SCHEMA_VERSION = 12
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -47,6 +47,18 @@ function emptyState(weekContext = emptyWeekContext()) {
       connected: false,
       accountEmail: null,
       connectedAt: null,
+      deliveries: [],
+    },
+    googleLive: {
+      mode: 'safe-test',
+      enabled: false,
+      clientConfigured: false,
+      keychainAvailable: false,
+      connected: false,
+      accountEmail: null,
+      connectedAt: null,
+      recipient: null,
+      lastError: null,
       deliveries: [],
     },
     weekContext,
@@ -189,6 +201,11 @@ export function createStore(filename, options = {}) {
   const makeNonce = options.makeNonce ?? (() => randomBytes(32).toString('base64url'))
   const runtimeId = options.runtimeId ?? randomUUID()
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE
+  const googleLiveConfiguration = {
+    mode: options.googleLiveConfiguration?.mode === 'live' ? 'live' : 'safe-test',
+    clientConfigured: options.googleLiveConfiguration?.clientConfigured === true,
+    keychainAvailable: options.googleLiveConfiguration?.keychainAvailable === true,
+  }
   const db = new DatabaseSync(filename)
   db.exec('PRAGMA foreign_keys = ON')
   db.exec('PRAGMA journal_mode = WAL')
@@ -383,6 +400,48 @@ export function createStore(filename, options = {}) {
     CREATE INDEX IF NOT EXISTS google_delivery_week
       ON google_delivery (week_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS google_live_connection (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      account_email TEXT NOT NULL,
+      scopes_json TEXT NOT NULL,
+      connected INTEGER NOT NULL CHECK (connected IN (0, 1)),
+      connected_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS google_live_delivery (
+      id TEXT PRIMARY KEY,
+      week_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('queued', 'creating', 'sent', 'skipped', 'failed')),
+      account_email TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      document_id TEXT,
+      document_name TEXT NOT NULL,
+      document_url TEXT,
+      pdf_path TEXT,
+      share_status TEXT NOT NULL DEFAULT 'pending' CHECK (share_status IN ('pending', 'shared', 'failed')),
+      email_message_id TEXT,
+      draft_count INTEGER NOT NULL DEFAULT 0,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      delivered_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS google_live_delivery_retry
+      ON google_live_delivery (status, next_attempt_at);
+
+    CREATE TABLE IF NOT EXISTS google_live_delivery_draft (
+      delivery_id TEXT NOT NULL REFERENCES google_live_delivery(id) ON DELETE CASCADE,
+      draft_id TEXT NOT NULL,
+      content_json TEXT NOT NULL,
+      PRIMARY KEY (delivery_id, draft_id)
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -556,6 +615,13 @@ export function createStore(filename, options = {}) {
     SET status = 'failed', last_error = 'The local service restarted during artifact creation', updated_at = ?
     WHERE status = 'creating'
   `).run(asIso(wallNow()))
+
+  db.prepare(`
+    UPDATE google_live_delivery
+    SET status = 'failed', last_error = 'The local service restarted during Google delivery',
+        next_attempt_at = ?, updated_at = ?
+    WHERE status = 'creating'
+  `).run(asIso(wallNow()), asIso(wallNow()))
 
   // Preserve a timer written by schema version 1 as a paused, server-owned session.
   const legacyTimer = db.prepare('SELECT * FROM active_timer WHERE singleton = 1').get()
@@ -828,6 +894,7 @@ export function createStore(filename, options = {}) {
     state.chromeConnected = getChromeExtensionStatus().connected
     state.activityConfiguration = getActivityConfiguration()
     state.googleProof = getGoogleProofState()
+    state.googleLive = getLiveGoogleState()
     state.writingDictionary = normalizeWritingDictionary(safeJson(settings.writing_dictionary ?? '{}', {}))
     state.writingReviewQueue = normalizeWritingReviewQueue(safeJson(settings.writing_review_queue ?? '[]', []))
 
@@ -958,7 +1025,7 @@ export function createStore(filename, options = {}) {
           String(draft.correctedBody ?? draft.body ?? ''),
           JSON.stringify(Array.isArray(draft.findings) ? draft.findings : []),
           JSON.stringify(draft.exerciseProgress && typeof draft.exerciseProgress === 'object' ? draft.exerciseProgress : {}),
-          ['draft', 'practice', 'spelling-pending'].includes(draft.reviewStatus) ? draft.reviewStatus : 'draft',
+          ['draft', 'practice', 'spelling-pending', 'complete'].includes(draft.reviewStatus) ? draft.reviewStatus : 'draft',
           String(draft.updatedAt ?? now),
         )
       }
@@ -1716,6 +1783,325 @@ export function createStore(filename, options = {}) {
     }
   }
 
+  function liveGoogleDeliveryFromRow(row) {
+    if (!row) return null
+    return {
+      id: row.id,
+      weekId: row.week_id,
+      mode: 'live',
+      status: row.status,
+      accountEmail: row.account_email,
+      recipient: row.recipient,
+      documentId: row.document_id ?? null,
+      documentName: row.document_name,
+      documentUrl: row.document_url ?? null,
+      pdfUrl: row.pdf_path ? `/api/google/live/deliveries/${encodeURIComponent(row.id)}/pdf` : null,
+      pdfPath: row.pdf_path ?? null,
+      shareStatus: row.share_status,
+      emailMessageId: row.email_message_id ?? null,
+      draftCount: Number(row.draft_count),
+      attemptCount: Number(row.attempt_count),
+      nextAttemptAt: row.next_attempt_at ?? null,
+      lastError: row.last_error ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      deliveredAt: row.delivered_at ?? null,
+    }
+  }
+
+  function listLiveGoogleDeliveries(limit = 12) {
+    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 12))
+    return db.prepare(`
+      SELECT * FROM google_live_delivery ORDER BY created_at DESC LIMIT ?
+    `).all(safeLimit).map(liveGoogleDeliveryFromRow)
+  }
+
+  function getLiveGoogleState() {
+    const connection = db.prepare('SELECT * FROM google_live_connection WHERE singleton = 1').get()
+    const recipient = db.prepare(`SELECT value FROM settings WHERE key = 'google_live_recipient'`).get()?.value ?? null
+    return {
+      ...googleLiveConfiguration,
+      enabled: googleLiveConfiguration.mode === 'live',
+      connected: Boolean(connection?.connected),
+      accountEmail: connection?.connected ? connection.account_email : null,
+      connectedAt: connection?.connected ? connection.connected_at : null,
+      recipient,
+      lastError: connection?.last_error ?? null,
+      deliveries: listLiveGoogleDeliveries(),
+    }
+  }
+
+  function configureLiveGoogle(input) {
+    const recipient = normalizeEmail(input.recipient, 'school recipient')
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      setSetting.run('google_live_recipient', recipient)
+      insertAudit.run('google_live_recipient_configured', JSON.stringify({ recipient }), now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getLiveGoogleState()
+  }
+
+  function connectLiveGoogle(input) {
+    const accountEmail = normalizeEmail(input.accountEmail, 'Google account')
+    const scopes = Array.isArray(input.scopes) ? [...new Set(input.scopes.map(String))] : []
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        INSERT INTO google_live_connection (
+          singleton, account_email, scopes_json, connected, connected_at, updated_at, last_error
+        ) VALUES (1, ?, ?, 1, ?, ?, NULL)
+        ON CONFLICT(singleton) DO UPDATE SET
+          account_email = excluded.account_email,
+          scopes_json = excluded.scopes_json,
+          connected = 1,
+          connected_at = excluded.connected_at,
+          updated_at = excluded.updated_at,
+          last_error = NULL
+      `).run(accountEmail, JSON.stringify(scopes), now, now)
+      insertAudit.run('google_live_connected', JSON.stringify({ accountEmail, scopes }), now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getLiveGoogleState()
+  }
+
+  function disconnectLiveGoogle(input = {}) {
+    const reason = String(input.reason ?? 'Authorization disconnected').slice(0, 500)
+    const lastError = input.lastError ? String(input.lastError).slice(0, 500) : null
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        UPDATE google_live_connection
+        SET connected = 0, updated_at = ?, last_error = ?
+        WHERE singleton = 1
+      `).run(now, lastError)
+      insertAudit.run('google_live_disconnected', JSON.stringify({ reason }), now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return getLiveGoogleState()
+  }
+
+  function completedWritingSnapshots() {
+    return db.prepare(`
+      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+      FROM writing_submission
+      WHERE review_status = 'complete' AND length(trim(body)) > 0
+      ORDER BY updated_at
+    `).all().map((row) => ({
+      id: row.id,
+      title: row.title,
+      body: row.body,
+      correctedBody: row.corrected_body ?? row.body,
+      findings: safeJson(row.findings_json, []),
+      exerciseProgress: safeJson(row.exercise_progress_json, {}),
+      reviewStatus: row.review_status,
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  function prepareLiveGoogleDelivery(input = {}) {
+    const connection = db.prepare(`
+      SELECT * FROM google_live_connection WHERE singleton = 1 AND connected = 1
+    `).get()
+    if (!connection) throw serviceError('Authorize the live Google account first', 409, 'google_not_connected')
+
+    const savedRecipient = db.prepare(`SELECT value FROM settings WHERE key = 'google_live_recipient'`).get()?.value
+    const recipient = normalizeEmail(input.recipient ?? savedRecipient, 'school recipient')
+    const weekId = input.weekId ? String(input.weekId) : ensureCurrentWeek().weekId
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekId)) throw serviceError('A valid week ID is required')
+    const existing = db.prepare('SELECT * FROM google_live_delivery WHERE week_id = ?').get(weekId)
+    if (existing) return { delivery: liveGoogleDeliveryFromRow(existing), drafts: [], created: false }
+
+    const drafts = completedWritingSnapshots()
+    const id = makeId()
+    const now = asIso(wallNow())
+    const status = drafts.length ? 'queued' : 'skipped'
+    const documentName = `Fionnbar Writing — Week of ${weekId}`
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      setSetting.run('google_live_recipient', recipient)
+      db.prepare(`
+        INSERT INTO google_live_delivery (
+          id, week_id, idempotency_key, status, account_email, recipient,
+          document_name, draft_count, next_attempt_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, weekId, `week:${weekId}`, status, connection.account_email, recipient,
+        documentName, drafts.length, status === 'queued' ? now : null, now, now,
+      )
+      const insertSnapshot = db.prepare(`
+        INSERT INTO google_live_delivery_draft (delivery_id, draft_id, content_json) VALUES (?, ?, ?)
+      `)
+      for (const draft of drafts) insertSnapshot.run(id, draft.id, JSON.stringify(draft))
+      insertAudit.run(
+        status === 'skipped' ? 'google_live_delivery_skipped' : 'google_live_delivery_queued',
+        JSON.stringify({ deliveryId: id, weekId, recipient, draftCount: drafts.length, scheduled: input.scheduled === true }),
+        now,
+      )
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return {
+      delivery: liveGoogleDeliveryFromRow(db.prepare('SELECT * FROM google_live_delivery WHERE id = ?').get(id)),
+      drafts,
+      created: true,
+    }
+  }
+
+  function getLiveGoogleDeliveryWork(id) {
+    const row = db.prepare('SELECT * FROM google_live_delivery WHERE id = ?').get(String(id))
+    if (!row) throw serviceError('Google delivery not found', 404, 'delivery_not_found')
+    const drafts = db.prepare(`
+      SELECT content_json FROM google_live_delivery_draft WHERE delivery_id = ? ORDER BY rowid
+    `).all(row.id).map((item) => safeJson(item.content_json, {}))
+    return { delivery: liveGoogleDeliveryFromRow(row), drafts }
+  }
+
+  function beginLiveGoogleDeliveryAttempt(id) {
+    const deliveryId = String(id)
+    const now = asIso(wallNow())
+    const row = db.prepare('SELECT * FROM google_live_delivery WHERE id = ?').get(deliveryId)
+    if (!row) throw serviceError('Google delivery not found', 404, 'delivery_not_found')
+    if (['sent', 'skipped'].includes(row.status)) return getLiveGoogleDeliveryWork(deliveryId)
+    if (row.status !== 'creating') {
+      db.prepare(`
+        UPDATE google_live_delivery
+        SET status = 'creating', attempt_count = attempt_count + 1, next_attempt_at = NULL,
+            last_error = CASE WHEN share_status = 'failed' THEN last_error ELSE NULL END, updated_at = ?
+        WHERE id = ?
+      `).run(now, deliveryId)
+      addAudit('google_live_delivery_attempted', { deliveryId, attempt: Number(row.attempt_count) + 1 })
+    }
+    return getLiveGoogleDeliveryWork(deliveryId)
+  }
+
+  function recordLiveGoogleDocument(id, input) {
+    const deliveryId = String(id)
+    const documentId = String(input.documentId ?? '').trim()
+    const documentUrl = String(input.documentUrl ?? '').trim()
+    if (!documentId || !documentUrl) throw serviceError('Google document metadata is incomplete')
+    const now = asIso(wallNow())
+    db.prepare(`
+      UPDATE google_live_delivery
+      SET document_id = ?, document_url = ?, idempotency_key = week_id || ':' || ?, updated_at = ?
+      WHERE id = ? AND status = 'creating'
+    `).run(documentId, documentUrl, documentId, now, deliveryId)
+    addAudit('google_live_document_created', { deliveryId, documentId })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function recordLiveGooglePdf(id, path) {
+    const deliveryId = String(id)
+    const now = asIso(wallNow())
+    db.prepare(`
+      UPDATE google_live_delivery SET pdf_path = ?, updated_at = ? WHERE id = ? AND status = 'creating'
+    `).run(String(path), now, deliveryId)
+    addAudit('google_live_pdf_exported', { deliveryId })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function recordLiveGoogleShare(id, status, error) {
+    if (!['shared', 'failed'].includes(status)) throw serviceError('Invalid Google share status')
+    const deliveryId = String(id)
+    const message = status === 'failed'
+      ? `Document sharing failed: ${String(error instanceof Error ? error.message : error).slice(0, 420)}`
+      : null
+    const now = asIso(wallNow())
+    db.prepare(`
+      UPDATE google_live_delivery
+      SET share_status = ?, last_error = ?, updated_at = ?
+      WHERE id = ? AND status = 'creating'
+    `).run(status, message, now, deliveryId)
+    addAudit(status === 'shared' ? 'google_live_document_shared' : 'google_live_document_share_failed', {
+      deliveryId,
+      ...(message ? { error: message } : {}),
+    })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function completeLiveGoogleDelivery(id, input) {
+    const deliveryId = String(id)
+    const now = asIso(wallNow())
+    const update = db.prepare(`
+      UPDATE google_live_delivery
+      SET status = 'sent', email_message_id = ?, next_attempt_at = NULL,
+          updated_at = ?, delivered_at = ?
+      WHERE id = ? AND status = 'creating'
+    `).run(String(input.messageId ?? ''), now, now, deliveryId)
+    if (Number(update.changes) !== 1) {
+      throw serviceError('The Google delivery is no longer awaiting completion', 409, 'delivery_not_pending')
+    }
+    addAudit('google_live_delivery_sent', { deliveryId, messageId: String(input.messageId ?? '') })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function failLiveGoogleDelivery(id, error) {
+    const deliveryId = String(id)
+    const message = String(error instanceof Error ? error.message : error).slice(0, 500)
+    const row = db.prepare('SELECT attempt_count FROM google_live_delivery WHERE id = ?').get(deliveryId)
+    if (!row) throw serviceError('Google delivery not found', 404, 'delivery_not_found')
+    const delayMinutes = Math.min(360, 5 * (2 ** Math.max(0, Number(row.attempt_count) - 1)))
+    const nowDate = wallNow()
+    const now = asIso(nowDate)
+    const nextAttemptAt = asIso(new Date(nowDate.getTime() + delayMinutes * 60 * 1000))
+    db.prepare(`
+      UPDATE google_live_delivery
+      SET status = 'failed', last_error = ?, next_attempt_at = ?, updated_at = ?
+      WHERE id = ? AND status NOT IN ('sent', 'skipped')
+    `).run(message, nextAttemptAt, now, deliveryId)
+    addAudit('google_live_delivery_failed', { deliveryId, error: message, nextAttemptAt })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function retryLiveGoogleDelivery(id) {
+    const deliveryId = String(id)
+    const now = asIso(wallNow())
+    const update = db.prepare(`
+      UPDATE google_live_delivery
+      SET status = 'queued', next_attempt_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'failed'
+    `).run(now, now, deliveryId)
+    if (Number(update.changes) !== 1) {
+      throw serviceError('Only failed Google deliveries can be retried', 409, 'delivery_not_retryable')
+    }
+    addAudit('google_live_delivery_retry_requested', { deliveryId })
+    return getLiveGoogleDeliveryWork(deliveryId).delivery
+  }
+
+  function listRetryableLiveGoogleDeliveries(limit = 5) {
+    const now = asIso(wallNow())
+    const safeLimit = Math.min(20, Math.max(1, Number(limit) || 5))
+    return db.prepare(`
+      SELECT * FROM google_live_delivery
+      WHERE status IN ('queued', 'failed') AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+      ORDER BY created_at LIMIT ?
+    `).all(now, safeLimit).map(liveGoogleDeliveryFromRow)
+  }
+
+  function getLiveGoogleDeliveryArtifact(id) {
+    const row = db.prepare('SELECT * FROM google_live_delivery WHERE id = ?').get(String(id))
+    if (!row?.pdf_path) throw serviceError('Delivery PDF not found', 404, 'artifact_not_found')
+    return {
+      path: row.pdf_path,
+      filename: `${row.document_name}.pdf`,
+      contentType: 'application/pdf',
+    }
+  }
+
   function isOptionalComplete(sessionKey) {
     const weekId = ensureCurrentWeek().weekId
     return Boolean(db.prepare(`
@@ -1778,6 +2164,21 @@ export function createStore(filename, options = {}) {
     completeMockGoogleDelivery,
     failMockGoogleDelivery,
     getGoogleDeliveryArtifact,
+    getLiveGoogleState,
+    configureLiveGoogle,
+    connectLiveGoogle,
+    disconnectLiveGoogle,
+    prepareLiveGoogleDelivery,
+    getLiveGoogleDeliveryWork,
+    beginLiveGoogleDeliveryAttempt,
+    recordLiveGoogleDocument,
+    recordLiveGooglePdf,
+    recordLiveGoogleShare,
+    completeLiveGoogleDelivery,
+    failLiveGoogleDelivery,
+    retryLiveGoogleDelivery,
+    listRetryableLiveGoogleDeliveries,
+    getLiveGoogleDeliveryArtifact,
     addAudit,
     listAudit,
     listCompletions,

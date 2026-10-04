@@ -34,17 +34,40 @@ export type OptionalActivity = {
 
 export type Finding = {
   id: string
-  category: 'Capitalization' | 'Punctuation'
+  ruleId: string
+  category: 'Grammar' | 'Capitalization' | 'Punctuation'
   message: string
   suggestion: string
+  start: number
+  end: number
+  replacement: string
+  correction: WritingTrial
+  practice: WritingTrial[]
+}
+
+export type WritingTrial = {
+  id: string
+  prompt: string
+  choices: string[]
+  correctAnswer: string
+  explanation: string
+}
+
+export type FindingProgress = {
+  correctionComplete: boolean
+  practiceCompleted: number
+  incorrectAttempts: number
 }
 
 export type Draft = {
   id: string
   title: string
   body: string
+  correctedBody?: string
   updatedAt: string
   findings: Finding[]
+  exerciseProgress?: Record<string, FindingProgress>
+  reviewStatus?: 'draft' | 'practice' | 'spelling-pending'
 }
 
 export type RewardCredit = {
@@ -420,35 +443,6 @@ export function getWeekLabel(weekId?: string) {
     ...(weekId ? { timeZone: 'UTC' } : {}),
   })
   return `${format.format(monday)} – ${format.format(friday)}`
-}
-
-export function inspectDraft(body: string): Finding[] {
-  const findings: Finding[] = []
-  const trimmed = body.trim()
-  if (!trimmed) return findings
-
-  const sentencePattern = /(^|[.!?]\s+)([a-z])/g
-  let match: RegExpExecArray | null
-  while ((match = sentencePattern.exec(trimmed)) !== null) {
-    const letter = match[2]
-    findings.push({
-      id: `capital-${match.index}`,
-      category: 'Capitalization',
-      message: `A sentence begins with “${letter}”.`,
-      suggestion: `Start it with “${letter.toUpperCase()}”.`,
-    })
-  }
-
-  if (!/[.!?][\s”"']*$/.test(trimmed)) {
-    findings.push({
-      id: 'terminal-punctuation',
-      category: 'Punctuation',
-      message: 'The final sentence needs an ending mark.',
-      suggestion: 'Add a period, question mark, or exclamation mark.',
-    })
-  }
-
-  return findings
 }
 
 export function formatTimer(seconds: number) {

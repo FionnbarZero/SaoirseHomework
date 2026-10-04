@@ -29,7 +29,9 @@ npm run build
 - Cumulative 13-session weekly practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
-- Local writing draft with deterministic capitalization and punctuation checks
+- Local writing drafts with deterministic grammar, capitalization, and punctuation checks
+- One original-sentence correction plus five three-choice practice trials for every supported finding
+- Restart-safe exercise progress, unchanged original drafts, and separately persisted corrected copies
 - Parent preview dashboard and completion overrides
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations
@@ -45,7 +47,7 @@ npm run build
 - Exact-origin CORS, atomic `game-verified` completion, and replay rejection
 - Child-screen game launch, status polling, and a clearly labeled local verification simulator
 - Persistent safe-mode Google connection and weekly delivery records
-- Duplicate-safe local document assembly, real PDF export, and no-writing skip behavior
+- Duplicate-safe local document assembly, original/corrected writing sections, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
 - Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock

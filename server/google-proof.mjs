@@ -33,17 +33,41 @@ function formatDate(value) {
   }).format(new Date(value))
 }
 
+function practiceSummary(draft) {
+  const progress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
+    ? draft.exerciseProgress
+    : {}
+  const completed = draft.findings.reduce((total, finding) => {
+    const item = progress[finding.id]
+    return total + (item?.correctionComplete ? 1 : 0) + Math.min(5, Number(item?.practiceCompleted) || 0)
+  }, 0)
+  const total = draft.findings.length * 6
+  const categories = [...new Set(draft.findings.map((finding) => finding.category))]
+  return {
+    completed,
+    total,
+    text: draft.findings.length
+      ? `${completed} of ${total} correction and practice steps completed across ${categories.join(', ').toLowerCase()}.`
+      : 'No supported grammar, punctuation, or capitalization findings were detected.',
+  }
+}
+
 function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, generatedAt }) {
-  const draftSections = drafts.map((draft, index) => `
+  const draftSections = drafts.map((draft, index) => {
+    const summary = practiceSummary(draft)
+    return `
     <section class="draft">
       <p class="draft-number">WRITING ${index + 1}</p>
       <h2>${escapeHtml(draft.title || 'Untitled writing')}</h2>
       <p class="date">Saved ${escapeHtml(formatDate(draft.updatedAt))}</p>
       <h3>Original draft</h3>
       <div class="body">${escapeHtml(draft.body).replaceAll('\n', '<br />')}</div>
-      <p class="practice">Local review found ${draft.findings.length} supported capitalization or punctuation ${draft.findings.length === 1 ? 'item' : 'items'}. Correction exercises are not part of this feasibility proof.</p>
+      <h3>Corrected copy</h3>
+      <div class="body corrected">${escapeHtml(draft.correctedBody ?? draft.body).replaceAll('\n', '<br />')}</div>
+      <p class="practice">${escapeHtml(summary.text)} Spelling practice remains pending until its module is integrated.</p>
     </section>
-  `).join('')
+  `
+  }).join('')
 
   return `<!doctype html>
 <html lang="en">
@@ -65,8 +89,9 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
     .draft-number { margin: 0; color: #a45e3f; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
     h2 { margin: 6px 0; font-size: 28px; }
     .date { margin: 0 0 24px; color: #71807a; font-size: 11px; }
-    h3 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    h3 { margin: 18px 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
     .body { padding: 18px; border-left: 4px solid #d6a566; border-radius: 0 12px 12px 0; background: #f5f0e5; font-family: Georgia, serif; font-size: 16px; line-height: 1.65; }
+    .body.corrected { border-left-color: #4f887d; background: #edf3f0; }
     .practice { color: #71807a; font-size: 11px; line-height: 1.55; }
     footer { margin-top: 38px; color: #84908b; font-size: 10px; }
   </style>
@@ -136,6 +161,7 @@ async function writePdf(path, details) {
     pdf.y = noticeTop + 66
 
     for (const [index, draft] of details.drafts.entries()) {
+      const summary = practiceSummary(draft)
       if (pdf.y > 610) pdf.addPage()
       pdf.moveTo(58, pdf.y).lineTo(554, pdf.y).lineWidth(0.8).strokeColor(COLORS.line).stroke()
       pdf.moveDown(1.4)
@@ -152,9 +178,14 @@ async function writePdf(path, details) {
       pdf.font('Times-Roman').fontSize(11).fillColor(COLORS.ink)
         .text(draft.body, { lineGap: 4, paragraphGap: 6 })
       pdf.moveDown(0.9)
+      pdf.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.ink).text('CORRECTED COPY')
+      pdf.moveDown(0.5)
+      pdf.font('Times-Roman').fontSize(11).fillColor(COLORS.ink)
+        .text(draft.correctedBody ?? draft.body, { lineGap: 4, paragraphGap: 6 })
+      pdf.moveDown(0.9)
       pdf.font('Helvetica-Oblique').fontSize(8).fillColor(COLORS.muted)
         .text(
-          `Local review found ${draft.findings.length} supported capitalization or punctuation ${draft.findings.length === 1 ? 'item' : 'items'}. Correction exercises are not part of this feasibility proof.`,
+          `${summary.text} Spelling practice remains pending until its module is integrated.`,
           { lineGap: 2 },
         )
       pdf.moveDown(1.4)

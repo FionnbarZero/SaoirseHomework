@@ -7,7 +7,7 @@ import { emptyActivityConfiguration, normalizeActivityConfiguration } from './ac
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 10
+const SCHEMA_VERSION = 11
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -216,7 +216,10 @@ export function createStore(filename, options = {}) {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       body TEXT NOT NULL,
+      corrected_body TEXT,
       findings_json TEXT NOT NULL,
+      exercise_progress_json TEXT NOT NULL DEFAULT '{}',
+      review_status TEXT NOT NULL DEFAULT 'draft',
       updated_at TEXT NOT NULL
     );
 
@@ -366,6 +369,9 @@ export function createStore(filename, options = {}) {
   ensureColumn('activity_session', 'reward_started_at', 'TEXT')
   ensureColumn('activity_session', 'reward_playback_active', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('game_session', 'week_id', 'TEXT')
+  ensureColumn('writing_submission', 'corrected_body', 'TEXT')
+  ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
+  ensureColumn('writing_submission', 'review_status', "TEXT NOT NULL DEFAULT 'draft'")
 
   const setMeta = db.prepare(`
     INSERT INTO app_meta (key, value) VALUES (?, ?)
@@ -391,8 +397,9 @@ export function createStore(filename, options = {}) {
     INSERT INTO reward_credit (id, source, remaining_seconds, earned_at) VALUES (?, ?, ?, ?)
   `)
   const insertDraft = db.prepare(`
-    INSERT INTO writing_submission (id, title, body, findings_json, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO writing_submission (
+      id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -812,13 +819,19 @@ export function createStore(filename, options = {}) {
       }))
 
     state.drafts = db
-      .prepare('SELECT id, title, body, findings_json, updated_at FROM writing_submission ORDER BY updated_at DESC')
+      .prepare(`
+        SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
+        FROM writing_submission ORDER BY updated_at DESC
+      `)
       .all()
       .map((row) => ({
         id: row.id,
         title: row.title,
         body: row.body,
+        correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
+        exerciseProgress: safeJson(row.exercise_progress_json, {}),
+        reviewStatus: row.review_status ?? 'draft',
         updatedAt: row.updated_at,
       }))
 
@@ -900,7 +913,11 @@ export function createStore(filename, options = {}) {
       for (const draft of state.drafts) {
         insertDraft.run(
           String(draft.id), String(draft.title ?? 'Untitled writing'), String(draft.body ?? ''),
-          JSON.stringify(Array.isArray(draft.findings) ? draft.findings : []), String(draft.updatedAt ?? now),
+          String(draft.correctedBody ?? draft.body ?? ''),
+          JSON.stringify(Array.isArray(draft.findings) ? draft.findings : []),
+          JSON.stringify(draft.exerciseProgress && typeof draft.exerciseProgress === 'object' ? draft.exerciseProgress : {}),
+          ['draft', 'practice', 'spelling-pending'].includes(draft.reviewStatus) ? draft.reviewStatus : 'draft',
+          String(draft.updatedAt ?? now),
         )
       }
 
@@ -1515,7 +1532,7 @@ export function createStore(filename, options = {}) {
     const idempotencyKey = `${weekId}:${documentId}`
     const existing = db.prepare('SELECT * FROM google_delivery WHERE idempotency_key = ?').get(idempotencyKey)
     const draftRows = db.prepare(`
-      SELECT id, title, body, findings_json, updated_at
+      SELECT id, title, body, corrected_body, findings_json, exercise_progress_json, review_status, updated_at
       FROM writing_submission
       WHERE length(trim(body)) > 0
       ORDER BY updated_at
@@ -1524,7 +1541,10 @@ export function createStore(filename, options = {}) {
       id: row.id,
       title: row.title,
       body: row.body,
+      correctedBody: row.corrected_body ?? row.body,
       findings: safeJson(row.findings_json, []),
+      exerciseProgress: safeJson(row.exercise_progress_json, {}),
+      reviewStatus: row.review_status ?? 'draft',
       updatedAt: row.updated_at,
     }))
 

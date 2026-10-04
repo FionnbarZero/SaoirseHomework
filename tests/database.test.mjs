@@ -27,8 +27,11 @@ function sampleState() {
       id: 'draft-1',
       title: 'A test draft',
       body: 'Today I tested persistence.',
+      correctedBody: 'Today I tested persistence.',
       updatedAt: '2026-10-03T07:00:00.000Z',
       findings: [],
+      exerciseProgress: { example: { correctionComplete: true, practiceCompleted: 5, incorrectAttempts: 1 } },
+      reviewStatus: 'spelling-pending',
     }],
     activeTimer: {
       kind: 'required',
@@ -64,10 +67,13 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.deepEqual(restored.optionalCompleted, ['voena:0'])
     assert.equal(restored.rewardCredits[0].remainingSeconds, 300)
     assert.equal(restored.drafts[0].title, 'A test draft')
+    assert.equal(restored.drafts[0].correctedBody, 'Today I tested persistence.')
+    assert.equal(restored.drafts[0].exerciseProgress.example.practiceCompleted, 5)
+    assert.equal(restored.drafts[0].reviewStatus, 'spelling-pending')
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 10)
+    assert.equal(reopened.info().schemaVersion, 11)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {

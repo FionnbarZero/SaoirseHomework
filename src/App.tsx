@@ -37,7 +37,6 @@ import {
   getFridayFunSummary,
   getToday,
   getWeekLabel,
-  inspectDraft,
   optionalSessionKey,
   progressForDay,
   type ActiveTimer,
@@ -46,6 +45,7 @@ import {
   type DayName,
   type Draft,
 } from './domain'
+import { advanceFindingProgress, applyCompletedCorrections, inspectDraft, writingReviewStatus } from './writing'
 import {
   acknowledgeControlledSession,
   connectMockGoogle,
@@ -848,7 +848,33 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   const [title, setTitle] = useState(latest?.title ?? '')
   const [body, setBody] = useState(latest?.body ?? '')
   const [showReview, setShowReview] = useState(false)
+  const [reviewDraftId, setReviewDraftId] = useState<string | null>(latest?.id ?? null)
+  const [answerMessage, setAnswerMessage] = useState('')
   const findings = useMemo(() => inspectDraft(body), [body])
+  const reviewDraft = state.drafts.find((draft) => draft.id === reviewDraftId)
+  const reviewFindings = reviewDraft?.findings ?? findings
+  const reviewProgress = reviewDraft?.exerciseProgress ?? {}
+  const activeFinding = reviewFindings.find((finding) => {
+    const progress = reviewProgress[finding.id]
+    return !progress?.correctionComplete || progress.practiceCompleted < finding.practice.length
+  })
+  const activeProgress = activeFinding
+    ? reviewProgress[activeFinding.id] ?? { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 0 }
+    : null
+  const activeTrial = activeFinding && activeProgress
+    ? activeProgress.correctionComplete
+      ? activeFinding.practice[activeProgress.practiceCompleted]
+      : activeFinding.correction
+    : null
+  const totalExerciseSteps = reviewFindings.length * 6
+  const completedExerciseSteps = reviewFindings.reduce((total, finding) => {
+    const progress = reviewProgress[finding.id]
+    return total + (progress?.correctionComplete ? 1 : 0) + Math.min(5, progress?.practiceCompleted ?? 0)
+  }, 0)
+
+  useEffect(() => {
+    setAnswerMessage('')
+  }, [activeTrial?.id])
 
   const save = () => {
     if (!title.trim() && !body.trim()) return
@@ -856,10 +882,36 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
       id: latest?.id ?? crypto.randomUUID(),
       title: title.trim() || 'Untitled writing',
       body,
+      correctedBody: body,
       updatedAt: new Date().toISOString(),
       findings,
+      exerciseProgress: {},
+      reviewStatus: findings.length ? 'practice' : 'spelling-pending',
     }
     setState((current) => ({ ...current, drafts: [draft, ...current.drafts.filter((item) => item.id !== draft.id)] }))
+    setReviewDraftId(draft.id)
+    setShowReview(true)
+  }
+
+  const chooseAnswer = (choice: string) => {
+    if (!reviewDraft || !activeFinding || !activeProgress || !activeTrial) return
+    const correct = choice === activeTrial.correctAnswer
+    const nextItem = advanceFindingProgress(activeProgress, correct, activeFinding.practice.length)
+    const nextProgress = { ...reviewProgress, [activeFinding.id]: nextItem }
+    const correctedBody = applyCompletedCorrections(reviewDraft.body, reviewFindings, nextProgress)
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+        ? {
+            ...draft,
+            correctedBody,
+            exerciseProgress: nextProgress,
+            reviewStatus: writingReviewStatus(reviewFindings, nextProgress),
+            updatedAt: new Date().toISOString(),
+          }
+        : draft),
+    }))
+    setAnswerMessage(correct ? 'Correct! Keep going.' : 'Try again. That answer does not advance your practice count.')
   }
 
   return (
@@ -870,9 +922,10 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
       </div>
       <div className="writing-grid">
         <div className="editor-card">
-          <input className="title-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Give your writing a title…" spellCheck={false} />
+          <input className="title-input" value={title} disabled={showReview} onChange={(event) => setTitle(event.target.value)} placeholder="Give your writing a title…" spellCheck={false} />
           <textarea
             value={body}
+            disabled={showReview}
             onChange={(event) => setBody(event.target.value)}
             placeholder="Start writing here…"
             spellCheck={false}
@@ -886,16 +939,35 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
           <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>Ready to review?</h3><p>We’ll look for rules we know well.</p></div></div>
           {!showReview ? (
             <div className="review-empty">
+              <div className="review-category"><span>✓</span><p><strong>Grammar</strong><small>Agreement, articles, and basic tense</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
-              <button className="primary-button full-button" disabled={!body.trim()} onClick={() => { save(); setShowReview(true) }}>Save & check my writing</button>
+              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>Save & check my writing</button>
+            </div>
+          ) : activeFinding && activeTrial ? (
+            <div className="writing-exercise">
+              <div className="exercise-progress">
+                <span>{completedExerciseSteps} of {totalExerciseSteps} steps</span>
+                <div><i style={{ width: `${totalExerciseSteps ? (completedExerciseSteps / totalExerciseSteps) * 100 : 100}%` }} /></div>
+              </div>
+              <small className="exercise-category">{activeFinding.category} · {activeProgress?.correctionComplete ? `practice ${Math.min(5, (activeProgress?.practiceCompleted ?? 0) + 1)} of 5` : 'your sentence'}</small>
+              <h4>{activeFinding.message}</h4>
+              <p>{activeTrial.prompt}</p>
+              <div className="exercise-choices">
+                {activeTrial.choices.map((choice) => (
+                  <button key={choice} onClick={() => chooseAnswer(choice)}>{choice}</button>
+                ))}
+              </div>
+              {answerMessage && <p className={answerMessage.startsWith('Correct') ? 'answer-message correct' : 'answer-message'} aria-live="polite">{answerMessage}</p>}
+              <button className="text-button" onClick={() => setShowReview(false)}>Return to draft</button>
             </div>
           ) : (
-            <div className="findings">
-              <div className="findings-summary"><strong>{findings.length ? `${findings.length} practice ${findings.length === 1 ? 'idea' : 'ideas'}` : 'Nice careful writing!'}</strong><p>{findings.length ? 'These high-confidence rules are ready for practice.' : 'No supported issues were found in this draft.'}</p></div>
-              {findings.map((finding) => (
-                <div className="finding" key={finding.id}><span>{finding.category === 'Capitalization' ? 'Aa' : '.,?'}</span><div><small>{finding.category}</small><strong>{finding.message}</strong><p>{finding.suggestion}</p></div></div>
-              ))}
+            <div className="writing-complete">
+              <span><Check size={24} /></span>
+              <h3>{reviewFindings.length ? 'Correction practice complete!' : 'No supported issues found.'}</h3>
+              <p>Your untouched original and corrected copy are saved separately.</p>
+              {reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
+              <div className="spelling-pending"><LockKeyhole size={16} /><p><strong>Spelling is still pending.</strong> Writing cannot be marked complete until the supplied spelling-practice module is integrated.</p></div>
               <button className="secondary-button full-button" onClick={() => setShowReview(false)}>Keep writing</button>
             </div>
           )}

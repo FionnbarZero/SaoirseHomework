@@ -8,6 +8,9 @@ import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
+import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
+import { enforceRootOwnedRuntime } from './runtime-security.mjs'
+import { createUserSessionBroker } from './user-session-broker.mjs'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -24,22 +27,37 @@ const googleMode = process.env.HOMEWORK_GOOGLE_MODE === 'live' ? 'live' : 'safe-
 const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim()
 const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
 const guardianSharedSecret = String(process.env.HOMEWORK_GUARDIAN_SHARED_SECRET ?? '').trim()
-const parentAuthorizationConfigured = guardianSharedSecret.length >= 32
+const lifecycleKeyFile = String(process.env.HOMEWORK_LIFECYCLE_KEY_FILE ?? '').trim()
+const requireRootOwnership = process.env.HOMEWORK_REQUIRE_ROOT_OWNERSHIP === '1'
 const securityMode = process.env.HOMEWORK_SECURITY_MODE === 'enforcing' ? 'enforcing' : 'preview'
 const parentAuthorization = createParentAuthorization()
 const parentSessionCookie = 'fionnbar_parent_session'
-const googleKeychain = createMacOSKeychain()
+if (requireRootOwnership) {
+  enforceRootOwnedRuntime({ dataDirectory, keyFile: lifecycleKeyFile, serviceRoot: projectRoot })
+}
+const lifecycleAuthenticator = createLifecycleAuthenticatorFromEnvironment()
+const userSessionBroker = createUserSessionBroker({
+  authenticator: lifecycleAuthenticator,
+  required: requireRootOwnership,
+})
+const googleKeychain = requireRootOwnership ? null : createMacOSKeychain()
+const googleCredentialBroker = requireRootOwnership ? userSessionBroker.googleCredentials : null
+const parentAuthorizationConfigured = requireRootOwnership
+  ? userSessionBroker.configured
+  : guardianSharedSecret.length >= 32
 const store = createStore(databasePath, {
   timeZone,
+  enforceFilePermissions: requireRootOwnership,
   googleLiveConfiguration: {
     mode: googleMode,
     clientConfigured: Boolean(googleClientId),
-    keychainAvailable: googleKeychain.available,
+    keychainAvailable: googleCredentialBroker?.available ?? googleKeychain?.available ?? false,
   },
 })
 const googleLive = createGoogleLiveIntegration({
   store,
   keychain: googleKeychain,
+  credentialBroker: googleCredentialBroker,
   clientId: googleClientId,
   clientSecret: googleClientSecret,
   redirectUri: serviceOrigin,
@@ -48,11 +66,8 @@ const googleLive = createGoogleLiveIntegration({
   timeZone,
 })
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
-const readingGameUrl = new URL(
-  process.env.HOMEWORK_READING_GAME_URL || `${serviceOrigin}/reading-game-simulator.html`,
-)
 const readingGameOrigin = new URL(
-  process.env.HOMEWORK_READING_GAME_ORIGIN || readingGameUrl.origin,
+  process.env.HOMEWORK_READING_GAME_ORIGIN || serviceOrigin,
 ).origin
 const youtubeLaunchUrl = 'https://www.youtube.com/'
 const youtubePlaybackOrigins = [
@@ -61,19 +76,26 @@ const youtubePlaybackOrigins = [
   'https://m.youtube.com',
   'https://music.youtube.com',
 ]
-if (readingGameUrl.origin !== readingGameOrigin) {
-  throw new Error('HOMEWORK_READING_GAME_URL must use HOMEWORK_READING_GAME_ORIGIN')
-}
-
 const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
 const selfReportedActivities = new Set(['mandarin', 'math', 'english-packet'])
-const parentOverrideActivities = new Set(['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo'])
+const parentOverrideActivities = new Set([
+  'mandarin',
+  'level-chinese',
+  'du-chinese',
+  'math',
+  'english-packet',
+  'reading-strategies',
+  'ninja-dojo',
+])
 const optionalActivities = new Map([
   ['voena', { label: 'Voena', sessions: 3, targetSeconds: 20 * 60 }],
   ['drums', { label: 'Drum Drills', sessions: 3, targetSeconds: 20 * 60 }],
   ['band', { label: 'Band Practice', sessions: 3, targetSeconds: 20 * 60 }],
-  ['level-chinese', { label: 'Level Chinese', sessions: 2, targetSeconds: 20 * 60 }],
-  ['du-chinese', { label: 'Du Chinese', sessions: 2, targetSeconds: 20 * 60 }],
+])
+const requiredTimedActivities = new Map([
+  ['ninja-dojo', { label: 'Ninja Dojo' }],
+  ['level-chinese', { label: 'Level Chinese' }],
+  ['du-chinese', { label: 'Du Chinese' }],
 ])
 const guardianPolicy = {
   version: '1',
@@ -153,10 +175,15 @@ function bearerToken(request) {
 }
 
 function guardianRequestIsAuthenticated(request) {
-  return parentAuthorizationConfigured && parentAuthorization.safeEqual(
-    bearerToken(request),
-    guardianSharedSecret,
-  )
+  if (requireRootOwnership) {
+    try {
+      userSessionBroker.authenticateAccess(request.headers.authorization)
+      return true
+    } catch {
+      return false
+    }
+  }
+  return parentAuthorizationConfigured && parentAuthorization.safeEqual(bearerToken(request), guardianSharedSecret)
 }
 
 function requireGuardian(request) {
@@ -172,6 +199,10 @@ function requireGuardian(request) {
     error.code = 'guardian_authentication_required'
     throw error
   }
+}
+
+function requireUserSessionBroker(request) {
+  return userSessionBroker.authenticateAccess(request.headers.authorization)
 }
 
 function requireParent(request, options = {}) {
@@ -250,21 +281,22 @@ function serveArtifact(artifact, response) {
 
 function resolveSessionRequest(body) {
   if (body.kind === 'required') {
-    if (body.activityId !== 'ninja-dojo' || !days.has(body.sessionKey)) {
+    const activity = requiredTimedActivities.get(body.activityId)
+    if (!activity || !days.has(body.sessionKey)) {
       throw new Error('Unsupported required activity session')
     }
-    const plan = buildActivitySessionPlan('ninja-dojo', store.getActivityConfiguration())
+    const plan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
     if (!store.getChromeExtensionStatus().connected) {
-      const error = new Error('Managed Chrome must be connected before Ninja Dojo can start')
+      const error = new Error(`Managed Chrome must be connected before ${activity.label} can start`)
       error.status = 409
       error.code = 'managed_chrome_required'
       throw error
     }
     return {
       kind: 'required',
-      activityId: 'ninja-dojo',
+      activityId: body.activityId,
       sessionKey: body.sessionKey,
-      label: 'Ninja Dojo',
+      label: activity.label,
       targetSeconds: plan.targetSeconds,
       plan,
     }
@@ -453,16 +485,64 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/guardian/lifecycle' && request.method === 'GET') {
-      return sendJson(response, 200, store.getGuardianLifecycle())
+      return sendJson(response, 200, lifecycleAuthenticator.authenticate(store.getGuardianLifecycle()))
     }
 
     if (url.pathname === '/api/learning-session/start' && request.method === 'POST') {
-      const lifecycle = store.startLearningSession()
+      const lifecycle = lifecycleAuthenticator.authenticate(store.startLearningSession())
       return sendJson(response, 200, {
         lifecycle,
         state: store.loadState(),
         meta: store.info(),
       })
+    }
+
+    if (url.pathname === '/api/user-broker/work' && request.method === 'GET') {
+      requireUserSessionBroker(request)
+      const guardian = store.recordGuardianHeartbeat({
+        guardianId: 'signed-guardian-agent',
+        mode: securityMode === 'enforcing' ? 'enforcing' : 'dry-run',
+        decision: 'user-session-broker-ready',
+        version: '0.8.0',
+      })
+      return sendJson(response, 200, {
+        parentAuthorizationChallenge: parentAuthorization.pendingChallenge(),
+        operation: userSessionBroker.nextOperation(),
+        guardian,
+      })
+    }
+
+    const userBrokerOperationMatch = url.pathname.match(/^\/api\/user-broker\/operations\/([^/]+)$/)
+    if (userBrokerOperationMatch && request.method === 'POST') {
+      requireUserSessionBroker(request)
+      const body = await readJson(request)
+      const result = userSessionBroker.completeOperation(
+        decodeURIComponent(userBrokerOperationMatch[1]),
+        body,
+      )
+      return sendJson(response, 200, result)
+    }
+
+    if (url.pathname === '/api/user-broker/parent-authorization' && request.method === 'POST') {
+      const body = await readJson(request)
+      const challenge = parentAuthorization.getChallenge(body.challengeId)
+      if (!challenge || challenge.status !== 'pending') {
+        return sendJson(response, 404, {
+          error: 'Parent authorization challenge was not found or has expired',
+          code: 'parent_challenge_expired',
+        })
+      }
+      const decision = userSessionBroker.authenticateParentDecision(body.authentication, challenge)
+      const resolved = decision.approved
+        ? parentAuthorization.approveChallenge(challenge.id)
+        : parentAuthorization.denyChallenge(challenge.id)
+      store.addAudit(decision.approved
+        ? 'parent_authorization_approved_by_native_broker'
+        : 'parent_authorization_denied_by_native_broker', {
+        challengeId: challenge.id,
+        purpose: challenge.purpose,
+      })
+      return sendJson(response, 200, { challenge: resolved })
     }
 
     if (url.pathname === '/api/parent/auth/status' && request.method === 'GET') {
@@ -549,6 +629,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === '/api/guardian/parent-approval' && request.method === 'POST') {
+      if (requireRootOwnership) {
+        return sendJson(response, 403, {
+          error: 'Protected mode requires a daemon-authenticated native authorization assertion',
+          code: 'native_parent_authorization_required',
+        })
+      }
       requireGuardian(request)
       const body = await readJson(request)
       const challenge = body.approved === true
@@ -778,20 +864,28 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/game-sessions' && request.method === 'POST') {
       const body = await readJson(request)
-      const { session, nonce } = store.startGameSession({
+      const { session } = store.startGameSession({
         activityId: body.activityId,
         day: body.day,
         expectedOrigin: readingGameOrigin,
       })
-      const launchUrl = new URL(readingGameUrl)
-      launchUrl.hash = new URLSearchParams({
-        sessionId: session.id,
-        nonce,
-        day: session.day,
-        completionUrl: `${serviceOrigin}/api/game-sessions/${encodeURIComponent(session.id)}/complete`,
-      }).toString()
       return sendJson(response, 201, {
-        gameSession: { ...session, launchUrl: launchUrl.toString() },
+        gameSession: session,
+        state: store.loadState(),
+        meta: store.info(),
+      })
+    }
+
+    const writingCompletionMatch = url.pathname.match(/^\/api\/game-sessions\/([^/]+)\/complete-writing$/)
+    if (writingCompletionMatch && request.method === 'POST') {
+      const body = await readJson(request)
+      const result = store.completeWritingGameSession({
+        id: decodeURIComponent(writingCompletionMatch[1]),
+        draftId: body.draftId,
+      })
+      return sendJson(response, 200, {
+        gameSession: result.session,
+        evidence: result.evidence,
         state: store.loadState(),
         meta: store.info(),
       })
@@ -898,7 +992,7 @@ const server = createServer(async (request, response) => {
 server.listen(port, host, () => {
   console.log(`Homework service listening at ${serviceOrigin}`)
   console.log(`SQLite database: ${databasePath}`)
-  console.log(`Reading game origin: ${readingGameOrigin}`)
+  console.log(`Writing remediation origin: ${readingGameOrigin}`)
   console.log(`Google delivery mode: ${googleMode}`)
   console.log(`Parent authorization: ${parentAuthorizationConfigured ? 'configured' : 'locked (shared secret missing)'}`)
   console.log(`Recovery security mode: ${securityMode}`)
@@ -916,6 +1010,7 @@ initialGoogleQueueRun.unref()
 function close() {
   clearInterval(googleQueueInterval)
   clearTimeout(initialGoogleQueueRun)
+  userSessionBroker.close()
   server.close(() => {
     store.close()
     process.exit(0)

@@ -1,18 +1,32 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  DEFAULT_DU_CHINESE_FLASHCARD_URL,
+  DEFAULT_DU_CHINESE_READING_URL,
+  DEFAULT_NINJA_DOJO_URL,
   buildActivitySessionPlan,
   emptyActivityConfiguration,
   normalizeActivityConfiguration,
 } from '../server/activity-config.mjs'
 
-test('activity configuration stays fail-closed until every required URL is present', () => {
+test('reviewed activity links are ready while activities without links stay fail-closed', () => {
   const empty = emptyActivityConfiguration()
-  assert.equal(empty.ninjaDojo.ready, false)
-  assert.equal(empty.duChinese.ready, false)
+  assert.equal(empty.ninjaDojo.ready, true)
+  assert.equal(empty.ninjaDojo.launchUrl, DEFAULT_NINJA_DOJO_URL)
+  assert.deepEqual(empty.ninjaDojo.allowedOrigins, ['https://weeklydictation-g5-beta.web.app'])
+  assert.equal(empty.duChinese.ready, true)
+  assert.equal(empty.duChinese.readingUrl, DEFAULT_DU_CHINESE_READING_URL)
+  assert.equal(empty.duChinese.flashcardUrl, DEFAULT_DU_CHINESE_FLASHCARD_URL)
+  assert.deepEqual(empty.duChinese.allowedOrigins, ['https://duchinese.net'])
   assert.equal(empty.levelChinese.ready, false)
+  const ninja = buildActivitySessionPlan('ninja-dojo', empty)
+  assert.equal(ninja.phases[0].launchUrl, DEFAULT_NINJA_DOJO_URL)
+  assert.deepEqual(ninja.phases[0].creditOrigins, ['https://weeklydictation-g5-beta.web.app'])
+  const du = buildActivitySessionPlan('du-chinese', empty)
+  assert.equal(du.phases[0].launchUrl, DEFAULT_DU_CHINESE_READING_URL)
+  assert.equal(du.phases[1].launchUrl, DEFAULT_DU_CHINESE_FLASHCARD_URL)
   assert.throws(
-    () => buildActivitySessionPlan('du-chinese', empty),
+    () => buildActivitySessionPlan('level-chinese', empty),
     (error) => error.status === 409 && error.code === 'activity_not_configured',
   )
 })

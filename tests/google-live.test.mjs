@@ -42,7 +42,13 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
     body: 'the original',
     correctedBody: 'The original.',
     findings: [{ id: 'one' }],
-    exerciseProgress: { one: { correctionComplete: true, practiceCompleted: 5 } },
+    exerciseProgress: {
+      one: {
+        correctionComplete: true,
+        practiceCompleted: 5,
+        attemptResults: [false, true, true, false, true, true],
+      },
+    },
     updatedAt: '2026-10-02T20:00:00.000Z',
   }]
   const text = buildWeeklyDocumentText(delivery, drafts)
@@ -50,6 +56,8 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
   assert.match(text, /Corrected copy\nThe original\./)
   assert.match(text, /6 of 6 grammar, punctuation, and capitalization steps completed/)
   assert.match(text, /No supported common misspellings were detected/)
+  assert.match(text, /Writing game score: 4 of 6 correct \(67%\)/)
+  assert.match(text, /Accuracy by response: 0%, 50%, 67%, 50%, 60%, 67%/)
   assert.equal(schoolYearForWeek('2026-09-28'), '2026-2027')
 
   const raw = buildGmailRawMessage({
@@ -93,6 +101,63 @@ test('Keychain adapter reads, writes, and deletes only the dedicated generic pas
     'delete-generic-password',
   ])
   assert.ok(calls.every((call) => call.command === '/usr/bin/security'))
+})
+
+test('protected Google authorization delegates OAuth and Keychain work to the user-session broker', async () => {
+  const store = createStore(':memory:', {
+    googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
+  })
+  const calls = []
+  const credentialBroker = {
+    available: true,
+    async beginAuthorization(input) {
+      calls.push({ kind: 'begin', input })
+      return {
+        authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=broker-state',
+        expiresAt: '2026-10-03T20:10:00.000Z',
+      }
+    },
+    async completeAuthorization(input) {
+      calls.push({ kind: 'complete', input })
+      return {
+        accessToken: 'ephemeral-access-token',
+        expiresAt: '2026-10-03T21:00:00.000Z',
+        accountEmail: 'fionnbar@example.com',
+      }
+    },
+    async disconnect(input) {
+      calls.push({ kind: 'disconnect', input })
+      return { revocationWarning: null }
+    },
+  }
+  const unavailableRootKeychain = {
+    available: false,
+    async getRefreshToken() { throw new Error('root service must not read a login Keychain') },
+    async setRefreshToken() { throw new Error('root service must not write a login Keychain') },
+    async deleteRefreshToken() { throw new Error('root service must not delete a login Keychain item') },
+  }
+  try {
+    const integration = createGoogleLiveIntegration({
+      store,
+      keychain: unavailableRootKeychain,
+      credentialBroker,
+      clientId: 'desktop-client-id',
+      redirectUri: 'http://127.0.0.1:4179/api/google/live/oauth/callback',
+      outputDirectory: '/private/tmp/fionnbar-unused-google-test',
+      mode: 'live',
+      now: () => new Date('2026-10-03T20:00:00.000Z'),
+    })
+    const authorization = await integration.beginAuthorization()
+    assert.match(authorization.authorizationUrl, /broker-state/)
+    const state = await integration.completeAuthorization({ state: 'broker-state', code: 'broker-code' })
+    assert.equal(state.accountEmail, 'fionnbar@example.com')
+    await integration.disconnect()
+    assert.deepEqual(calls.map((call) => call.kind), ['begin', 'complete', 'disconnect'])
+    assert.equal(calls[0].input.clientId, 'desktop-client-id')
+    assert.deepEqual(calls[0].input.scopes, GOOGLE_SCOPES)
+  } finally {
+    store.close()
+  }
 })
 
 test('live delivery creates Drive hierarchy and still emails PDF when sharing fails', async () => {

@@ -90,13 +90,15 @@ private enum ParentError: Error, LocalizedError {
 private struct ServiceCoordinator {
   let agent = SMAppService.agent(plistName: GuardianConstants.agentPlistName)
   let daemon = SMAppService.daemon(plistName: GuardianConstants.daemonPlistName)
+  let homeworkService = SMAppService.daemon(plistName: GuardianConstants.servicePlistName)
 
   func register() throws {
     guard Bundle.main.bundleURL.pathExtension == "app" else { throw ParentError.requiresAppBundle }
-    try registerIfNeeded(daemon, label: "daemon")
+    try registerIfNeeded(homeworkService, label: "homework service")
+    try registerIfNeeded(daemon, label: "guardian daemon")
     try registerIfNeeded(agent, label: "agent")
     printStatus()
-    if daemon.status == .requiresApproval {
+    if daemon.status == .requiresApproval || homeworkService.status == .requiresApproval {
       print("Administrator approval is still required in System Settings > General > Login Items.")
     }
   }
@@ -104,12 +106,14 @@ private struct ServiceCoordinator {
   func unregister() throws {
     if agent.status != .notRegistered { try agent.unregister() }
     if daemon.status != .notRegistered { try daemon.unregister() }
+    if homeworkService.status != .notRegistered { try homeworkService.unregister() }
     printStatus()
   }
 
   func printStatus() {
     print("Agent: \(label(for: agent.status))")
     print("Daemon: \(label(for: daemon.status))")
+    print("Homework service: \(label(for: homeworkService.status))")
   }
 
   private func registerIfNeeded(_ service: SMAppService, label: String) throws {

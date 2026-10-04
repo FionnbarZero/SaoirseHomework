@@ -1,14 +1,18 @@
 import Foundation
 
 public enum GuardianConstants {
-  public static let protocolVersion = 3
-  public static let serviceVersion = "0.5.0"
+  public static let protocolVersion = 6
+  public static let serviceVersion = "0.8.0"
   public static let parentBundleIdentifier = "com.fionnbar.homework.parent"
   public static let agentBundleIdentifier = "com.fionnbar.homework.guardian.agent"
   public static let daemonBundleIdentifier = "com.fionnbar.homework.guardian.daemon"
+  public static let serviceBundleIdentifier = "com.fionnbar.homework.service"
   public static let daemonMachService = "com.fionnbar.homework.guardian.daemon"
   public static let agentPlistName = "com.fionnbar.homework.guardian.agent.plist"
   public static let daemonPlistName = "com.fionnbar.homework.guardian.daemon.plist"
+  public static let servicePlistName = "com.fionnbar.homework.service.plist"
+  public static let lifecycleKeyPath = "/Library/Application Support/FionnbarHomework/Privileged/lifecycle-auth.key"
+  public static let serviceDataPath = "/Library/Application Support/FionnbarHomework/Data"
   public static let administratorRight = "system.privilege.admin"
   public static let authorizationExternalFormLength = 32
   public static let maximumRequestAge: TimeInterval = 30
@@ -21,6 +25,12 @@ public enum GuardianConstants {
   func evaluateApplication(_ encodedRequest: Data, withReply reply: @escaping (Data) -> Void)
   func beginChildSession(_ encodedRequest: Data, withReply reply: @escaping (Data) -> Void)
   func completeChildSession(_ encodedRequest: Data, withReply reply: @escaping (Data) -> Void)
+  func issueServiceAccess(_ encodedRequest: Data, withReply reply: @escaping (Data) -> Void)
+  func authorizeParentChallenge(
+    _ encodedRequest: Data,
+    authorizationExternalForm: Data,
+    withReply reply: @escaping (Data) -> Void
+  )
   func setHomeworkMode(
     _ encodedRequest: Data,
     authorizationExternalForm: Data,
@@ -154,6 +164,8 @@ public struct GuardianBeginChildSessionRequest: Codable, Equatable, Sendable {
   public let serviceSessionID: UUID
   public let weekID: String
   public let day: String
+  public let lifecycleAssertion: Data
+  public let lifecycleAuthenticationTag: Data
 
   public init(
     protocolVersion: Int = GuardianConstants.protocolVersion,
@@ -161,7 +173,9 @@ public struct GuardianBeginChildSessionRequest: Codable, Equatable, Sendable {
     requestedAt: Date = Date(),
     serviceSessionID: UUID,
     weekID: String,
-    day: String
+    day: String,
+    lifecycleAssertion: Data = Data(),
+    lifecycleAuthenticationTag: Data = Data()
   ) {
     self.protocolVersion = protocolVersion
     self.requestID = requestID
@@ -169,6 +183,8 @@ public struct GuardianBeginChildSessionRequest: Codable, Equatable, Sendable {
     self.serviceSessionID = serviceSessionID
     self.weekID = weekID
     self.day = day
+    self.lifecycleAssertion = lifecycleAssertion
+    self.lifecycleAuthenticationTag = lifecycleAuthenticationTag
   }
 }
 
@@ -210,6 +226,8 @@ public struct GuardianCompleteChildSessionRequest: Codable, Equatable, Sendable 
   public let guardianSessionID: UUID
   public let completionCapability: String
   public let proof: GuardianServiceCompletionProof
+  public let lifecycleAssertion: Data
+  public let lifecycleAuthenticationTag: Data
 
   public init(
     protocolVersion: Int = GuardianConstants.protocolVersion,
@@ -217,7 +235,9 @@ public struct GuardianCompleteChildSessionRequest: Codable, Equatable, Sendable 
     requestedAt: Date = Date(),
     guardianSessionID: UUID,
     completionCapability: String,
-    proof: GuardianServiceCompletionProof
+    proof: GuardianServiceCompletionProof,
+    lifecycleAssertion: Data = Data(),
+    lifecycleAuthenticationTag: Data = Data()
   ) {
     self.protocolVersion = protocolVersion
     self.requestID = requestID
@@ -225,6 +245,8 @@ public struct GuardianCompleteChildSessionRequest: Codable, Equatable, Sendable 
     self.guardianSessionID = guardianSessionID
     self.completionCapability = completionCapability
     self.proof = proof
+    self.lifecycleAssertion = lifecycleAssertion
+    self.lifecycleAuthenticationTag = lifecycleAuthenticationTag
   }
 }
 
@@ -272,6 +294,47 @@ public struct GuardianReplacePolicyRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct GuardianServiceAccessRequest: Codable, Equatable, Sendable {
+  public let protocolVersion: Int
+  public let requestID: UUID
+  public let requestedAt: Date
+
+  public init(
+    protocolVersion: Int = GuardianConstants.protocolVersion,
+    requestID: UUID = UUID(),
+    requestedAt: Date = Date()
+  ) {
+    self.protocolVersion = protocolVersion
+    self.requestID = requestID
+    self.requestedAt = requestedAt
+  }
+}
+
+public struct GuardianParentChallengeAuthorizationRequest: Codable, Equatable, Sendable {
+  public let protocolVersion: Int
+  public let requestID: UUID
+  public let requestedAt: Date
+  public let challengeID: String
+  public let purpose: String
+  public let approved: Bool
+
+  public init(
+    protocolVersion: Int = GuardianConstants.protocolVersion,
+    requestID: UUID = UUID(),
+    requestedAt: Date = Date(),
+    challengeID: String,
+    purpose: String,
+    approved: Bool
+  ) {
+    self.protocolVersion = protocolVersion
+    self.requestID = requestID
+    self.requestedAt = requestedAt
+    self.challengeID = challengeID
+    self.purpose = purpose
+    self.approved = approved
+  }
+}
+
 public struct GuardianApplicationEvaluationRequest: Codable, Equatable, Sendable {
   public let protocolVersion: Int
   public let observedAt: Date
@@ -293,6 +356,7 @@ public struct GuardianXPCReply: Codable, Equatable, Sendable {
   public let status: GuardianDaemonStatus?
   public let decision: GuardianApplicationDecision?
   public let sessionGrant: GuardianChildSessionGrant?
+  public let serviceAuthentication: GuardianServiceBrokerEnvelope?
   public let errorCode: GuardianXPCErrorCode?
   public let message: String
 
@@ -301,6 +365,7 @@ public struct GuardianXPCReply: Codable, Equatable, Sendable {
     status: GuardianDaemonStatus? = nil,
     decision: GuardianApplicationDecision? = nil,
     sessionGrant: GuardianChildSessionGrant? = nil,
+    serviceAuthentication: GuardianServiceBrokerEnvelope? = nil,
     errorCode: GuardianXPCErrorCode? = nil,
     message: String
   ) {
@@ -308,6 +373,7 @@ public struct GuardianXPCReply: Codable, Equatable, Sendable {
     self.status = status
     self.decision = decision
     self.sessionGrant = sessionGrant
+    self.serviceAuthentication = serviceAuthentication
     self.errorCode = errorCode
     self.message = message
   }
@@ -340,6 +406,17 @@ public struct GuardianXPCReply: Codable, Equatable, Sendable {
     )
   }
 
+  public static func serviceAuthenticated(
+    _ authentication: GuardianServiceBrokerEnvelope,
+    message: String
+  ) -> GuardianXPCReply {
+    GuardianXPCReply(
+      success: true,
+      serviceAuthentication: authentication,
+      message: message
+    )
+  }
+
   public static func rejected(_ code: GuardianXPCErrorCode, message: String) -> GuardianXPCReply {
     GuardianXPCReply(success: false, errorCode: code, message: message)
   }
@@ -350,7 +427,9 @@ public enum GuardianXPCErrorCode: String, Codable, Equatable, Sendable {
   case duplicateRequest
   case internalFailure
   case invalidAuthorization
+  case invalidParentChallenge
   case invalidRequest
+  case lifecycleAuthenticationDenied
   case sessionCapabilityDenied
   case sessionClosed
   case sessionConflict
@@ -383,6 +462,7 @@ public enum GuardianRequestValidationError: Error, LocalizedError, Equatable {
   case invalidCompletionProof
   case invalidPolicyRevision(Int)
   case invalidPolicySize(Int)
+  case invalidParentChallenge
   case invalidWeekID(String)
   case payloadTooLarge(Int)
   case protectedBundleIdentifier(String)
@@ -410,6 +490,8 @@ public enum GuardianRequestValidationError: Error, LocalizedError, Equatable {
       "Policy revision must be positive, not \(revision)."
     case .invalidPolicySize(let count):
       "A policy must contain between 1 and \(GuardianConstants.maximumBlockedBundleIdentifiers) blocked bundle identifiers, not \(count)."
+    case .invalidParentChallenge:
+      "The Parent authorization challenge is malformed."
     case .invalidWeekID(let weekID):
       "Invalid child-session week identifier: \(weekID)."
     case .payloadTooLarge(let count):
@@ -517,22 +599,52 @@ public enum GuardianRequestValidator {
     }
     try validateWeekAndDay(weekID: request.proof.weekID, day: request.proof.day)
     let optionalTargets = [
-      "Monday": 3,
-      "Tuesday": 6,
-      "Wednesday": 9,
-      "Thursday": 11,
-      "Friday": 13,
+      "Monday": 2,
+      "Tuesday": 4,
+      "Wednesday": 6,
+      "Thursday": 8,
+      "Friday": 9,
     ]
     guard let expectedOptionalTarget = optionalTargets[request.proof.day] else {
       throw GuardianRequestValidationError.invalidCompletionProof
     }
     guard request.proof.eligibleAt <= now.addingTimeInterval(5),
-          request.proof.requiredTarget == 5,
+          request.proof.requiredTarget == 7,
           request.proof.requiredCompleted == request.proof.requiredTarget,
           request.proof.optionalTarget == expectedOptionalTarget,
           request.proof.optionalCompleted >= request.proof.optionalTarget,
-          request.proof.optionalCompleted <= 13 else {
+          request.proof.optionalCompleted <= 9 else {
       throw GuardianRequestValidationError.invalidCompletionProof
+    }
+  }
+
+  public static func validate(
+    _ request: GuardianServiceAccessRequest,
+    now: Date = Date()
+  ) throws {
+    try validateProtocolAndDate(
+      protocolVersion: request.protocolVersion,
+      requestedAt: request.requestedAt,
+      now: now
+    )
+  }
+
+  public static func validate(
+    _ request: GuardianParentChallengeAuthorizationRequest,
+    now: Date = Date()
+  ) throws {
+    try validateProtocolAndDate(
+      protocolVersion: request.protocolVersion,
+      requestedAt: request.requestedAt,
+      now: now
+    )
+    let printable = request.challengeID.unicodeScalars.allSatisfy {
+      !CharacterSet.controlCharacters.contains($0)
+    }
+    guard (3...256).contains(request.challengeID.count),
+          printable,
+          ["dashboard", "sensitive"].contains(request.purpose) else {
+      throw GuardianRequestValidationError.invalidParentChallenge
     }
   }
 

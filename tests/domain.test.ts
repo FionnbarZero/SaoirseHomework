@@ -14,6 +14,7 @@ import {
   applyCompletedCorrections,
   inspectAmbiguousDraft,
   inspectDraft,
+  scoreWritingResponses,
   writingReviewStatus,
 } from '../src/writing.ts'
 
@@ -70,6 +71,27 @@ test('high-confidence agreement and simple-list rules produce exact replacements
   assert.equal(inspectDraft('An book fell.')[0].replacement, 'A')
 })
 
+test('reviewed Grade 5 patterns cover perfect tense, tense consistency, conjunction pairs, and punctuation', () => {
+  const samples = [
+    ['She has write three pages.', 'perfect-tense-participle', 'written'],
+    ['Yesterday, she walked and plays outside.', 'past-tense-consistency', 'played'],
+    ['Either Maya nor Leo will present.', 'correlative-conjunction', 'or'],
+    ['Please come with I.', 'object-pronoun-after-preposition', 'me'],
+    ['Wow that was close!', 'interjection-comma', ', '],
+    ['Thanks Mom.', 'direct-address-comma', ', '],
+  ]
+
+  for (const [body, ruleId, replacement] of samples) {
+    const finding = inspectDraft(body).find((item) => item.ruleId === ruleId)
+    assert.ok(finding, `${ruleId} should be detected`)
+    assert.equal(finding.replacement, replacement)
+    assert.equal(finding.practice.length, 5)
+  }
+
+  assert.equal(inspectDraft('She has written three pages.').length, 0)
+  assert.equal(inspectDraft('Neither rain nor wind stopped us.').length, 0)
+})
+
 test('accepted writing corrections build a separate copy and require five practice answers', () => {
   const body = 'today i play with this books'
   const findings = inspectDraft(body)
@@ -87,16 +109,133 @@ test('accepted writing corrections build a separate copy and require five practi
   assert.equal(writingReviewStatus(findings, { ...progress, [first.id]: { ...progress[first.id], practiceCompleted: 4 } }), 'practice')
 })
 
-test('incorrect writing answers do not advance the exercise counter', () => {
+test('every writing response advances once while incorrect answers remain scored incorrect', () => {
   const initial = { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 0 }
   const wrongCorrection = advanceFindingProgress(initial, false)
   const corrected = advanceFindingProgress(wrongCorrection, true)
   const wrongPractice = advanceFindingProgress(corrected, false)
   const practiced = advanceFindingProgress(wrongPractice, true)
 
-  assert.deepEqual(wrongCorrection, { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 1 })
-  assert.deepEqual(wrongPractice, { correctionComplete: true, practiceCompleted: 0, incorrectAttempts: 2 })
-  assert.deepEqual(practiced, { correctionComplete: true, practiceCompleted: 1, incorrectAttempts: 2 })
+  assert.deepEqual(wrongCorrection, {
+    correctionComplete: true,
+    practiceCompleted: 0,
+    incorrectAttempts: 1,
+    attemptResults: [false],
+  })
+  assert.deepEqual(wrongPractice, {
+    correctionComplete: true,
+    practiceCompleted: 2,
+    incorrectAttempts: 2,
+    attemptResults: [false, true, false],
+  })
+  assert.deepEqual(practiced, {
+    correctionComplete: true,
+    practiceCompleted: 3,
+    incorrectAttempts: 2,
+    attemptResults: [false, true, false, true],
+  })
+})
+
+test('the checker fails closed on ambiguous read tense and fixes audited capitalization and punctuation cases', () => {
+  assert.deepEqual(inspectDraft('Yesterday she read a book.'), [])
+  assert.deepEqual(inspectDraft('She read the book last night.'), [])
+  assert.deepEqual(
+    inspectDraft('He said "hello"').map((finding) => [finding.ruleId, finding.replacement]),
+    [['terminal-punctuation', '."']],
+  )
+  assert.deepEqual(
+    inspectDraft('MONDAY and DR. Lee met dr. smith.').map((finding) => [finding.ruleId, finding.replacement]),
+    [
+      ['calendar-capital', 'Monday'],
+      ['title-capital', 'Dr. Lee'],
+      ['title-capital', 'Dr. Smith'],
+    ],
+  )
+})
+
+test('every personalized finding creates five reviewed multiple-choice trials with one declared answer', () => {
+  const samples = [
+    'Yesterday I walk home.',
+    'She play games.',
+    'They plays games.',
+    'I ate a apple.',
+    'I read an book.',
+    'This books fell.',
+    'She helped themselves.',
+    'today we begin.',
+    'My friend and i left.',
+    'We meet on MONDAY.',
+    'dr. smith arrived.',
+    'I dont know.',
+    'After I finished my work I played outside.',
+    'I packed socks shoes and books.',
+    'Maya said, “Hello.',
+    'The project is finished',
+    'She has write three pages.',
+    'Yesterday, she walked and plays outside.',
+    'Either Maya nor Leo will present.',
+    'Please come with I.',
+    'Wow that was close!',
+    'Thanks Mom.',
+  ]
+  const findings = samples.flatMap((sample) => inspectDraft(sample))
+  const ruleIds = new Set(findings.map((finding) => finding.ruleId))
+  assert.deepEqual([...ruleIds].sort(), [
+    'article-a',
+    'article-an',
+    'calendar-capital',
+    'contraction-apostrophe',
+    'correlative-conjunction',
+    'demonstrative-agreement',
+    'direct-address-comma',
+    'interjection-comma',
+    'intro-comma',
+    'object-pronoun-after-preposition',
+    'paired-quotes',
+    'past-tense-consistency',
+    'perfect-tense-participle',
+    'pronoun-agreement',
+    'pronoun-i',
+    'sentence-capital',
+    'simple-list-commas',
+    'subject-verb-plural',
+    'subject-verb-singular',
+    'tense-yesterday',
+    'terminal-punctuation',
+    'title-capital',
+  ])
+  for (const finding of findings) {
+    assert.equal(finding.practice.length, 5, `${finding.ruleId} should have five similar trials`)
+    for (const trial of finding.practice) {
+      assert.equal(trial.choices.length, 3, `${trial.id} should have three choices`)
+      assert.equal(new Set(trial.choices).size, 3, `${trial.id} choices should be unique`)
+      assert.equal(
+        trial.choices.filter((choice) => choice === trial.correctAnswer).length,
+        1,
+        `${trial.id} should contain its declared correct answer exactly once`,
+      )
+      assert.equal(inspectDraft(trial.correctAnswer).length, 0, `${trial.id} declares a sentence the checker flags`)
+      assert.equal(trial.explanation.length >= 35, true, `${trial.id} should explain the rule`)
+    }
+  }
+})
+
+test('writing score records response accuracy and produces cumulative line-graph points', () => {
+  const finding = inspectDraft('She play games.')[0]
+  const score = scoreWritingResponses([finding], {
+    [finding.id]: {
+      correctionComplete: true,
+      practiceCompleted: 3,
+      incorrectAttempts: 2,
+      attemptResults: [false, true, false, true],
+    },
+  })
+  assert.deepEqual(score, {
+    correct: 2,
+    total: 4,
+    percent: 50,
+    cumulativePercent: [0, 50, 33, 50],
+  })
 })
 
 test('the parent dictionary supplies exact capitalization without guessing', () => {
@@ -119,7 +258,7 @@ test('Friday Fun stays locked until Friday work and all practice are complete', 
   const state: AppState = {
     ...structuredClone(defaultState),
     requiredByDay: { ...defaultState.requiredByDay, Friday: fridayRequired },
-    optionalCompleted: Array.from({ length: 12 }, (_, index) => `session:${index}`),
+    optionalCompleted: Array.from({ length: 8 }, (_, index) => `session:${index}`),
     drafts: [{
       id: 'draft-1',
       title: 'Friday story',
@@ -130,11 +269,11 @@ test('Friday Fun stays locked until Friday work and all practice are complete', 
   }
 
   assert.equal(getFridayFunSummary(state).unlocked, false)
-  state.optionalCompleted.push('session:12')
+  state.optionalCompleted.push('session:8')
   const summary = getFridayFunSummary(state)
   assert.equal(summary.unlocked, true)
-  assert.equal(summary.optionalCompleted, 13)
+  assert.equal(summary.optionalCompleted, 9)
   assert.equal(summary.writingDrafts, 1)
   assert.equal(summary.writingWords, 4)
-  assert.equal(summary.rewardsEarned, 13)
+  assert.equal(summary.rewardsEarned, 9)
 })

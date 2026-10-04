@@ -43,6 +43,18 @@ function practiceSummary(draft) {
   }, 0)
   const total = draft.findings.length * 6
   const categories = [...new Set(draft.findings.map((finding) => finding.category))]
+  const attemptResults = draft.findings.flatMap((finding) => {
+    const results = progress[finding.id]?.attemptResults
+    return Array.isArray(results) ? results.filter((result) => typeof result === 'boolean') : []
+  })
+  const correctResponses = attemptResults.filter(Boolean).length
+  const scorePercent = attemptResults.length
+    ? Math.round((correctResponses / attemptResults.length) * 100)
+    : null
+  const cumulativePercent = attemptResults.map((_, index) => {
+    const correctSoFar = attemptResults.slice(0, index + 1).filter(Boolean).length
+    return Math.round((correctSoFar / (index + 1)) * 100)
+  })
   const spellingWords = Array.isArray(draft.spellingWords) ? draft.spellingWords : []
   const spellingProgress = draft.spellingProgress && typeof draft.spellingProgress === 'object'
     ? draft.spellingProgress
@@ -65,6 +77,9 @@ function practiceSummary(draft) {
     text: draft.findings.length
       ? `${completed} of ${total} correction and practice steps completed across ${categories.join(', ').toLowerCase()}.`
       : 'No supported grammar, punctuation, or capitalization findings were detected.',
+    scoreText: scorePercent === null
+      ? 'No scored writing responses were recorded.'
+      : `Writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%). Accuracy by response: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`,
     spellingText,
   }
 }
@@ -81,7 +96,7 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
       <div class="body">${escapeHtml(draft.body).replaceAll('\n', '<br />')}</div>
       <h3>Corrected copy</h3>
       <div class="body corrected">${escapeHtml(draft.correctedBody ?? draft.body).replaceAll('\n', '<br />')}</div>
-      <p class="practice">${escapeHtml(summary.text)} ${escapeHtml(summary.spellingText)}</p>
+      <p class="practice">${escapeHtml(summary.text)} ${escapeHtml(summary.scoreText)} ${escapeHtml(summary.spellingText)}</p>
     </section>
   `
   }).join('')
@@ -202,7 +217,7 @@ async function writePdf(path, details) {
       pdf.moveDown(0.9)
       pdf.font('Helvetica-Oblique').fontSize(8).fillColor(COLORS.muted)
         .text(
-          `${summary.text} ${summary.spellingText}`,
+          `${summary.text} ${summary.scoreText} ${summary.spellingText}`,
           { lineGap: 2 },
         )
       pdf.moveDown(1.4)

@@ -1,10 +1,26 @@
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const MAX_ALLOWED_ORIGINS = 20
+export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
+const DEFAULT_NINJA_DOJO_ORIGIN = new URL(DEFAULT_NINJA_DOJO_URL).origin
+export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
+export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
+const DEFAULT_DU_CHINESE_ORIGIN = new URL(DEFAULT_DU_CHINESE_READING_URL).origin
 
 export function emptyActivityConfiguration() {
   return {
-    ninjaDojo: { launchUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
-    duChinese: { readingUrl: '', flashcardUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    ninjaDojo: {
+      launchUrl: DEFAULT_NINJA_DOJO_URL,
+      redirectOrigins: [],
+      allowedOrigins: [DEFAULT_NINJA_DOJO_ORIGIN],
+      ready: true,
+    },
+    duChinese: {
+      readingUrl: DEFAULT_DU_CHINESE_READING_URL,
+      flashcardUrl: DEFAULT_DU_CHINESE_FLASHCARD_URL,
+      redirectOrigins: [],
+      allowedOrigins: [DEFAULT_DU_CHINESE_ORIGIN],
+      ready: true,
+    },
     levelChinese: { cleverUrl: '', learningUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
   }
 }

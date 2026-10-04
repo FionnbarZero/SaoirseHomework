@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { DatabaseSync } from 'node:sqlite'
@@ -8,17 +8,35 @@ import {
   inspectSpelling,
   spellingPracticeComplete,
 } from '../src/spelling.ts'
-import { applyCompletedCorrections, inspectAmbiguousDraft, inspectDraft } from '../src/writing.ts'
+import {
+  applyCompletedCorrections,
+  inspectAmbiguousDraft,
+  inspectDraft,
+  writingReviewStatus,
+} from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 14
+const SCHEMA_VERSION = 15
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
-const REQUIRED_ACTIVITY_IDS = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
-const OPTIONAL_TARGETS = { Monday: 3, Tuesday: 6, Wednesday: 9, Thursday: 11, Friday: 13 }
+const REQUIRED_ACTIVITY_IDS = [
+  'mandarin',
+  'level-chinese',
+  'du-chinese',
+  'math',
+  'english-packet',
+  'reading-strategies',
+  'ninja-dojo',
+]
+const OPTIONAL_SESSION_KEYS = new Set([
+  'voena:0', 'voena:1', 'voena:2',
+  'drums:0', 'drums:1', 'drums:2',
+  'band:0', 'band:1', 'band:2',
+])
+const OPTIONAL_TARGETS = { Monday: 2, Tuesday: 4, Wednesday: 6, Thursday: 8, Friday: 9 }
 const DEFAULT_TIME_ZONE = 'America/Los_Angeles'
 
 function emptyWeekContext() {
@@ -214,6 +232,7 @@ export function createStore(filename, options = {}) {
     keychainAvailable: options.googleLiveConfiguration?.keychainAvailable === true,
   }
   const db = new DatabaseSync(filename)
+  if (filename !== ':memory:' && options.enforceFilePermissions === true) chmodSync(filename, 0o600)
   db.exec('PRAGMA foreign_keys = ON')
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA synchronous = FULL')
@@ -225,7 +244,7 @@ export function createStore(filename, options = {}) {
 
     CREATE TABLE IF NOT EXISTS weekly_plan (
       week_id TEXT PRIMARY KEY,
-      optional_target INTEGER NOT NULL DEFAULT 13,
+      optional_target INTEGER NOT NULL DEFAULT 9,
       archived INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
@@ -505,8 +524,11 @@ export function createStore(filename, options = {}) {
   `)
   const upsertWeek = db.prepare(`
     INSERT INTO weekly_plan (week_id, optional_target, archived, updated_at)
-    VALUES (?, 13, 0, ?)
-    ON CONFLICT(week_id) DO UPDATE SET archived = 0, updated_at = excluded.updated_at
+    VALUES (?, 9, 0, ?)
+    ON CONFLICT(week_id) DO UPDATE SET
+      optional_target = 9,
+      archived = 0,
+      updated_at = excluded.updated_at
   `)
   const insertRequired = db.prepare(`
     INSERT OR IGNORE INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
@@ -613,6 +635,55 @@ export function createStore(filename, options = {}) {
         setMeta.run('active_week_id', migrationWeek)
       }
       setMeta.run('weekly_scope_migrated', '1')
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'daily_chinese_activities_migrated'`).get()?.value !== '1') {
+    const moved = db.prepare(`
+      SELECT week_id, session_key, completed_at
+      FROM weekly_optional_completion
+      WHERE session_key LIKE 'level-chinese:%' OR session_key LIKE 'du-chinese:%'
+      ORDER BY completed_at
+    `).all()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const completion of moved) {
+        const activityId = String(completion.session_key).split(':')[0]
+        const context = getWeekContext(new Date(completion.completed_at), timeZone)
+        const day = context.localDay === 'Sunday' && context.headStart
+          ? 'Monday'
+          : context.localDay
+        if (context.weekId === completion.week_id && DAYS.includes(day)) {
+          insertRequired.run(
+            completion.week_id,
+            day,
+            activityId,
+            'migrated-from-practice-bank',
+            completion.completed_at,
+          )
+        }
+      }
+      db.prepare(`
+        DELETE FROM weekly_optional_completion
+        WHERE session_key LIKE 'level-chinese:%' OR session_key LIKE 'du-chinese:%'
+      `).run()
+      db.prepare(`
+        DELETE FROM optional_completion
+        WHERE session_key LIKE 'level-chinese:%' OR session_key LIKE 'du-chinese:%'
+      `).run()
+      db.prepare('UPDATE weekly_plan SET optional_target = 9').run()
+      setMeta.run('daily_chinese_activities_migrated', '1')
+      if (moved.length > 0) {
+        insertAudit.run(
+          'chinese_activities_moved_to_daily_checklist',
+          JSON.stringify({ migratedPracticeCompletions: moved.length }),
+          asIso(wallNow()),
+        )
+      }
       db.exec('COMMIT')
     } catch (error) {
       db.exec('ROLLBACK')
@@ -1052,7 +1123,7 @@ export function createStore(filename, options = {}) {
 
     const requiredCompleted = Number(db.prepare(`
       SELECT count(*) AS count FROM weekly_daily_completion
-      WHERE week_id = ? AND day = ? AND activity_id IN (?, ?, ?, ?, ?)
+      WHERE week_id = ? AND day = ? AND activity_id IN (?, ?, ?, ?, ?, ?, ?)
     `).get(weekId, day, ...REQUIRED_ACTIVITY_IDS).count)
     const optionalCompleted = Number(db.prepare(`
       SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?
@@ -1159,7 +1230,9 @@ export function createStore(filename, options = {}) {
           }
         }
 
-        for (const sessionKey of [...new Set(state.optionalCompleted)]) {
+        for (const sessionKey of [...new Set(state.optionalCompleted)].filter(
+          (key) => OPTIONAL_SESSION_KEYS.has(String(key)),
+        )) {
           insertOptional.run(weekId, String(sessionKey), now)
           const activityId = String(sessionKey).split(':')[0]
           const hasRecord = db.prepare(`
@@ -1322,16 +1395,16 @@ export function createStore(filename, options = {}) {
     const expectedOrigin = normalizeOrigin(input.expectedOrigin)
     const ttlSeconds = Math.floor(Number(input.ttlSeconds ?? 60 * 60))
 
-    if (activityId !== GAME_ACTIVITY_ID) throw serviceError('Unsupported verified game activity')
+    if (activityId !== GAME_ACTIVITY_ID) throw serviceError('Unsupported verified writing activity')
     if (!DAYS.includes(day)) throw serviceError('Invalid weekday')
     if (!Number.isFinite(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 24 * 60 * 60) {
-      throw serviceError('Game session lifetime must be between 1 second and 24 hours')
+      throw serviceError('Writing session lifetime must be between 1 second and 24 hours')
     }
     const weekId = ensureCurrentWeek().weekId
     if (db.prepare(
       'SELECT 1 FROM weekly_daily_completion WHERE week_id = ? AND day = ? AND activity_id = ?',
     ).get(weekId, day, activityId)) {
-      throw serviceError('Reading Strategies is already complete for that day', 409, 'already_completed')
+      throw serviceError('Reading response writing is already complete for that day', 409, 'already_completed')
     }
 
     const id = makeId()
@@ -1435,6 +1508,105 @@ export function createStore(filename, options = {}) {
     }
 
     return completedSession
+  }
+
+  function completeWritingGameSession(input) {
+    const id = String(input.id ?? '')
+    const draftId = String(input.draftId ?? '')
+    let completedSession
+    let evidence
+
+    expireGameSessions()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = db.prepare('SELECT * FROM game_session WHERE id = ?').get(id)
+      if (!row) throw serviceError('Writing session not found', 404, 'session_not_found')
+
+      const now = asIso(wallNow())
+      if (row.status === 'expired') throw serviceError('Writing session has expired', 410, 'session_expired')
+      if (row.status === 'completed') throw serviceError('Writing session has already been used', 409, 'session_replayed')
+      if (row.status !== 'pending') throw serviceError('Writing session is no longer active', 409, 'session_inactive')
+
+      const draft = db.prepare(`
+        SELECT id, body, corrected_body, findings_json, exercise_progress_json,
+               spelling_words_json, spelling_progress_json, updated_at
+        FROM writing_submission WHERE id = ?
+      `).get(draftId)
+      if (!draft || !String(draft.body).trim()) {
+        throw serviceError('Save a writing response before completing this activity', 409, 'writing_required')
+      }
+      if (new Date(draft.updated_at).getTime() < new Date(row.created_at).getTime()) {
+        throw serviceError('This writing response must be reviewed during the current activity', 409, 'stale_writing')
+      }
+
+      const findings = safeJson(draft.findings_json, [])
+      const progress = safeJson(draft.exercise_progress_json, {})
+      const spellingWords = safeJson(draft.spelling_words_json, [])
+      const spellingProgress = safeJson(draft.spelling_progress_json, {})
+      const reviewStatus = writingReviewStatus(findings, progress, spellingWords, spellingProgress)
+      if (reviewStatus !== 'complete') {
+        throw serviceError(
+          'Answer every correction and practice question, then finish the editing step',
+          409,
+          'writing_practice_incomplete',
+        )
+      }
+
+      const responses = findings.flatMap((finding) => {
+        const item = progress[finding.id]
+        const results = Array.isArray(item?.attemptResults) ? item.attemptResults : []
+        if (results.length < finding.practice.length + 1) {
+          throw serviceError('Writing response evidence is incomplete', 409, 'writing_evidence_incomplete')
+        }
+        return results.slice(0, finding.practice.length + 1).map(Boolean)
+      })
+      const correct = responses.filter(Boolean).length
+      const total = responses.length
+      const percent = total ? Math.round((correct / total) * 100) : 100
+      evidence = {
+        draftId,
+        findingCount: findings.length,
+        correct,
+        total,
+        percent,
+        wordCount: String(draft.body).trim().split(/\s+/).length,
+        edited: String(draft.corrected_body ?? draft.body) !== String(draft.body) || findings.length === 0,
+      }
+
+      const update = db.prepare(`
+        UPDATE game_session
+        SET status = 'completed', completed_at = ?
+        WHERE id = ? AND status = 'pending'
+      `).run(now, id)
+      if (Number(update.changes) !== 1) {
+        throw serviceError('Writing session has already been used', 409, 'session_replayed')
+      }
+
+      db.prepare(`
+        INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
+        VALUES (?, ?, ?, 'writing-remediation', ?)
+        ON CONFLICT(week_id, day, activity_id) DO UPDATE SET
+          source = excluded.source,
+          completed_at = excluded.completed_at
+      `).run(row.week_id, row.day, row.activity_id, now)
+      insertCompletion.run(
+        `writing-game:${row.id}`, row.activity_id, row.day, 'game-verified', 'writing-remediation', row.id,
+        now, JSON.stringify({ ...evidence, weekId: row.week_id }),
+      )
+      completedSession = gameSessionFromRow({ ...row, status: 'completed', completed_at: now })
+      insertAudit.run(
+        'writing_game_session_completed',
+        JSON.stringify({ sessionId: row.id, activityId: row.activity_id, day: row.day, weekId: row.week_id, ...evidence }),
+        now,
+      )
+      db.exec('COMMIT')
+      reconcileFreeMode(row.week_id)
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+
+    return { session: completedSession, evidence }
   }
 
   function startSession(input) {
@@ -2422,6 +2594,7 @@ export function createStore(filename, options = {}) {
     startGameSession,
     getGameSession,
     completeGameSession,
+    completeWritingGameSession,
     startSession,
     heartbeatSession,
     cancelSession,

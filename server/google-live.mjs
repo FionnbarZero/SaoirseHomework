@@ -90,6 +90,18 @@ export function buildWeeklyDocumentText(delivery, drafts) {
       0,
     )
     const totalSteps = (draft.findings ?? []).length * 6
+    const attemptResults = (draft.findings ?? []).flatMap((finding) => {
+      const results = draft.exerciseProgress?.[finding.id]?.attemptResults
+      return Array.isArray(results) ? results.filter((result) => typeof result === 'boolean') : []
+    })
+    const correctResponses = attemptResults.filter(Boolean).length
+    const scorePercent = attemptResults.length
+      ? Math.round((correctResponses / attemptResults.length) * 100)
+      : null
+    const cumulativePercent = attemptResults.map((_, index) => {
+      const correctSoFar = attemptResults.slice(0, index + 1).filter(Boolean).length
+      return Math.round((correctSoFar / (index + 1)) * 100)
+    })
     const spellingWords = draft.spellingWords ?? []
     const spellingSteps = spellingWords.reduce((total, word) => {
       const item = draft.spellingProgress?.[word.id]
@@ -112,6 +124,12 @@ export function buildWeeklyDocumentText(delivery, drafts) {
         (spellingWords.length
           ? `${spellingSteps} of ${spellingTotal} spelling responses completed for ${spellingWords.length} ${spellingWords.length === 1 ? 'word' : 'words'}.`
           : 'No supported common misspellings were detected.'),
+      scorePercent === null
+        ? 'Writing game score: no scored responses were recorded.'
+        : `Writing game score: ${correctResponses} of ${attemptResults.length} correct (${scorePercent}%).`,
+      attemptResults.length
+        ? `Accuracy by response: ${cumulativePercent.map((value) => `${value}%`).join(', ')}.`
+        : '',
       '',
       '────────────────────────────────────────',
       '',
@@ -166,6 +184,7 @@ export function createGoogleLiveIntegration(options) {
   const {
     store,
     keychain,
+    credentialBroker = null,
     clientId,
     clientSecret = '',
     redirectUri,
@@ -186,8 +205,8 @@ export function createGoogleLiveIntegration(options) {
     if (!clientId) {
       throw liveError('A Google Desktop OAuth client ID is required', 'google_client_not_configured', 409)
     }
-    if (!keychain.available) {
-      throw liveError('macOS Keychain is required for live Google delivery', 'keychain_unavailable', 409)
+    if (credentialBroker ? !credentialBroker.available : !keychain?.available) {
+      throw liveError('The signed user-session Google credential broker is unavailable', 'keychain_unavailable', 409)
     }
   }
 
@@ -204,6 +223,14 @@ export function createGoogleLiveIntegration(options) {
 
   async function beginAuthorization() {
     assertEnabled()
+    if (credentialBroker) {
+      return credentialBroker.beginAuthorization({
+        clientId,
+        clientSecret,
+        redirectUri,
+        scopes: GOOGLE_SCOPES,
+      })
+    }
     const state = randomBytes(32).toString('base64url')
     const pkce = createPkcePair()
     const createdAt = now().getTime()
@@ -224,6 +251,28 @@ export function createGoogleLiveIntegration(options) {
 
   async function completeAuthorization({ state, code, error: authorizationError }) {
     assertEnabled()
+    if (credentialBroker) {
+      const credentials = await credentialBroker.completeAuthorization({
+        clientId,
+        clientSecret,
+        redirectUri,
+        scopes: GOOGLE_SCOPES,
+        state: String(state ?? ''),
+        code: String(code ?? ''),
+        error: String(authorizationError ?? ''),
+      })
+      if (!credentials?.accessToken || !credentials?.accountEmail) {
+        throw liveError('The signed user-session component returned incomplete Google credentials', 'google_broker_invalid', 502)
+      }
+      accessTokenCache = {
+        token: credentials.accessToken,
+        expiresAt: Number.isFinite(Date.parse(credentials.expiresAt))
+          ? Date.parse(credentials.expiresAt)
+          : now().getTime() + 3_600_000,
+      }
+      store.connectLiveGoogle({ accountEmail: credentials.accountEmail, scopes: GOOGLE_SCOPES })
+      return store.getLiveGoogleState()
+    }
     if (authorizationError) throw liveError(`Google authorization was not completed: ${authorizationError}`, 'google_oauth_denied', 400)
     const pending = pendingAuthorizations.get(String(state))
     pendingAuthorizations.delete(String(state))
@@ -264,6 +313,26 @@ export function createGoogleLiveIntegration(options) {
     assertEnabled()
     if (!forceRefresh && accessTokenCache && accessTokenCache.expiresAt - now().getTime() > 60_000) {
       return accessTokenCache.token
+    }
+    if (credentialBroker) {
+      try {
+        const credentials = await credentialBroker.accessToken({ clientId, clientSecret })
+        if (!credentials?.accessToken) throw new Error('Missing access token')
+        accessTokenCache = {
+          token: credentials.accessToken,
+          expiresAt: Number.isFinite(Date.parse(credentials.expiresAt))
+            ? Date.parse(credentials.expiresAt)
+            : now().getTime() + 3_600_000,
+        }
+        return accessTokenCache.token
+      } catch (error) {
+        store.disconnectLiveGoogle({
+          reason: 'Google authorization was revoked, expired, or unavailable in the user session',
+          lastError: 'Google authorization requires the signed user-session component',
+        })
+        accessTokenCache = null
+        throw liveError('Google authorization is unavailable. Authorize the account again.', 'google_reauthorization_required', 401, error)
+      }
     }
     const refreshToken = await keychain.getRefreshToken()
     if (!refreshToken) {
@@ -488,6 +557,20 @@ export function createGoogleLiveIntegration(options) {
 
   async function disconnect() {
     accessTokenCache = null
+    if (credentialBroker) {
+      let revocationWarning = null
+      try {
+        const result = await credentialBroker.disconnect({ clientId, clientSecret })
+        revocationWarning = result?.revocationWarning || null
+      } catch {
+        revocationWarning = 'The Google connection was disabled, but the signed user-session component could not confirm token removal.'
+      }
+      store.disconnectLiveGoogle({
+        reason: 'Authorization disconnected by parent',
+        ...(revocationWarning ? { lastError: revocationWarning } : {}),
+      })
+      return store.getLiveGoogleState()
+    }
     const refreshToken = await keychain.getRefreshToken()
     let revocationWarning = null
     if (refreshToken) {

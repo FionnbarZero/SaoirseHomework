@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import Security
 
-private let guardianVersion = "0.5.0"
+private let guardianVersion = "0.8.0"
 
 private struct GuardianPolicy: Decodable {
   let version: String

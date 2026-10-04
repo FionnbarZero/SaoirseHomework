@@ -84,6 +84,29 @@ public final class GuardianDaemonClient {
     }
   }
 
+  public func issueServiceAccess(
+    _ request: GuardianServiceAccessRequest = GuardianServiceAccessRequest()
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.issueServiceAccess(encodedRequest, withReply: reply)
+    }
+  }
+
+  public func authorizeParentChallenge(
+    _ request: GuardianParentChallengeAuthorizationRequest,
+    authorizationExternalForm: Data
+  ) throws -> GuardianXPCReply {
+    let encodedRequest = try GuardianWireCodec.encode(request)
+    return try perform { service, reply in
+      service.authorizeParentChallenge(
+        encodedRequest,
+        authorizationExternalForm: authorizationExternalForm,
+        withReply: reply
+      )
+    }
+  }
+
   public func setHomeworkMode(
     _ request: GuardianSetHomeworkModeRequest,
     authorizationExternalForm: Data

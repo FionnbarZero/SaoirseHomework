@@ -2,9 +2,9 @@
 
 ## Production enforcement boundary
 
-Version 0.5.0 adds a reviewable parent app with the structure required by Apple's Service Management framework and connects child learning sessions to its privileged boundary:
+Version 0.8.0 adds daily managed Level Chinese and Du Chinese activities, a nine-session music practice bank, and a reviewable parent app with the structure required by Apple's Service Management framework and hardened local-service and user-session boundaries:
 
-- `Fionnbar Homework Parent.app` registers an embedded per-user LaunchAgent and privileged LaunchDaemon through `SMAppService`.
+- `Fionnbar Homework Parent.app` registers one embedded per-user LaunchAgent and two privileged LaunchDaemons through `SMAppService`.
 - The agent and parent connect only to the daemon's named XPC service.
 - The daemon automatically rejects peers unless their code signature has the same Apple team and one of the two exact allowed identifiers.
 - The protocol exposes only status, application evaluation, typed child-session transitions, Homework-mode changes, and complete policy replacement. It has no generic command, path, shell, or arbitrary payload operation.
@@ -14,9 +14,17 @@ Version 0.5.0 adds a reviewable parent app with the structure required by Apple'
 - The signed session agent asks the daemon about the still-frontmost application every five seconds and sends an ordinary termination request only for a daemon-issued `blocked` decision. It never force-terminates an app.
 - Child entry creates a persistent service-session UUID. The signed agent may use it only to begin or maintain a restrictive daemon session.
 - Verified Free mode closes that session only when the agent presents both the matching server proof and the daemon's random completion capability. Completed and parent-overridden service-session IDs cannot restart.
+- A second `SMAppService` LaunchDaemon runs the packaged homework service from sealed app resources with its own bundled Node runtime.
+- The launcher creates `/Library/Application Support/FionnbarHomework/Data` as root-only `0700`; SQLite is forced to `0600` and child processes cannot replace its ledger.
+- The service and guardian daemon share a random 32-byte key generated under the root-only privileged directory. The key is never embedded or sent to the agent.
+- Each lifecycle response includes a 15-second opaque HMAC-SHA256 assertion. The daemon validates the tag, timestamp, session identity, mode, and exact completion totals before changing privileged state.
+- The daemon issues the signed login agent scoped 15-second service grants. The root service uses those grants for agent heartbeat and a bounded credential-operation queue; there is no production shared secret in the child session.
+- Native Parent approval runs in the signed agent, is independently revalidated by the privileged daemon, and reaches the root service only as an HMAC assertion bound to the exact challenge, purpose, and decision.
+- Google PKCE, token exchange, refresh, revocation, and refresh-token Keychain access run in the signed login agent. The root service receives only short-lived access tokens and never reads the child's login Keychain.
+- If the service is unavailable or a localhost impersonator returns unsigned or altered data, lifecycle synchronization is deferred while the agent continues enforcing the daemon's last persisted state.
 - Unsigned and ad-hoc builds refuse to run, and the release report stays non-installable until every component has one hardened team signature and the app has a stapled notarization ticket.
 
-The embedded release metadata records `enforcementIncluded: true` but keeps `productionReady: false`. Parent/root ownership for the loopback service and SQLite store, signed upgrade/rollback, and the second-Mac acceptance matrix remain release gates.
+The embedded release metadata records `enforcementIncluded: true` and `rootOwnedServiceIncluded: true` but keeps `productionReady: false`. Signing/notarization, signed upgrade/rollback, and the second-Mac acceptance matrix remain release gates.
 
 ### Build a production review app
 
@@ -27,6 +35,8 @@ npm run build:guardian-app
 ```
 
 This creates the app, release report, archive, and archive checksum under `guardian/build/`. With no Apple signing identity, the output is for code and bundle review only and reports `Install ready: no`.
+
+The builder copies the current Node executable into the sealed app, along with only the server's runtime resources and PDF dependencies. Build on the same macOS architecture as the target Mac, or provide a reviewed compatible runtime with `--node-binary`.
 
 After a Developer ID Application identity and notarization profile exist, build without creating the pre-notarization archive:
 
@@ -60,7 +70,7 @@ The parent executable supports these narrow operations once the app is signed an
   --disable-homework --reason "Parent-authorized maintenance"
 ```
 
-Registration may still require explicit daemon approval in **System Settings → General → Login Items**. Do not register this build on the daily-use child account until the local-service ownership boundary and the second-Mac tests below are complete.
+Registration may still require explicit daemon approval in **System Settings → General → Login Items**. The registration command now installs the homework service daemon first, then the guardian daemon and user agent. Do not register this build on the daily-use child account until the remaining integration and second-Mac tests below are complete.
 
 ## Legacy dry-run review bundle
 
@@ -137,9 +147,8 @@ No command deletes homework data, logs, or backups. There is intentionally no fo
 
 Before this package can enforce Homework mode on the daily-use child account:
 
-1. Package the fixed loopback service and SQLite store behind a parent/root-owned boundary so the child cannot stop, replace, redirect, or forge lifecycle responses.
-2. Obtain the Developer ID Application identity, notarize and staple the app, and confirm all three components share the expected team.
-3. Add signed upgrade and recoverable rollback handling for the app bundle.
-4. Run release, upgrade, rollback, crash, logout, sleep, restart, service-impersonation, and child-account bypass tests on the second Mac.
+1. Obtain the Developer ID Application identity, notarize and staple the app, and confirm every executable component shares the expected team.
+2. Add signed upgrade and recoverable rollback handling for the app bundle and its root-owned database/key material.
+3. Run release, upgrade, rollback, crash, logout, sleep, restart, HMAC and broker replay/tampering, service-impersonation, OAuth/Keychain, and child-account bypass tests on the second Mac.
 
 The current direct shared-secret flow remains a local feasibility test only.

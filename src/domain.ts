@@ -1,6 +1,9 @@
 export const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
 export type DayName = (typeof DAYS)[number]
 export type LocalDayName = DayName | 'Saturday' | 'Sunday'
+export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
+export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
+export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
 
 export type WeekContext = {
   weekId: string
@@ -57,6 +60,7 @@ export type FindingProgress = {
   correctionComplete: boolean
   practiceCompleted: number
   incorrectAttempts: number
+  attemptResults?: boolean[]
 }
 
 export type SpellingWord = {
@@ -301,6 +305,22 @@ export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
     icon: '你',
   },
   {
+    id: 'level-chinese',
+    title: 'Level Chinese',
+    description: 'Log in with Clever, then complete 20 active minutes in Level Learning.',
+    method: 'timer',
+    minutes: 20,
+    icon: '中',
+  },
+  {
+    id: 'du-chinese',
+    title: 'Du Chinese',
+    description: 'Read for 13 active minutes, then review flashcards for 7.',
+    method: 'timer',
+    minutes: 20,
+    icon: '读',
+  },
+  {
     id: 'math',
     title: 'Daily Math Practice',
     description: 'Complete today’s math practice.',
@@ -316,10 +336,10 @@ export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
   },
   {
     id: 'reading-strategies',
-    title: 'Reading Strategies Game',
-    description: 'Complete one verified game round.',
+    title: 'Reading Response Writing Game',
+    description: 'Write about a passage you chose, practice each detected error, and edit your response.',
     method: 'verified',
-    icon: 'RS',
+    icon: '✎',
   },
   {
     id: 'ninja-dojo',
@@ -367,33 +387,20 @@ export const OPTIONAL_ACTIVITIES: OptionalActivity[] = [
     icon: '⚡',
     detail: 'Rehearse this week’s vocals and tricky sections.',
   },
-  {
-    id: 'level-chinese',
-    title: 'Level Chinese',
-    instruction: 'Enter Level Learning',
-    sessions: 2,
-    minutes: 20,
-    icon: '中',
-    detail: 'Log in with Clever, then begin Level Learning.',
-  },
-  {
-    id: 'du-chinese',
-    title: 'Du Chinese',
-    instruction: 'Read, then review',
-    sessions: 2,
-    minutes: 20,
-    icon: '读',
-    detail: 'Read for 13 minutes, then use flashcards for 7.',
-  },
 ]
 
 export const OPTIONAL_TARGETS: Record<DayName, number> = {
-  Monday: 3,
-  Tuesday: 6,
-  Wednesday: 9,
-  Thursday: 11,
-  Friday: 13,
+  Monday: 2,
+  Tuesday: 4,
+  Wednesday: 6,
+  Thursday: 8,
+  Friday: 9,
 }
+
+export const OPTIONAL_SESSION_TOTAL = OPTIONAL_ACTIVITIES.reduce(
+  (total, activity) => total + activity.sessions,
+  0,
+)
 
 export const defaultState: AppState = {
   entered: false,
@@ -416,8 +423,19 @@ export const defaultState: AppState = {
   guardianConnected: false,
   chromeConnected: false,
   activityConfiguration: {
-    ninjaDojo: { launchUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
-    duChinese: { readingUrl: '', flashcardUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    ninjaDojo: {
+      launchUrl: DEFAULT_NINJA_DOJO_URL,
+      redirectOrigins: [],
+      allowedOrigins: ['https://weeklydictation-g5-beta.web.app'],
+      ready: true,
+    },
+    duChinese: {
+      readingUrl: DEFAULT_DU_CHINESE_READING_URL,
+      flashcardUrl: DEFAULT_DU_CHINESE_FLASHCARD_URL,
+      redirectOrigins: [],
+      allowedOrigins: ['https://duchinese.net'],
+      ready: true,
+    },
     levelChinese: { cleverUrl: '', learningUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
   },
   googleProof: {

@@ -14,31 +14,16 @@ type FindingInput = {
   wrongReplacement?: string
 }
 
-const PRACTICE: Record<Category, WritingTrial[]> = {
-  Grammar: [
-    trial('grammar-1', 'Choose the sentence with correct subject–verb agreement.', 'Every afternoon, she walks home.', 'Every afternoon, she walk home.', 'Every afternoon, she walking home.'),
-    trial('grammar-2', 'Choose the sentence with correct subject–verb agreement.', 'After school, they play outside.', 'After school, they plays outside.', 'After school, they playing outside.'),
-    trial('grammar-3', 'Choose the sentence with the correct article.', 'I ate an apple.', 'I ate a apple.', 'I ate an apples.'),
-    trial('grammar-4', 'Choose the sentence with consistent past tense.', 'Yesterday, we visited the library.', 'Yesterday, we visit the library.', 'Yesterday, we visiting the library.'),
-    trial('grammar-5', 'Choose the sentence with matching singular and plural words.', 'These books belong on the shelf.', 'This books belong on the shelf.', 'These book belong on the shelf.'),
-  ],
-  Punctuation: [
-    trial('punctuation-1', 'Choose the statement with the correct ending mark.', 'The science project is finished.', 'The science project is finished', 'The science project is finished..'),
-    trial('punctuation-2', 'Choose the question with the correct ending mark.', 'Where did I put my notebook?', 'Where did I put my notebook.', 'Where did I put my notebook'),
-    trial('punctuation-3', 'Choose the sentence with the introductory comma.', 'After I finished my work, I played outside.', 'After I finished my work I played outside.', 'After, I finished my work I played outside.'),
-    trial('punctuation-4', 'Choose the sentence with the correct apostrophe.', 'I don’t need help yet.', 'I dont need help yet.', 'I don’’t need help yet.'),
-    trial('punctuation-5', 'Choose the sentence with paired quotation marks.', 'Maya said, “Let’s begin.”', 'Maya said, “Let’s begin.', 'Maya said, Let’s begin.”'),
-  ],
-  Capitalization: [
-    trial('capitalization-1', 'Choose the sentence that begins correctly.', 'The dog waited by the door.', 'the dog waited by the door.', 'THe dog waited by the door.'),
-    trial('capitalization-2', 'Choose the sentence that capitalizes the pronoun I.', 'My sister and I made dinner.', 'My sister and i made dinner.', 'My sister and I Made dinner.'),
-    trial('capitalization-3', 'Choose the sentence that capitalizes the day.', 'Our lesson is on Monday.', 'Our lesson is on monday.', 'Our lesson is on MONday.'),
-    trial('capitalization-4', 'Choose the sentence that capitalizes the month.', 'School begins in August.', 'School begins in august.', 'School begins in AUgust.'),
-    trial('capitalization-5', 'Choose the sentence that capitalizes the title.', 'Dr. Lee read our stories.', 'dr. Lee read our stories.', 'DR. Lee read our stories.'),
-  ],
-}
+type PracticeRow = [correct: string, wrongOne: string, wrongTwo: string]
 
-function trial(id: string, prompt: string, correct: string, wrongOne: string, wrongTwo: string): WritingTrial {
+function trial(
+  id: string,
+  prompt: string,
+  explanation: string,
+  correct: string,
+  wrongOne: string,
+  wrongTwo: string,
+): WritingTrial {
   const choices = Number(id.at(-1)) % 2 === 0
     ? [wrongOne, correct, wrongTwo]
     : [correct, wrongTwo, wrongOne]
@@ -47,9 +32,283 @@ function trial(id: string, prompt: string, correct: string, wrongOne: string, wr
     prompt,
     choices,
     correctAnswer: correct,
-    explanation: 'That choice follows the rule in the prompt.',
+    explanation,
   }
 }
+
+function practiceSet(id: string, prompt: string, explanation: string, rows: PracticeRow[]) {
+  return rows.map((row, index) => trial(`${id}-${index + 1}`, prompt, explanation, ...row))
+}
+
+const RULE_PRACTICE: Record<string, WritingTrial[]> = {
+  'tense-yesterday': practiceSet(
+    'tense-yesterday',
+    'Choose the sentence that stays in the past tense.',
+    'A past-time clue such as “yesterday” or “last night” needs a past-tense verb.',
+    [
+      ['Yesterday, we visited the library.', 'Yesterday, we visit the library.', 'Yesterday, we visiting the library.'],
+      ['Last night, she walked home.', 'Last night, she walks home.', 'Last night, she walk home.'],
+      ['Yesterday, they played soccer.', 'Yesterday, they play soccer.', 'Yesterday, they playing soccer.'],
+      ['Last week, I cooked dinner.', 'Last week, I cook dinner.', 'Last week, I cooking dinner.'],
+      ['Yesterday, he jumped over the puddle.', 'Yesterday, he jumps over the puddle.', 'Yesterday, he jump over the puddle.'],
+    ],
+  ),
+  'subject-verb-singular': practiceSet(
+    'subject-verb-singular',
+    'Choose the sentence with correct subject–verb agreement.',
+    'In the present tense, a singular subject such as “he,” “she,” or “it” needs a matching singular verb.',
+    [
+      ['Every afternoon, she walks home.', 'Every afternoon, she walk home.', 'Every afternoon, she walking home.'],
+      ['He plays outside after school.', 'He play outside after school.', 'He playing outside after school.'],
+      ['The dog runs to the gate.', 'The dog run to the gate.', 'The dog running to the gate.'],
+      ['It makes a loud sound.', 'It make a loud sound.', 'It making a loud sound.'],
+      ['She studies before dinner.', 'She study before dinner.', 'She studying before dinner.'],
+    ],
+  ),
+  'subject-verb-plural': practiceSet(
+    'subject-verb-plural',
+    'Choose the sentence with correct subject–verb agreement.',
+    'The subjects “I,” “you,” “we,” and “they” use the base form of a present-tense verb.',
+    [
+      ['After school, they play outside.', 'After school, they plays outside.', 'After school, they playing outside.'],
+      ['We walk to the library.', 'We walks to the library.', 'We walking to the library.'],
+      ['I write in my journal.', 'I writes in my journal.', 'I writing in my journal.'],
+      ['You have a good idea.', 'You has a good idea.', 'You having a good idea.'],
+      ['They study together.', 'They studies together.', 'They studying together.'],
+    ],
+  ),
+  'article-an': practiceSet(
+    'article-an',
+    'Choose the sentence with the correct article.',
+    'Use “an” before a word that begins with a vowel sound.',
+    [
+      ['I ate an apple.', 'I ate a apple.', 'I ate an apples.'],
+      ['She drew an elephant.', 'She drew a elephant.', 'She drew an elephants.'],
+      ['We had an idea.', 'We had a idea.', 'We had an ideas.'],
+      ['He carried an umbrella.', 'He carried a umbrella.', 'He carried an umbrellas.'],
+      ['That is an excellent answer.', 'That is a excellent answer.', 'That is an excellents answer.'],
+    ],
+  ),
+  'article-a': practiceSet(
+    'article-a',
+    'Choose the sentence with the correct article.',
+    'Use “a” before a word that begins with a consonant sound.',
+    [
+      ['I borrowed a book.', 'I borrowed an book.', 'I borrowed a books.'],
+      ['She saw a dog.', 'She saw an dog.', 'She saw a dogs.'],
+      ['We played a game.', 'We played an game.', 'We played a games.'],
+      ['He told a story.', 'He told an story.', 'He told a stories.'],
+      ['I sharpened a pencil.', 'I sharpened an pencil.', 'I sharpened a pencils.'],
+    ],
+  ),
+  'demonstrative-agreement': practiceSet(
+    'demonstrative-agreement',
+    'Choose the sentence whose pointing word matches the noun.',
+    'Use “this” or “that” with one item and “these” or “those” with more than one.',
+    [
+      ['These books belong on the shelf.', 'This books belong on the shelf.', 'These book belong on the shelf.'],
+      ['Those dogs are friendly.', 'That dogs are friendly.', 'Those dog are friendly.'],
+      ['This story is funny.', 'These story is funny.', 'This stories is funny.'],
+      ['That game was difficult.', 'Those game was difficult.', 'That games was difficult.'],
+      ['These ideas could work.', 'This ideas could work.', 'These idea could work.'],
+    ],
+  ),
+  'pronoun-agreement': practiceSet(
+    'pronoun-agreement',
+    'Choose the sentence with a pronoun that matches its subject.',
+    'A singular subject needs a matching singular reflexive pronoun.',
+    [
+      ['She taught herself to knit.', 'She taught themselves to knit.', 'She taught herselfs to knit.'],
+      ['He made himself a snack.', 'He made themselves a snack.', 'He made himselfs a snack.'],
+      ['She introduced herself to the class.', 'She introduced themselves to the class.', 'She introduced herselfs to the class.'],
+      ['He helped himself to some water.', 'He helped themselves to some water.', 'He helped himselfs to some water.'],
+      ['She reminded herself to practice.', 'She reminded themselves to practice.', 'She reminded herselfs to practice.'],
+    ],
+  ),
+  'sentence-capital': practiceSet(
+    'sentence-capital',
+    'Choose the sentence that begins correctly.',
+    'The first word of every sentence begins with a capital letter.',
+    [
+      ['The dog waited by the door.', 'the dog waited by the door.', 'THe dog waited by the door.'],
+      ['My class planted a garden.', 'my class planted a garden.', 'MY class planted a garden.'],
+      ['After lunch, we read quietly.', 'after lunch, we read quietly.', 'AFter lunch, we read quietly.'],
+      ['Tomorrow will be sunny.', 'tomorrow will be sunny.', 'TOmorrow will be sunny.'],
+      ['Everyone cheered at the end.', 'everyone cheered at the end.', 'EVeryone cheered at the end.'],
+    ],
+  ),
+  'pronoun-i': practiceSet(
+    'pronoun-i',
+    'Choose the sentence that capitalizes the pronoun “I.”',
+    'The pronoun “I” is always capitalized.',
+    [
+      ['My sister and I made dinner.', 'My sister and i made dinner.', 'My sister and II made dinner.'],
+      ['I finished my homework.', 'i finished my homework.', 'II finished my homework.'],
+      ['Sam and I rode our bikes.', 'Sam and i rode our bikes.', 'Sam and II rode our bikes.'],
+      ['When I arrived, class had started.', 'When i arrived, class had started.', 'When II arrived, class had started.'],
+      ['I think the answer is seven.', 'i think the answer is seven.', 'II think the answer is seven.'],
+    ],
+  ),
+  'calendar-capital': practiceSet(
+    'calendar-capital',
+    'Choose the sentence that capitalizes the day or month correctly.',
+    'Names of days and months begin with one capital letter.',
+    [
+      ['Our lesson is on Monday.', 'Our lesson is on monday.', 'Our lesson is on MONDAY.'],
+      ['School begins in August.', 'School begins in august.', 'School begins in AUGUST.'],
+      ['We practice on Friday.', 'We practice on friday.', 'We practice on FRIDAY.'],
+      ['Her birthday is in January.', 'Her birthday is in january.', 'Her birthday is in JANUARY.'],
+      ['The trip starts on Tuesday.', 'The trip starts on tuesday.', 'The trip starts on TUESDAY.'],
+    ],
+  ),
+  'title-capital': practiceSet(
+    'title-capital',
+    'Choose the sentence that capitalizes a person’s title and name correctly.',
+    'A title and the person’s name each begin with one capital letter.',
+    [
+      ['Dr. Lee read our stories.', 'dr. Lee read our stories.', 'DR. Lee read our stories.'],
+      ['Mr. Smith opened the door.', 'mr. smith opened the door.', 'MR. SMITH opened the door.'],
+      ['Ms. Rivera teaches science.', 'ms. Rivera teaches science.', 'MS. RIVERA teaches science.'],
+      ['Mrs. Green called the office.', 'mrs. green called the office.', 'MRS. GREEN called the office.'],
+      ['Dr. Brown checked the results.', 'dr. brown checked the results.', 'DR. BROWN checked the results.'],
+    ],
+  ),
+  'contraction-apostrophe': practiceSet(
+    'contraction-apostrophe',
+    'Choose the sentence with the contraction written correctly.',
+    'A contraction uses one apostrophe to show where letters were removed.',
+    [
+      ['I don’t need help yet.', 'I dont need help yet.', 'I don’’t need help yet.'],
+      ['She can’t find her notebook.', 'She cant find her notebook.', 'She can’’t find her notebook.'],
+      ['We won’t be late.', 'We wont be late.', 'We won’’t be late.'],
+      ['I’m ready to begin.', 'Im ready to begin.', 'I’’m ready to begin.'],
+      ['They’re waiting outside.', 'Theyre waiting outside.', 'They’’re waiting outside.'],
+    ],
+  ),
+  'intro-comma': practiceSet(
+    'intro-comma',
+    'Choose the sentence with the introductory comma in the correct place.',
+    'A dependent introductory clause is followed by a comma before the main clause.',
+    [
+      ['After I finished my work, I played outside.', 'After I finished my work I played outside.', 'After, I finished my work I played outside.'],
+      ['Before we ate dinner, we washed our hands.', 'Before we ate dinner we washed our hands.', 'Before, we ate dinner we washed our hands.'],
+      ['When she reached school, she called home.', 'When she reached school she called home.', 'When, she reached school she called home.'],
+      ['If it rains, we will stay inside.', 'If it rains we will stay inside.', 'If, it rains we will stay inside.'],
+      ['While they waited, they read a book.', 'While they waited they read a book.', 'While, they waited they read a book.'],
+    ],
+  ),
+  'simple-list-commas': practiceSet(
+    'simple-list-commas',
+    'Choose the sentence that punctuates a list of three items correctly.',
+    'Use commas to separate three items in a series.',
+    [
+      ['I packed socks, shoes, and books.', 'I packed socks shoes and books.', 'I packed, socks shoes, and books.'],
+      ['We saw lions, tigers, and bears.', 'We saw lions tigers and bears.', 'We saw, lions tigers, and bears.'],
+      ['She likes apples, pears, and grapes.', 'She likes apples pears and grapes.', 'She likes, apples pears, and grapes.'],
+      ['I brought paper, pencils, and markers.', 'I brought paper pencils and markers.', 'I brought, paper pencils, and markers.'],
+      ['They chose red, blue, and green.', 'They chose red blue and green.', 'They chose, red blue, and green.'],
+    ],
+  ),
+  'paired-quotes': practiceSet(
+    'paired-quotes',
+    'Choose the sentence with paired quotation marks.',
+    'A direct quotation needs an opening and a closing quotation mark.',
+    [
+      ['Maya said, “Let’s begin.”', 'Maya said, “Let’s begin.', 'Maya said, Let’s begin.”'],
+      ['“Please sit down,” said Mr. Lee.', '“Please sit down, said Mr. Lee.', 'Please sit down,” said Mr. Lee.'],
+      ['I heard her shout, “Wait!”', 'I heard her shout, “Wait!', 'I heard her shout, Wait!”'],
+      ['Dad asked, “Are you ready?”', 'Dad asked, “Are you ready?', 'Dad asked, Are you ready?”'],
+      ['“That was amazing,” Fionnbar said.', '“That was amazing, Fionnbar said.', 'That was amazing,” Fionnbar said.'],
+    ],
+  ),
+  'perfect-tense-participle': practiceSet(
+    'perfect-tense-participle',
+    'Choose the sentence that forms the perfect tense correctly.',
+    'The perfect tense uses “has,” “have,” or “had” followed by a past participle.',
+    [
+      ['She has written three pages.', 'She has write three pages.', 'She has wrote three pages.'],
+      ['They have gone to the library.', 'They have go to the library.', 'They have went to the library.'],
+      ['I had eaten before practice.', 'I had eat before practice.', 'I had ate before practice.'],
+      ['He has taken the bus before.', 'He has take the bus before.', 'He has took the bus before.'],
+      ['We have finished our project.', 'We have finish our project.', 'We have finishing our project.'],
+    ],
+  ),
+  'past-tense-consistency': practiceSet(
+    'past-tense-consistency',
+    'Choose the sentence that keeps both actions in the past tense.',
+    'When both actions happened at a stated past time, their verbs should stay in the past tense.',
+    [
+      ['Yesterday, she walked and played outside.', 'Yesterday, she walked and plays outside.', 'Yesterday, she walks and played outside.'],
+      ['Last night, he cooked and cleaned.', 'Last night, he cooked and cleans.', 'Last night, he cooks and cleaned.'],
+      ['Yesterday, we visited and talked.', 'Yesterday, we visited and talk.', 'Yesterday, we visit and talked.'],
+      ['Last week, they jumped and played.', 'Last week, they jumped and play.', 'Last week, they jump and played.'],
+      ['Yesterday, I looked and listened.', 'Yesterday, I looked and listens.', 'Yesterday, I look and listened.'],
+    ],
+  ),
+  'correlative-conjunction': practiceSet(
+    'correlative-conjunction',
+    'Choose the sentence with the matching conjunction pair.',
+    'Correlative conjunctions work in matching pairs: either/or, neither/nor, and both/and.',
+    [
+      ['Either Maya or Leo will present.', 'Either Maya nor Leo will present.', 'Either Maya and Leo will present.'],
+      ['Neither rain nor wind stopped us.', 'Neither rain or wind stopped us.', 'Neither rain and wind stopped us.'],
+      ['Both the book and the film were funny.', 'Both the book or the film were funny.', 'Both the book nor the film were funny.'],
+      ['We can either walk or take the bus.', 'We can either walk nor take the bus.', 'We can either walk and take the bus.'],
+      ['She likes both drawing and writing.', 'She likes both drawing or writing.', 'She likes both drawing nor writing.'],
+    ],
+  ),
+  'object-pronoun-after-preposition': practiceSet(
+    'object-pronoun-after-preposition',
+    'Choose the sentence with the correct pronoun after the preposition.',
+    'A pronoun that follows a preposition such as “with,” “for,” or “between” uses its object form.',
+    [
+      ['Please come with me.', 'Please come with I.', 'Please come with my.'],
+      ['This gift is for him.', 'This gift is for he.', 'This gift is for his.'],
+      ['The teacher spoke to her.', 'The teacher spoke to she.', 'The teacher spoke to hers.'],
+      ['Keep this between you and me.', 'Keep this between you and I.', 'Keep this between you and my.'],
+      ['Dad sat beside us.', 'Dad sat beside we.', 'Dad sat beside our.'],
+    ],
+  ),
+  'interjection-comma': practiceSet(
+    'interjection-comma',
+    'Choose the sentence that sets off its opening interjection.',
+    'A mild interjection at the beginning of a sentence is followed by a comma.',
+    [
+      ['Wow, that was close!', 'Wow that was close!', 'Wow that, was close!'],
+      ['Yes, I finished my work.', 'Yes I finished my work.', 'Yes I, finished my work.'],
+      ['No, we did not miss the bus.', 'No we did not miss the bus.', 'No we, did not miss the bus.'],
+      ['Well, I can try again.', 'Well I can try again.', 'Well I, can try again.'],
+      ['Oh, that makes sense now.', 'Oh that makes sense now.', 'Oh that, makes sense now.'],
+    ],
+  ),
+  'direct-address-comma': practiceSet(
+    'direct-address-comma',
+    'Choose the sentence that punctuates a direct address correctly.',
+    'Use a comma to separate the name of the person being spoken to from the rest of the sentence.',
+    [
+      ['Thanks, Mom.', 'Thanks Mom.', 'Thanks Mom,.'],
+      ['Hello, Fionnbar.', 'Hello Fionnbar.', 'Hello Fionnbar,.'],
+      ['Goodbye, Dad.', 'Goodbye Dad.', 'Goodbye Dad,.'],
+      ['Please listen, Maya.', 'Please listen Maya.', 'Please, listen Maya.'],
+      ['Are you ready, Leo?', 'Are you ready Leo?', 'Are you, ready Leo?'],
+    ],
+  ),
+  'terminal-punctuation': practiceSet(
+    'terminal-punctuation',
+    'Choose the sentence with the correct ending punctuation.',
+    'A complete sentence ends with one appropriate period, question mark, or exclamation mark.',
+    [
+      ['The science project is finished.', 'The science project is finished', 'The science project is finished..'],
+      ['Where did I put my notebook?', 'Where did I put my notebook.', 'Where did I put my notebook'],
+      ['Watch out for the puddle!', 'Watch out for the puddle', 'Watch out for the puddle!!'],
+      ['She said, “Hello.”', 'She said, “Hello”', 'She said, “Hello..”'],
+      ['We arrived before noon.', 'We arrived before noon', 'We arrived before noon..'],
+    ],
+  ),
+}
+
+RULE_PRACTICE['known-name'] = RULE_PRACTICE['title-capital']
+RULE_PRACTICE['known-place'] = RULE_PRACTICE['title-capital']
 
 function sentenceBounds(body: string, index: number) {
   let start = index
@@ -77,23 +336,26 @@ function correctionTrial(body: string, input: FindingInput): WritingTrial {
   if (distractor === original || distractor === corrected) distractor = `${corrected}.”`
   const choices = rotateChoices([...new Set([original, corrected, distractor])], input.start)
   while (choices.length < 3) choices.push(`${corrected}.`)
+  const ruleExplanation = RULE_PRACTICE[input.ruleId]?.[0]?.explanation ?? input.suggestion
   return {
     id: `${input.ruleId}-${input.start}-correction`,
     prompt: 'Choose the best correction for your original sentence.',
     choices,
     correctAnswer: corrected,
-    explanation: input.suggestion,
+    explanation: `${ruleExplanation} For your sentence, use “${input.replacement}”.`,
   }
 }
 
 function addFinding(body: string, findings: Finding[], input: FindingInput) {
   const overlaps = findings.some((finding) => input.start < finding.end && input.end > finding.start)
   if (overlaps) return
+  const practice = RULE_PRACTICE[input.ruleId]
+  if (!practice) throw new Error(`Missing writing practice for ${input.ruleId}`)
   findings.push({
     ...input,
     id: `${input.ruleId}-${input.start}`,
     correction: correctionTrial(body, input),
-    practice: PRACTICE[input.category].map((item) => ({ ...item, choices: [...item.choices] })),
+    practice: practice.map((item) => ({ ...item, choices: [...item.choices] })),
   })
 }
 
@@ -130,9 +392,11 @@ export function inspectDraft(
     })
   }
 
-  const thirdPerson = /\b(he|she|it)\s+(walk|run|jump|play|write|read|eat|make|do|have|go|study)\b/gi
+  // “Read” is intentionally excluded because its present and past spellings are identical.
+  // A deterministic checker cannot safely change “Yesterday she read” to “reads.”
+  const thirdPerson = /\b(he|she|it)\s+(walk|run|jump|play|write|eat|make|do|have|go|study)\b/gi
   const thirdPersonForms: Record<string, string> = {
-    walk: 'walks', run: 'runs', jump: 'jumps', play: 'plays', write: 'writes', read: 'reads',
+    walk: 'walks', run: 'runs', jump: 'jumps', play: 'plays', write: 'writes',
     eat: 'eats', make: 'makes', do: 'does', have: 'has', go: 'goes', study: 'studies',
   }
   while ((match = thirdPerson.exec(body)) !== null) {
@@ -159,6 +423,78 @@ export function inspectDraft(
       ruleId: 'subject-verb-plural', category: 'Grammar', start, end: start + verb.length, replacement,
       message: `“${match[1]}” needs a matching base-form verb.`,
       suggestion: `Use “${replacement}”.`, wrongReplacement: `${replacement}ing`,
+    })
+  }
+
+  const perfectParticiples: Record<string, string> = {
+    go: 'gone', see: 'seen', eat: 'eaten', write: 'written', take: 'taken', make: 'made', do: 'done',
+    walk: 'walked', play: 'played', jump: 'jumped', cook: 'cooked', look: 'looked', visit: 'visited', finish: 'finished',
+  }
+  const perfectPattern = new RegExp(`\\b(has|have|had)\\s+(${Object.keys(perfectParticiples).join('|')})\\b`, 'gi')
+  while ((match = perfectPattern.exec(body)) !== null) {
+    const verb = match[2]
+    const start = match.index + match[0].toLowerCase().lastIndexOf(verb.toLowerCase())
+    const replacement = capitalizeLike(verb, perfectParticiples[verb.toLowerCase()])
+    addFinding(body, findings, {
+      ruleId: 'perfect-tense-participle', category: 'Grammar', start, end: start + verb.length, replacement,
+      message: `“${match[1]} ${verb}” does not form the perfect tense correctly.`,
+      suggestion: `Use the past participle “${replacement}” after “${match[1]}”.`, wrongReplacement: `${replacement}ing`,
+    })
+  }
+
+  const pastConsistency = /\b(Yesterday|Last night|Last week),?\s+[^.!?\n]{0,50}\b(walked|played|jumped|cooked|looked|visited)\s+and\s+(walks|plays|jumps|cooks|looks|visits)\b/gi
+  const consistentPast: Record<string, string> = {
+    walks: 'walked', plays: 'played', jumps: 'jumped', cooks: 'cooked', looks: 'looked', visits: 'visited',
+  }
+  while ((match = pastConsistency.exec(body)) !== null) {
+    const verb = match[3]
+    const start = match.index + match[0].toLowerCase().lastIndexOf(verb.toLowerCase())
+    const replacement = capitalizeLike(verb, consistentPast[verb.toLowerCase()])
+    addFinding(body, findings, {
+      ruleId: 'past-tense-consistency', category: 'Grammar', start, end: start + verb.length, replacement,
+      message: `Both actions happened ${match[1].toLowerCase()}, so “${verb}” shifts tense.`,
+      suggestion: `Keep the second action in the past tense with “${replacement}”.`, wrongReplacement: verb.replace(/s$/i, ''),
+    })
+  }
+
+  for (const [opening, wrongClosing, correctClosing] of [
+    ['either', 'nor', 'or'],
+    ['neither', 'or', 'nor'],
+    ['both', 'or', 'and'],
+    ['both', 'nor', 'and'],
+  ] as const) {
+    const pairPattern = new RegExp(`\\b${opening}\\b[^.!?\\n]{1,80}\\b(${wrongClosing})\\b`, 'gi')
+    while ((match = pairPattern.exec(body)) !== null) {
+      const closing = match[1]
+      const start = match.index + match[0].toLowerCase().lastIndexOf(closing.toLowerCase())
+      addFinding(body, findings, {
+        ruleId: 'correlative-conjunction', category: 'Grammar', start, end: start + closing.length,
+        replacement: correctClosing,
+        message: `“${opening}” does not pair with “${closing}”.`,
+        suggestion: `Use the matching pair “${opening}/${correctClosing}”.`, wrongReplacement: 'and also',
+      })
+    }
+  }
+
+  const objectPronouns: Record<string, string> = { I: 'me', he: 'him', she: 'her', we: 'us', they: 'them' }
+  const prepositionPronoun = /\b(with|for|to|from|beside)\s+(I|he|she|we|they)\b/g
+  while ((match = prepositionPronoun.exec(body)) !== null) {
+    const pronoun = match[2]
+    const start = match.index + match[0].lastIndexOf(pronoun)
+    const replacement = objectPronouns[pronoun]
+    addFinding(body, findings, {
+      ruleId: 'object-pronoun-after-preposition', category: 'Grammar', start, end: start + pronoun.length, replacement,
+      message: `“${match[1]} ${pronoun}” needs an object pronoun.`,
+      suggestion: `Use “${replacement}” after the preposition “${match[1]}”.`, wrongReplacement: `${replacement}s`,
+    })
+  }
+  const betweenYouAndI = /\bbetween you and I\b/g
+  while ((match = betweenYouAndI.exec(body)) !== null) {
+    const start = match.index + match[0].length - 1
+    addFinding(body, findings, {
+      ruleId: 'object-pronoun-after-preposition', category: 'Grammar', start, end: start + 1, replacement: 'me',
+      message: '“Between you and I” needs an object pronoun after the preposition.',
+      suggestion: 'Use “between you and me.”', wrongReplacement: 'my',
     })
   }
 
@@ -229,6 +565,22 @@ export function inspectDraft(
     }
   }
 
+  // Treat a simple title and surname as one correction so “dr. smith” does not
+  // produce a confusing sentence-start correction followed by a second finding.
+  const titlePattern = /\b(mr|mrs|ms|dr)\.\s+([A-Za-z][a-z]*)\b/gi
+  while ((match = titlePattern.exec(body)) !== null) {
+    const title = `${match[1][0].toUpperCase()}${match[1].slice(1).toLowerCase()}`
+    const name = `${match[2][0].toUpperCase()}${match[2].slice(1).toLowerCase()}`
+    const replacement = `${title}. ${name}`
+    if (match[0] === replacement) continue
+    addFinding(body, findings, {
+      ruleId: 'title-capital', category: 'Capitalization', start: match.index,
+      end: match.index + match[0].length, replacement,
+      message: `“${match[0]}” needs standard title and name capitalization.`,
+      suggestion: `Write “${replacement}”.`, wrongReplacement: replacement.toUpperCase(),
+    })
+  }
+
   const sentenceCapital = /(^|[.!?]\s+|\n\s*)([a-z])/gm
   while ((match = sentenceCapital.exec(body)) !== null) {
     const letter = match[2]
@@ -252,25 +604,15 @@ export function inspectDraft(
 
   const calendarWords = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
     'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
-  const calendarPattern = new RegExp(`\\b(${calendarWords.join('|')})\\b`, 'g')
+  const calendarPattern = new RegExp(`\\b(${calendarWords.join('|')})\\b`, 'gi')
   while ((match = calendarPattern.exec(body)) !== null) {
-    const replacement = `${match[1][0].toUpperCase()}${match[1].slice(1)}`
+    const replacement = `${match[1][0].toUpperCase()}${match[1].slice(1).toLowerCase()}`
+    if (match[1] === replacement) continue
     addFinding(body, findings, {
       ruleId: 'calendar-capital', category: 'Capitalization', start: match.index,
       end: match.index + match[1].length, replacement,
       message: `“${match[1]}” is a day or month.`, suggestion: `Capitalize it as “${replacement}”.`,
       wrongReplacement: match[1].toUpperCase(),
-    })
-  }
-
-  const titlePattern = /\b(mr|mrs|ms|dr)\.\s+[A-Z][a-z]+/g
-  while ((match = titlePattern.exec(body)) !== null) {
-    const title = match[1]
-    addFinding(body, findings, {
-      ruleId: 'title-capital', category: 'Capitalization', start: match.index,
-      end: match.index + title.length, replacement: `${title[0].toUpperCase()}${title.slice(1)}`,
-      message: `The title “${title}.” needs a capital letter.`,
-      suggestion: `Write “${title[0].toUpperCase()}${title.slice(1)}.”`, wrongReplacement: title.toUpperCase(),
     })
   }
 
@@ -291,6 +633,32 @@ export function inspectDraft(
       message: `“${match[1]}” needs an apostrophe.`, suggestion: `Write “${replacement}”.`,
       wrongReplacement: replacement.replace('’', '’’'),
     })
+  }
+
+  const interjectionPattern = /(^|[.!?]\s+|\n)(Wow|Yes|No|Oh|Well)(\s+)(?=(I|we|he|she|they|it|that|this|you)\b)/g
+  while ((match = interjectionPattern.exec(body)) !== null) {
+    const start = match.index + match[1].length + match[2].length
+    addFinding(body, findings, {
+      ruleId: 'interjection-comma', category: 'Punctuation', start, end: start + match[3].length, replacement: ', ',
+      message: `The opening interjection “${match[2]}” needs a comma.`,
+      suggestion: `Place a comma after “${match[2]}”.`, wrongReplacement: ' ',
+    })
+  }
+
+  const directAddressNames = [...new Set(['Mom', 'Dad', 'Fionnbar', ...dictionary.knownNames])]
+    .filter(Boolean)
+    .map(escapeRegex)
+    .join('|')
+  if (directAddressNames) {
+    const directAddressPattern = new RegExp(`(^|[.!?]\\s+|\\n)(Thanks|Hello|Goodbye)(\\s+)(?=(${directAddressNames})\\b)`, 'g')
+    while ((match = directAddressPattern.exec(body)) !== null) {
+      const start = match.index + match[1].length + match[2].length
+      addFinding(body, findings, {
+        ruleId: 'direct-address-comma', category: 'Punctuation', start, end: start + match[3].length, replacement: ', ',
+        message: `The person addressed after “${match[2]}” needs to be separated with a comma.`,
+        suggestion: `Place a comma after “${match[2]}”.`, wrongReplacement: ' ',
+      })
+    }
   }
 
   const introPattern = /(^|[.!?]\s+)(After|Before|When|While|If)\s+(I|we|he|she|they)\s+\w+(?:\s+\w+){0,2}\s+(I|we|he|she|they)\s/gi
@@ -328,10 +696,14 @@ export function inspectDraft(
   }
 
   const trimmedEnd = body.trimEnd().length
-  if (trimmedEnd > 0 && !/[.!?”"']$/.test(body.slice(0, trimmedEnd))) {
+  const trimmedBody = body.slice(0, trimmedEnd)
+  if (trimmedEnd > 0 && !/[.!?](?:[”"'])?$/.test(trimmedBody)) {
+    const closingQuote = /[”"]$/.test(trimmedBody) ? trimmedBody.at(-1) ?? '' : ''
+    const start = closingQuote ? trimmedEnd - 1 : trimmedEnd
     addFinding(body, findings, {
-      ruleId: 'terminal-punctuation', category: 'Punctuation', start: trimmedEnd, end: trimmedEnd,
-      replacement: '.', message: 'The final sentence needs an ending mark.',
+      ruleId: 'terminal-punctuation', category: 'Punctuation', start,
+      end: closingQuote ? trimmedEnd : trimmedEnd,
+      replacement: closingQuote ? `.${closingQuote}` : '.', message: 'The final sentence needs an ending mark.',
       suggestion: 'Add a period, question mark, or exclamation mark.', wrongReplacement: '..',
     })
   }
@@ -406,9 +778,51 @@ export function advanceFindingProgress(
   practiceTarget = 5,
 ): FindingProgress {
   const progress = current ?? { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 0 }
-  if (!correct) return { ...progress, incorrectAttempts: progress.incorrectAttempts + 1 }
-  if (!progress.correctionComplete) return { ...progress, correctionComplete: true }
-  return { ...progress, practiceCompleted: Math.min(practiceTarget, progress.practiceCompleted + 1) }
+  const next = {
+    ...progress,
+    incorrectAttempts: progress.incorrectAttempts + (correct ? 0 : 1),
+    attemptResults: [...(progress.attemptResults ?? []), correct],
+  }
+  if (!progress.correctionComplete) return { ...next, correctionComplete: true }
+  return { ...next, practiceCompleted: Math.min(practiceTarget, progress.practiceCompleted + 1) }
+}
+
+export type WritingScore = {
+  correct: number
+  total: number
+  percent: number
+  cumulativePercent: number[]
+}
+
+export function evaluateWritingChoice(trial: WritingTrial, choice: string) {
+  if (!trial.choices.includes(choice)) throw new Error('The selected writing answer is not part of this trial')
+  const correct = choice === trial.correctAnswer
+  return {
+    choice,
+    correct,
+    correctAnswer: trial.correctAnswer,
+    summary: correct
+      ? 'Correct.'
+      : `Not quite. The correct answer is “${trial.correctAnswer}”`,
+    explanation: trial.explanation,
+  }
+}
+
+export function scoreWritingResponses(
+  findings: Finding[],
+  progress: Record<string, FindingProgress>,
+): WritingScore {
+  const results = findings.flatMap((finding) => progress[finding.id]?.attemptResults ?? [])
+  const correct = results.filter(Boolean).length
+  return {
+    correct,
+    total: results.length,
+    percent: results.length ? Math.round((correct / results.length) * 100) : 100,
+    cumulativePercent: results.map((_, index) => {
+      const correctSoFar = results.slice(0, index + 1).filter(Boolean).length
+      return Math.round((correctSoFar / (index + 1)) * 100)
+    }),
+  }
 }
 
 export function writingReviewStatus(

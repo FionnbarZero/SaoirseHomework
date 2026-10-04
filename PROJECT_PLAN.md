@@ -38,6 +38,16 @@ Without MDM-backed Autonomous Single App Mode, the app cannot make the Mac physi
 
 These actions never grant activity credit. On the next normal child login, the guardian restores the incomplete state. MDM-backed kiosk mode remains a possible later hardening phase, not a version-one dependency.
 
+### iPad and iPhone deployment decision
+
+The full homework flow can be locked on an iPad, but the current Mac loopback service and Chrome guardian cannot provide that lock on iPadOS.
+
+- **Immediate parent-operated option:** Apple Guided Access can temporarily restrict any iPad to one app and requires the Guided Access passcode, Face ID, or Touch ID to exit. A parent must start the session manually. See [Apple’s Guided Access guide](https://support.apple.com/guide/ipad/lock-ipad-to-one-app-ipada16d1374/ipados).
+- **Managed full-integration option:** build a signed native iPad app that contains the learning path and controlled web activities. Supervise the iPad and use MDM **App Lock / Single App Mode**, or allowlist that app for **Autonomous Single App Mode** so it can enter the restricted state when homework begins and leave only after verified completion. Apple states that persistent Single App Mode and autonomous programmatic entry require supervision and management. See [Apple’s Single App Mode guidance](https://developer.apple.com/videos/play/wwdc2022/10152/) and [App Lock payload documentation](https://developer.apple.com/documentation/devicemanagement/applock).
+- Do not plan around Automatic Assessment Configuration unless Apple grants the required assessment entitlement; a household homework app should not assume eligibility.
+- Because Single App Mode permits only one app, Du Chinese, Level Chinese, Ninja Dojo, writing, and the weekly path must run inside the native homework container or through explicitly designed managed transitions. The Mac Chrome extension cannot simply be reused on iPadOS.
+- A supervised-device pilot must verify authentication cookies, external-site compatibility, text entry, Google delivery, accessibility, sleep/restart recovery, and parent emergency exit before claiming full iPad support.
+
 ## 3. Child interface
 
 ### Entry and weekly path
@@ -57,16 +67,18 @@ These actions never grant activity credit. On the next normal child login, the g
 - Complete appears as a green check.
 - Self-reported activities allow Fionnbar to change the control.
 - Tracked activities update only from the guardian or an approved completion event.
-- Completion records show whether they were self-reported, time-in-session tracked, game-verified, or parent-overridden.
+- Completion records show whether they were self-reported, time-in-session tracked, writing-evidence verified, or parent-overridden.
 
 ## 4. Required daily activities
 
 | Activity | Completion method | Rule |
 |---|---|---|
 | Mandarin Daily Work | Self-reported | Fionnbar changes the control to a green check. |
+| Level Chinese | Time-in-session | Log in through Clever, then complete 20 active minutes in Level Learning. |
+| Du Chinese | Time-in-session | Complete 13 active reading minutes followed by 7 active flashcard minutes. |
 | Daily Math Practice | Self-reported | Fionnbar changes the control to a green check. |
 | Daily English Packet | Self-reported | Fionnbar changes the control to a green check. |
-| Reading Strategies Game | Game-verified | Complete only after the game sends an approved completion event. |
+| Reading Response Writing Game | Writing-evidence verified | Read a passage of Fionnbar’s choice, write a response, answer one correction plus five similar trials for every supported error, and finish the edited copy. Accuracy is reported but does not block completion. |
 | Ninja Dojo | Time-in-session | Open 5th Grade Learning Hub in a controlled view for 17 active minutes. |
 | English Escape | Coming soon | Visible but excluded from completion until its app is ready; future duration is 10 active minutes. |
 
@@ -74,22 +86,19 @@ Self-reported completion is intentionally honor-based. The parent dashboard reco
 
 ## 5. Optional weekly activities and banking
 
-The weekly optional pool returns to 13 regular sessions:
+The weekly optional pool contains nine music-practice sessions:
 
 | Activity | Weekly sessions | Session behavior |
 |---|---:|---|
 | Voena | 3 | Controlled 20-minute visual practice timer |
 | Drum Drills | 3 | Controlled 20-minute visual practice timer |
 | Band Practice | 3 | Controlled 20-minute visual practice timer |
-| Level Chinese | 2 | Clever login followed by 20 active minutes in Level Learning |
-| Du Chinese | 2 | 13 active reading minutes followed by 7 active flashcard minutes |
 
 There are no extra wildcard sessions in the revised model.
 
 ### Segmented icons
 
 - Voena, Drum Drills, and Band Practice appear as icons divided into thirds.
-- Level Chinese and Du Chinese appear as icons divided into halves.
 - Selecting a segment opens a card such as **Voena — Session 2**.
 - A completed segment remains green and cannot be counted twice.
 - Fionnbar may complete multiple segments from the same activity on one day.
@@ -97,17 +106,17 @@ There are no extra wildcard sessions in the revised model.
 ### Weekly pacing and banking
 
 - The upcoming week's pool opens on Sunday at 4:00 a.m. through a **Get a Head Start** screen containing optional activities only.
-- Fionnbar may complete any number of the 13 optional sessions on Sunday or a later day.
+- Fionnbar may complete any number of the nine optional sessions on Sunday or a later day.
 - Every early completion is banked against the same upcoming week.
 - The pacing targets are cumulative, not rigid daily assignments:
-  - Monday: 3 of 13 banked
-  - Tuesday: 6 of 13 banked
-  - Wednesday: 9 of 13 banked
-  - Thursday: 11 of 13 banked
-  - Friday: all 13 banked
+  - Monday: 2 of 9 banked
+  - Tuesday: 4 of 9 banked
+  - Wednesday: 6 of 9 banked
+  - Thursday: 8 of 9 banked
+  - Friday: all 9 banked
 - Completing more than the current target reduces or eliminates later optional requirements.
-- Example: six completions on Sunday and seven on Monday finish all 13; no further optional sessions are required that week.
-- Ordinary daily access requires all active required activities for that day plus satisfaction of that day's cumulative optional target. If the weekly total is already 13, only the required daily activities remain.
+- Example: six completions on Sunday and three on Monday finish all nine; no further optional sessions are required that week.
+- Ordinary daily access requires all active required activities for that day plus satisfaction of that day's cumulative optional target. If the weekly total is already nine, only the required daily activities remain.
 - The optional pool resets for the next week on Sunday at 4:00 a.m. Previous history is archived.
 
 ## 6. Controlled activity sessions
@@ -123,17 +132,23 @@ There are no extra wildcard sessions in the revised model.
 - A parent-authenticated emergency exit always exists and leaves the activity incomplete unless the parent explicitly overrides it.
 - **Return to Learning Path** appears only after verified completion or timer expiration.
 
-### Reading Strategies Game
+### Reading Response Writing Game
 
-- Launch the game currently under development.
-- The guardian issues a one-time session nonce.
-- The game reports `activityComplete` with the session ID and nonce.
-- The local service accepts the event only from the configured game origin and only once.
-- Elapsed time alone and child-controlled UI cannot complete this activity.
+- Fionnbar chooses and reads a passage, then writes what happened and what he learned, noticed, or thought.
+- Save the untouched original response before analysis.
+- Detect only supported high-confidence capitalization, grammar, punctuation, and spelling errors. Ambiguous language goes to the parent review queue instead of being silently changed.
+- The reviewed Grade 5 library includes simple and perfect tense, safe past-tense consistency patterns, subject–verb and pronoun agreement, articles, correlative conjunctions, object pronouns after prepositions, capitalization, contractions, introductory and list commas, interjections, direct address, quotations, and ending punctuation. Extend it only with reviewed positive, negative, and ambiguous regression cases.
+- For every supported error, first show Fionnbar’s actual sentence, then present five reviewed examples of the same rule.
+- Lock each selected answer. Immediately announce whether it was correct, identify the correct answer when needed, and explain the rule before **Continue** becomes available.
+- Every response advances the activity. Correct and incorrect answers are both recorded; mastery is not required.
+- Apply the reviewed correction to a separate edited copy after the original-error response. The original draft never changes.
+- After all correction, practice, and spelling responses are complete, show the overall percent correct and a line graph of cumulative accuracy.
+- The local service verifies the saved draft, all expected response evidence, and the edited copy before recording daily completion. A browser-only completion signal is insufficient.
+- When live Google delivery is authorized, include the original, edited copy, response score, and graph data in the Google document and automatic teacher email workflow.
 
 ### Ninja Dojo
 
-- Open the configured 5th Grade Learning Hub entry point.
+- Open the reviewed 5th Grade Learning Hub entry point at `https://weeklydictation-g5-beta.web.app/`.
 - Allow the exact entry origin plus reviewed login, asset, and child-page redirect origins.
 - Count 17 active foreground minutes.
 - Then show **Return to Learning Path** and record time-in-session completion.
@@ -157,7 +172,7 @@ There are no extra wildcard sessions in the revised model.
 
 ### Du Chinese
 
-- Configure one reading URL and one flashcard URL.
+- Use `https://duchinese.net/lessons` for reading and `https://duchinese.net/flashcards` for flashcard review.
 - Run 13 active foreground minutes at the reading stage.
 - Transition automatically to the flashcard stage for 7 active foreground minutes.
 - Allow only reviewed Du Chinese origins and required redirects.
@@ -324,17 +339,20 @@ The extension and guardian must fail closed during Homework mode: if either lose
 
 - Child and parent web UI: React, TypeScript, and Vite.
 - Child URL: fixed loopback address served by the local application service.
-- Persistence: SQLite database owned by the application service and not writable by the child account.
-- macOS enforcement: parent-installed guardian service plus child-session LaunchAgent.
+- Persistence: SQLite under a root-owned `0700` service directory, with the database fixed at `0600` and not writable by the child account.
+- macOS enforcement: parent-installed guardian daemon and root-owned local-service daemon plus a child-session LaunchAgent.
+- Lifecycle authority: short-lived HMAC assertions shared only by the two root daemons; the child-session agent relays assertions but never receives the key.
+- User-session authority: the signed agent performs native Parent approval and Google OAuth/Keychain work through daemon-issued, 15-second service grants; the root service never receives a refresh token.
 - Browser control: force-installed Chrome extension with native messaging to the guardian.
 - Google integration: Drive, Docs, and Gmail APIs.
 - Secrets: macOS Keychain and administrator-protected configuration; never source control.
 
 ### State records
 
-- `WeeklyPlan`: start date, 13 optional segments, cumulative pacing targets, and archive status.
+- `WeeklyPlan`: start date, nine optional segments, cumulative pacing targets, and archive status.
 - `DailyPlan`: date, required activities, cumulative optional target, and Free-mode state.
 - `ActivitySession`: session ID, activity, phase, target seconds, credited seconds, last heartbeat, nonce, and result.
+- `GuardianLearningSession`: service session ID, week, day, requested/completion-eligible state, and supersession history.
 - `CompletionRecord`: method, timestamp, source, override status, and audit note.
 - `RewardCredit`: earned source, total seconds, remaining seconds, state, and redemption history.
 - `WritingSubmission`: original draft, corrected draft, supported findings, exercises, and export state.
@@ -393,8 +411,8 @@ Default retention:
 
 ### Banking and access
 
-- Test cumulative totals of 0–13 across Sunday–Friday.
-- Test the example of six Sunday sessions plus seven Monday sessions.
+- Test cumulative totals of 0–9 across Sunday–Friday.
+- Test the example of six Sunday sessions plus three Monday sessions.
 - Confirm early work reduces later cumulative requirements.
 - Confirm daily required work remains required even after all optional work is banked.
 - Confirm Free mode resets on the next child login after 4:00 a.m. without resetting the weekly pool.
@@ -404,7 +422,8 @@ Default retention:
 - Test every timer, phase transition, redirect, close attempt, app switch, crash, restart, logout, sleep, and offline recovery.
 - Confirm elapsed wall-clock downtime never becomes credited activity time.
 - Confirm parent emergency exits and overrides.
-- Confirm Reading Strategies accepts one valid completion and rejects wrong-origin, wrong-nonce, expired, and duplicate events.
+- Confirm the writing activity rejects missing drafts, unfinished trials, stale drafts, expired sessions, and duplicate completion while accepting completed participation at any accuracy percentage.
+- Confirm missing, expired, replayed, altered, and wrong-key lifecycle assertions cannot start or release daemon enforcement.
 
 ### Rewards
 
@@ -416,8 +435,11 @@ Default retention:
 
 - Test each supported grammar, punctuation, and capitalization rule with positive, negative, and ambiguous examples.
 - Confirm each original supported error produces one correction plus five practice trials.
-- Confirm incorrect choices do not advance the counter.
-- Confirm original drafts remain unchanged and corrected drafts contain only accepted changes.
+- Confirm every multiple-choice trial has three unique choices, exactly one declared correct answer, and a rule-specific explanation.
+- Confirm incorrect choices advance once, remain scored incorrect, expose the correct answer, and cannot be changed.
+- Confirm original drafts remain unchanged and corrected drafts contain the reviewed corrections.
+- Confirm the final percentage and cumulative-accuracy line graph match the stored response sequence.
+- Confirm screen readers receive selected/correct/incorrect state and immediate feedback, and keyboard focus moves to each new question.
 - Run the spelling adapter's regression tests before enabling writing completion.
 
 ### Google and Chrome
@@ -428,9 +450,8 @@ Default retention:
 
 ## 15. Required external inputs
 
-- The exact Reading Strategies game project and its integration origin.
-- The 5th Grade Learning Hub entry URL and required redirect origins.
-- The Du Chinese reading and flashcard URLs.
+- Any additional Ninja Dojo login or redirect origins discovered during managed-Chrome testing.
+- Any additional Du Chinese login or redirect origins discovered during managed-Chrome testing.
 - The Clever login, district identity-provider, and Level Learning origins.
 - The school delivery email address.
 - Access to the second Mac for child-account, guardian, and Chrome-policy testing.
@@ -438,9 +459,9 @@ Default retention:
 
 ## 16. Delivery phases
 
-1. **Feasibility prototypes:** second-Mac child account, guardian recovery, Chrome forced-extension policy, Google OAuth/send proof, and Reading Strategies completion contract.
+1. **Feasibility prototypes:** second-Mac child account, guardian recovery, Chrome forced-extension policy, Google OAuth/send proof, and writing-evidence completion contract.
 2. **Core learning path:** entry screen, weekly path, daily lists, self-reporting, segmented optional pool, Sunday head start, banking, persistence, and parent dashboard.
-3. **Controlled activities:** generic timer shell, Ninja Dojo, practice timers, Du Chinese, Level Chinese, and Reading Strategies integration.
+3. **Controlled activities:** generic timer shell, Ninja Dojo, practice timers, Du Chinese, Level Chinese, and verified reading-response writing integration.
 4. **Rewards:** earning ledger, banked credits, controlled YouTube playback, recovery, and focus restoration.
 5. **Writing:** deterministic language rules, correction games, spelling-module integration, weekly Google document, and Friday delivery.
 6. **Hardening:** failure recovery, privacy controls, accessibility, Chrome-update testing, child-account bypass testing, and optional MDM evaluation.

@@ -234,10 +234,10 @@ import Testing
     weekID: "2027-01-11",
     day: "Thursday",
     eligibleAt: Date(timeIntervalSince1970: 1_800_000_000),
-    requiredCompleted: 5,
-    requiredTarget: 5,
-    optionalCompleted: 11,
-    optionalTarget: 11
+    requiredCompleted: 7,
+    requiredTarget: 7,
+    optionalCompleted: 8,
+    optionalTarget: 8
   )
   let completion = GuardianCompleteChildSessionRequest(
     requestID: UUID(uuidString: "99999999-1111-4222-8333-444444444444")!,
@@ -273,6 +273,84 @@ import Testing
 @Test func malformedAuthorizationReferenceIsRejectedBeforeValidation() {
   #expect(throws: GuardianAuthorizationError.invalidExternalFormLength(31)) {
     try GuardianAuthorization.validateAdministratorExternalForm(Data(repeating: 0, count: 31))
+  }
+}
+
+@Test func daemonSignedUserBrokerGrantsAreScopedFreshAndTamperEvident() throws {
+  let key = Data(repeating: 0x4A, count: 32)
+  let now = Date(timeIntervalSince1970: 1_800_000_000)
+  let nonce = UUID(uuidString: "12345678-1234-4234-8234-123456789ABC")!
+  let envelope = try GuardianServiceBrokerAuthenticator.serviceAccess(
+    key: key,
+    now: now,
+    nonce: nonce
+  )
+  let claim = try GuardianServiceBrokerAuthenticator.authenticateServiceAccess(
+    envelope,
+    key: key,
+    now: now.addingTimeInterval(1)
+  )
+  #expect(claim.type == "agent-access")
+  #expect(claim.subject == "guardian-agent")
+  #expect(claim.audience == "homework-service")
+  #expect(claim.permissions == ["broker.read", "broker.complete"])
+  #expect(claim.nonce == nonce.uuidString.lowercased())
+
+  var changedTag = envelope.authenticationTag
+  changedTag[changedTag.startIndex] ^= 0x01
+  #expect(throws: GuardianServiceBrokerAuthenticationError.invalidAuthenticationTag) {
+    try GuardianServiceBrokerAuthenticator.authenticateServiceAccess(
+      GuardianServiceBrokerEnvelope(
+        assertion: envelope.assertion,
+        authenticationTag: changedTag,
+        expiresAt: envelope.expiresAt
+      ),
+      key: key,
+      now: now
+    )
+  }
+  #expect(throws: GuardianServiceBrokerAuthenticationError.expired) {
+    try GuardianServiceBrokerAuthenticator.authenticateServiceAccess(
+      envelope,
+      key: key,
+      now: now.addingTimeInterval(16)
+    )
+  }
+}
+
+@Test func nativeParentAuthorizationIsBoundToItsServiceChallenge() throws {
+  let key = Data(repeating: 0x62, count: 32)
+  let now = Date(timeIntervalSince1970: 1_800_000_000)
+  let envelope = try GuardianServiceBrokerAuthenticator.parentAuthorization(
+    challengeID: "parent-challenge-123456",
+    purpose: "sensitive",
+    approved: true,
+    key: key,
+    now: now
+  )
+  let claim = try GuardianServiceBrokerAuthenticator.authenticateParentAuthorization(
+    envelope,
+    key: key,
+    now: now.addingTimeInterval(1)
+  )
+  #expect(claim.challengeId == "parent-challenge-123456")
+  #expect(claim.purpose == "sensitive")
+  #expect(claim.approved)
+
+  let request = GuardianParentChallengeAuthorizationRequest(
+    requestedAt: now,
+    challengeID: claim.challengeId,
+    purpose: claim.purpose,
+    approved: claim.approved
+  )
+  try GuardianRequestValidator.validate(request, now: now)
+  #expect(throws: GuardianRequestValidationError.invalidParentChallenge) {
+    try GuardianRequestValidator.validate(GuardianParentChallengeAuthorizationRequest(
+      requestedAt: now,
+      challengeID: "x",
+      purpose: "unknown",
+      approved: true
+    ), now: now)
   }
 }
 
@@ -317,10 +395,10 @@ import Testing
     weekID: "2027-01-11",
     day: "Monday",
     eligibleAt: now.addingTimeInterval(-60),
-    requiredCompleted: 5,
-    requiredTarget: 5,
-    optionalCompleted: 3,
-    optionalTarget: 3
+    requiredCompleted: 7,
+    requiredTarget: 7,
+    optionalCompleted: 2,
+    optionalTarget: 2
   )
   let denied = GuardianCompleteChildSessionRequest(
     requestedAt: now,
@@ -444,10 +522,10 @@ import Testing
       weekID: "2027-01-11",
       day: "Tuesday",
       eligibleAt: now,
-      requiredCompleted: 5,
-      requiredTarget: 5,
-      optionalCompleted: 6,
-      optionalTarget: 6
+      requiredCompleted: 7,
+      requiredTarget: 7,
+      optionalCompleted: 4,
+      optionalTarget: 4
     )
   )
   try GuardianRequestValidator.validate(valid, now: now)
@@ -461,13 +539,75 @@ import Testing
       weekID: "2027-01-11",
       day: "Tuesday",
       eligibleAt: now,
-      requiredCompleted: 4,
-      requiredTarget: 4,
-      optionalCompleted: 5,
-      optionalTarget: 5
+      requiredCompleted: 6,
+      requiredTarget: 6,
+      optionalCompleted: 3,
+      optionalTarget: 3
     )
   )
   #expect(throws: GuardianRequestValidationError.invalidCompletionProof) {
     try GuardianRequestValidator.validate(reducedTarget, now: now)
   }
+}
+
+@Test func lifecycleAssertionsRequireTheRootServiceAuthenticationTagAndFreshness() throws {
+  let key = Data(repeating: 0x5A, count: 32)
+  let now = Date(timeIntervalSince1970: 1_800_000_000)
+  let nowMilliseconds = Int64(now.timeIntervalSince1970 * 1_000)
+  let assertion = GuardianLifecycleAssertion(
+    issuedAtMilliseconds: nowMilliseconds,
+    expiresAtMilliseconds: nowMilliseconds + 15_000,
+    mode: .free,
+    serviceSessionId: UUID(uuidString: "11111111-2222-4333-8444-555555555555")!,
+    weekId: "2027-01-11",
+    day: "Monday",
+    eligibleAtMilliseconds: nowMilliseconds - 60_000,
+    requiredCompleted: 7,
+    requiredTarget: 7,
+    optionalCompleted: 2,
+    optionalTarget: 2
+  )
+  let encoded = try JSONEncoder().encode(assertion)
+  let tag = try GuardianLifecycleAuthenticator.authenticationTag(for: encoded, key: key)
+  #expect(try GuardianLifecycleAuthenticator.authenticate(
+    assertion: encoded,
+    authenticationTag: tag,
+    key: key,
+    now: now
+  ) == assertion)
+
+  var changedTag = tag
+  changedTag[0] ^= 1
+  #expect(throws: GuardianLifecycleAuthenticationError.invalidAuthenticationTag) {
+    try GuardianLifecycleAuthenticator.authenticate(
+      assertion: encoded,
+      authenticationTag: changedTag,
+      key: key,
+      now: now
+    )
+  }
+  #expect(throws: GuardianLifecycleAuthenticationError.assertionExpired) {
+    try GuardianLifecycleAuthenticator.authenticate(
+      assertion: encoded,
+      authenticationTag: tag,
+      key: key,
+      now: now.addingTimeInterval(16)
+    )
+  }
+
+  let nodeAssertion = Data(base64Encoded:
+    "eyJ2ZXJzaW9uIjoxLCJpc3N1ZWRBdE1pbGxpc2Vjb25kcyI6MTc5MTIxNjAwMDAwMCwiZXhwaXJlc0F0TWlsbGlzZWNvbmRzIjoxNzkxMjE2MDE1MDAwLCJtb2RlIjoiZnJlZSIsInNlcnZpY2VTZXNzaW9uSWQiOiIxMTExMTExMS0yMjIyLTQzMzMtODQ0NC01NTU1NTU1NTU1NTUiLCJ3ZWVrSWQiOiIyMDI2LTEwLTA1IiwiZGF5IjoiTW9uZGF5IiwiZWxpZ2libGVBdE1pbGxpc2Vjb25kcyI6MTc5MTIxNTk0MDAwMCwicmVxdWlyZWRDb21wbGV0ZWQiOjUsInJlcXVpcmVkVGFyZ2V0Ijo1LCJvcHRpb25hbENvbXBsZXRlZCI6Mywib3B0aW9uYWxUYXJnZXQiOjN9"
+  )!
+  let nodeTag = Data(base64Encoded:
+    "eaqhf/BxligJ0AgiinKKgz5yM52vMJ70njwI3JmLYX8="
+  )!
+  let nodeNow = Date(timeIntervalSince1970: 1_791_216_000)
+  let decodedNodeAssertion = try GuardianLifecycleAuthenticator.authenticate(
+    assertion: nodeAssertion,
+    authenticationTag: nodeTag,
+    key: key,
+    now: nodeNow
+  )
+  #expect(decodedNodeAssertion.mode == .free)
+  #expect(decodedNodeAssertion.weekId == "2026-10-05")
 }

@@ -61,7 +61,9 @@ npm run build
 node --env-file=.env server/index.mjs
 ```
 
-Open `http://127.0.0.1:4179`, go to the Parent screen, save the school recipient, then select **Authorize Google**. Google returns to the loopback callback on `127.0.0.1`; the app validates PKCE and state before storing only the refresh token in macOS Keychain under `com.fionnbar.homework.google`.
+Open `http://127.0.0.1:4179`, go to the Parent screen, save the school recipient, then select **Authorize Google**. Google returns to the loopback callback on `127.0.0.1`.
+
+In the packaged production app, the signed login agent generates and validates PKCE/state, exchanges and refreshes tokens, and stores the refresh token in the logged-in user's Keychain under `com.fionnbar.homework.google`. The root service queues only typed broker operations authenticated by 15-second daemon grants and receives only a short-lived access token. It cannot read the login Keychain. A direct development service keeps the original local Keychain adapter so the Google proof can still be exercised without installing the production components.
 
 Use **Revoke Google access** to call Google's revoke endpoint and delete the Keychain token. Delivery history and local PDFs are retained for the audit trail.
 

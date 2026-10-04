@@ -91,7 +91,19 @@ type GameSessionResponse = StateResponse & {
 }
 
 type GameSessionLaunchResponse = StateResponse & {
-  gameSession: GameSession & { launchUrl: string }
+  gameSession: GameSession
+}
+
+type WritingGameCompletionResponse = GameSessionResponse & {
+  evidence: {
+    draftId: string
+    findingCount: number
+    correct: number
+    total: number
+    percent: number
+    wordCount: number
+    edited: boolean
+  }
 }
 
 type GoogleProofResponse = StateResponse & {
@@ -281,6 +293,13 @@ export function startReadingGame(day: DayName) {
 
 export function getReadingGameSession(sessionId: string) {
   return request<GameSessionResponse>(`/api/game-sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export function completeWritingGame(sessionId: string, draftId: string) {
+  return request<WritingGameCompletionResponse>(`/api/game-sessions/${encodeURIComponent(sessionId)}/complete-writing`, {
+    method: 'POST',
+    body: JSON.stringify({ draftId }),
+  })
 }
 
 export function connectMockGoogle(accountEmail: string) {

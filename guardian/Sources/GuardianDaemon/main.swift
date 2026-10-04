@@ -5,6 +5,7 @@ import Security
 private let daemonStateURL = URL(
   fileURLWithPath: "/Library/Application Support/FionnbarHomework/Privileged/guardian-daemon-state.json"
 )
+private let lifecycleKeyURL = URL(fileURLWithPath: GuardianConstants.lifecycleKeyPath)
 
 private final class GuardianStateStore {
   private let lock = NSLock()
@@ -107,9 +108,11 @@ private final class GuardianStateStore {
 
 private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
   private let store: GuardianStateStore
+  private let lifecycleKey: Data
 
-  init(store: GuardianStateStore) {
+  init(store: GuardianStateStore, lifecycleKey: Data) {
     self.store = store
+    self.lifecycleKey = lifecycleKey
   }
 
   func fetchStatus(withReply reply: @escaping (Data) -> Void) {
@@ -142,6 +145,17 @@ private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
         from: encodedRequest
       )
       try GuardianRequestValidator.validate(request)
+      let assertion = try GuardianLifecycleAuthenticator.authenticate(
+        assertion: request.lifecycleAssertion,
+        authenticationTag: request.lifecycleAuthenticationTag,
+        key: lifecycleKey
+      )
+      guard assertion.mode == .homework || assertion.mode == .free,
+            assertion.serviceSessionId == request.serviceSessionID,
+            assertion.weekId == request.weekID,
+            assertion.day == request.day else {
+        throw GuardianLifecycleAuthenticationError.invalidAssertion
+      }
       let result = try store.beginChildSession(
         request,
         guardianSessionID: UUID(),
@@ -152,6 +166,11 @@ private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
       reply(validationFailure(error))
     } catch let error as GuardianChildSessionError {
       reply(childSessionFailure(error))
+    } catch let error as GuardianLifecycleAuthenticationError {
+      reply(encoded(GuardianXPCReply.rejected(
+        .lifecycleAuthenticationDenied,
+        message: error.localizedDescription
+      )))
     } catch is DecodingError {
       reply(encoded(GuardianXPCReply.rejected(
         .invalidRequest,
@@ -170,6 +189,25 @@ private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
         from: encodedRequest
       )
       try GuardianRequestValidator.validate(request)
+      let assertion = try GuardianLifecycleAuthenticator.authenticate(
+        assertion: request.lifecycleAssertion,
+        authenticationTag: request.lifecycleAuthenticationTag,
+        key: lifecycleKey
+      )
+      let eligibleAtMilliseconds = Int64(
+        (request.proof.eligibleAt.timeIntervalSince1970 * 1_000).rounded()
+      )
+      guard assertion.mode == .free,
+            assertion.serviceSessionId == request.proof.serviceSessionID,
+            assertion.weekId == request.proof.weekID,
+            assertion.day == request.proof.day,
+            assertion.eligibleAtMilliseconds == eligibleAtMilliseconds,
+            assertion.requiredCompleted == request.proof.requiredCompleted,
+            assertion.requiredTarget == request.proof.requiredTarget,
+            assertion.optionalCompleted == request.proof.optionalCompleted,
+            assertion.optionalTarget == request.proof.optionalTarget else {
+        throw GuardianLifecycleAuthenticationError.invalidAssertion
+      }
       let status = try store.completeChildSession(request)
       reply(encoded(GuardianXPCReply.accepted(
         status: status,
@@ -179,10 +217,83 @@ private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
       reply(validationFailure(error))
     } catch let error as GuardianChildSessionError {
       reply(childSessionFailure(error))
+    } catch let error as GuardianLifecycleAuthenticationError {
+      reply(encoded(GuardianXPCReply.rejected(
+        .lifecycleAuthenticationDenied,
+        message: error.localizedDescription
+      )))
     } catch is DecodingError {
       reply(encoded(GuardianXPCReply.rejected(
         .invalidRequest,
         message: "The child-session completion request is malformed."
+      )))
+    } catch {
+      reply(encoded(GuardianXPCReply.rejected(.internalFailure, message: error.localizedDescription)))
+    }
+  }
+
+  func issueServiceAccess(_ encodedRequest: Data, withReply reply: @escaping (Data) -> Void) {
+    do {
+      try validatePayloadSize(encodedRequest)
+      let request = try GuardianWireCodec.decode(
+        GuardianServiceAccessRequest.self,
+        from: encodedRequest
+      )
+      try GuardianRequestValidator.validate(request)
+      let authentication = try GuardianServiceBrokerAuthenticator.serviceAccess(key: lifecycleKey)
+      reply(encoded(GuardianXPCReply.serviceAuthenticated(
+        authentication,
+        message: "Short-lived signed user-session service access issued."
+      )))
+    } catch let error as GuardianRequestValidationError {
+      reply(validationFailure(error))
+    } catch is DecodingError {
+      reply(encoded(GuardianXPCReply.rejected(
+        .invalidRequest,
+        message: "The user-session service-access request is malformed."
+      )))
+    } catch {
+      reply(encoded(GuardianXPCReply.rejected(.internalFailure, message: error.localizedDescription)))
+    }
+  }
+
+  func authorizeParentChallenge(
+    _ encodedRequest: Data,
+    authorizationExternalForm: Data,
+    withReply reply: @escaping (Data) -> Void
+  ) {
+    do {
+      try validatePayloadSize(encodedRequest)
+      let request = try GuardianWireCodec.decode(
+        GuardianParentChallengeAuthorizationRequest.self,
+        from: encodedRequest
+      )
+      try GuardianRequestValidator.validate(request)
+      if request.approved {
+        // Approval is useful only when the daemon independently revalidates the
+        // native Authorization Services reference. A denial needs no privilege.
+        try GuardianAuthorization.validateAdministratorExternalForm(authorizationExternalForm)
+      }
+      let authentication = try GuardianServiceBrokerAuthenticator.parentAuthorization(
+        challengeID: request.challengeID,
+        purpose: request.purpose,
+        approved: request.approved,
+        key: lifecycleKey
+      )
+      reply(encoded(GuardianXPCReply.serviceAuthenticated(
+        authentication,
+        message: request.approved
+          ? "Administrator authorization verified for the Parent request."
+          : "Parent authorization was denied."
+      )))
+    } catch let error as GuardianRequestValidationError {
+      reply(validationFailure(error))
+    } catch let error as GuardianAuthorizationError {
+      reply(encoded(GuardianXPCReply.rejected(.authorizationDenied, message: error.localizedDescription)))
+    } catch is DecodingError {
+      reply(encoded(GuardianXPCReply.rejected(
+        .invalidRequest,
+        message: "The Parent authorization request is malformed."
       )))
     } catch {
       reply(encoded(GuardianXPCReply.rejected(.internalFailure, message: error.localizedDescription)))
@@ -272,6 +383,7 @@ private final class GuardianDaemonService: NSObject, GuardianDaemonXPCProtocol {
          .invalidChildSessionDay,
          .invalidCompletionCapability,
          .invalidCompletionProof,
+         .invalidParentChallenge,
          .invalidPolicyRevision,
          .invalidPolicySize,
          .invalidWeekID,
@@ -344,7 +456,8 @@ private struct GuardianDaemonApplication {
         ]
       )
       let store = try GuardianStateStore(url: daemonStateURL)
-      let service = GuardianDaemonService(store: store)
+      let lifecycleKey = try GuardianLifecycleKeyStore.loadOrCreate(at: lifecycleKeyURL)
+      let service = GuardianDaemonService(store: store, lifecycleKey: lifecycleKey)
       let delegate = GuardianListenerDelegate(service: service)
       let listener = NSXPCListener(machServiceName: GuardianConstants.daemonMachService)
       listener.setConnectionCodeSigningRequirement(requirement)

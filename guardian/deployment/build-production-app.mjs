@@ -21,7 +21,47 @@ const identifiers = {
   parent: 'com.fionnbar.homework.parent',
   agent: 'com.fionnbar.homework.guardian.agent',
   daemon: 'com.fionnbar.homework.guardian.daemon',
+  service: 'com.fionnbar.homework.service',
+  serviceRuntime: 'com.fionnbar.homework.service.runtime',
 }
+
+const serviceDependencies = [
+  '@noble/ciphers',
+  '@noble/hashes',
+  '@swc/helpers',
+  'base64-js',
+  'brotli',
+  'clone',
+  'dfa',
+  'fast-deep-equal',
+  'fflate',
+  'fontkit',
+  'linebreak',
+  'pako',
+  'pdfkit',
+  'png-js',
+  'restructure',
+  'tiny-inflate',
+  'tslib',
+  'unicode-properties',
+  'unicode-trie',
+]
+const serviceSourceFiles = [
+  'server/activity-config.mjs',
+  'server/database.mjs',
+  'server/google-live.mjs',
+  'server/google-proof.mjs',
+  'server/index.mjs',
+  'server/keychain.mjs',
+  'server/lifecycle-auth.mjs',
+  'server/parent-auth.mjs',
+  'server/runtime-security.mjs',
+  'server/user-session-broker.mjs',
+  'src/domain.ts',
+  'src/spelling.ts',
+  'src/writing.ts',
+  'dist/index.html',
+]
 
 function parseArguments(arguments_) {
   const releaseDirectory = join(guardianDirectory, '.build', 'release')
@@ -30,6 +70,9 @@ function parseArguments(arguments_) {
     parentBinary: join(releaseDirectory, 'fionnbar-homework-parent'),
     agentBinary: join(releaseDirectory, 'homework-guardian-agent'),
     daemonBinary: join(releaseDirectory, 'homework-guardian-daemon'),
+    serviceBinary: join(releaseDirectory, 'fionnbar-homework-service'),
+    nodeBinary: process.execPath,
+    serviceResourceRoot: '',
     identity: '',
     build: true,
     archive: true,
@@ -46,6 +89,9 @@ function parseArguments(arguments_) {
     else if (argument === '--parent-binary') options.parentBinary = resolve(takeValue(index++, argument))
     else if (argument === '--agent-binary') options.agentBinary = resolve(takeValue(index++, argument))
     else if (argument === '--daemon-binary') options.daemonBinary = resolve(takeValue(index++, argument))
+    else if (argument === '--service-binary') options.serviceBinary = resolve(takeValue(index++, argument))
+    else if (argument === '--node-binary') options.nodeBinary = resolve(takeValue(index++, argument))
+    else if (argument === '--service-resource-root') options.serviceResourceRoot = resolve(takeValue(index++, argument))
     else if (argument === '--identity') options.identity = takeValue(index++, argument)
     else if (argument === '--skip-build') options.build = false
     else if (argument === '--no-archive') options.archive = false
@@ -80,6 +126,59 @@ function copyExecutable(source, destination) {
   chmodSync(destination, 0o755)
 }
 
+function copyServiceResources(destination, preparedRoot = '') {
+  if (preparedRoot) {
+    if (!existsSync(join(preparedRoot, 'server', 'index.mjs')) ||
+        !existsSync(join(preparedRoot, 'dist', 'index.html'))) {
+      throw new Error('Prepared service resources need server/index.mjs and dist/index.html')
+    }
+    mkdirSync(destination, { recursive: true })
+    cpSync(join(preparedRoot, 'server'), join(destination, 'server'), { recursive: true })
+    cpSync(join(preparedRoot, 'dist'), join(destination, 'dist'), { recursive: true })
+    if (existsSync(join(preparedRoot, 'src'))) {
+      cpSync(join(preparedRoot, 'src'), join(destination, 'src'), { recursive: true })
+    }
+    if (existsSync(join(preparedRoot, 'node_modules'))) {
+      cpSync(join(preparedRoot, 'node_modules'), join(destination, 'node_modules'), { recursive: true })
+    }
+    return
+  }
+  const serverDestination = join(destination, 'server')
+  const sourceDestination = join(destination, 'src')
+  const modulesDestination = join(destination, 'node_modules')
+  for (const directory of [destination, sourceDestination, modulesDestination]) {
+    mkdirSync(directory, { recursive: true })
+  }
+  if (!existsSync(join(projectRoot, 'dist', 'index.html'))) {
+    throw new Error('Web production build is missing; run npm run build first')
+  }
+  cpSync(join(projectRoot, 'server'), serverDestination, { recursive: true })
+  cpSync(join(projectRoot, 'dist'), join(destination, 'dist'), { recursive: true })
+  for (const filename of ['domain.ts', 'spelling.ts', 'writing.ts']) {
+    cpSync(join(projectRoot, 'src', filename), join(sourceDestination, filename))
+  }
+  for (const dependency of serviceDependencies) {
+    const source = join(projectRoot, 'node_modules', dependency)
+    const target = join(modulesDestination, dependency)
+    if (!existsSync(source)) throw new Error(`Required service dependency is missing: ${dependency}`)
+    mkdirSync(dirname(target), { recursive: true })
+    cpSync(source, target, { recursive: true })
+  }
+}
+
+function validateServiceResources(serviceRoot) {
+  for (const filename of serviceSourceFiles) {
+    if (!existsSync(join(serviceRoot, filename))) {
+      throw new Error(`Packaged service resource is missing: ${filename}`)
+    }
+  }
+  for (const dependency of serviceDependencies) {
+    if (!existsSync(join(serviceRoot, 'node_modules', dependency, 'package.json'))) {
+      throw new Error(`Packaged service dependency is missing: ${dependency}`)
+    }
+  }
+}
+
 function signatureMetadata(path) {
   const verification = spawnSync('/usr/bin/codesign', ['--verify', '--strict', path], { encoding: 'utf8' })
   const detail = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', path], { encoding: 'utf8' })
@@ -93,9 +192,10 @@ function signatureMetadata(path) {
   }
 }
 
-function sign(path, identity, identifier) {
+function sign(path, identity, identifier, entitlements = '') {
   const arguments_ = ['--force', '--options', 'runtime', '--timestamp']
   if (identifier) arguments_.push('--identifier', identifier)
+  if (entitlements) arguments_.push('--entitlements', entitlements)
   arguments_.push('--sign', identity, path)
   execFileSync('/usr/bin/codesign', arguments_, { stdio: 'inherit' })
 }
@@ -107,6 +207,10 @@ function sha256(filename) {
 function buildProductionApp(options) {
   assertSafeOutput(options.output)
   if (options.build && !options.verifyOnly) {
+    execFileSync('/usr/bin/env', ['npm', 'run', 'build'], {
+      cwd: projectRoot,
+      stdio: 'inherit',
+    })
     execFileSync('/usr/bin/swift', ['build', '-c', 'release'], {
       cwd: guardianDirectory,
       stdio: 'inherit',
@@ -118,11 +222,14 @@ function buildProductionApp(options) {
   const launchAgents = join(contents, 'Library', 'LaunchAgents')
   const launchDaemons = join(contents, 'Library', 'LaunchDaemons')
   const resources = join(contents, 'Resources')
+  const serviceResources = join(resources, 'HomeworkService')
   const version = readFileSync(join(guardianDirectory, 'VERSION'), 'utf8').trim()
   const paths = {
     parent: join(macOSDirectory, 'fionnbar-homework-parent'),
     agent: join(macOSDirectory, 'homework-guardian-agent'),
     daemon: join(macOSDirectory, 'homework-guardian-daemon'),
+    service: join(macOSDirectory, 'fionnbar-homework-service'),
+    serviceRuntime: join(macOSDirectory, 'homework-service-node'),
   }
   if (options.verifyOnly) {
     if (!existsSync(options.output)) throw new Error(`App bundle not found: ${options.output}`)
@@ -140,6 +247,9 @@ function buildProductionApp(options) {
     copyExecutable(options.parentBinary, paths.parent)
     copyExecutable(options.agentBinary, paths.agent)
     copyExecutable(options.daemonBinary, paths.daemon)
+    copyExecutable(options.serviceBinary, paths.service)
+    copyExecutable(options.nodeBinary, paths.serviceRuntime)
+    copyServiceResources(serviceResources, options.serviceResourceRoot)
     cpSync(
       join(templatesDirectory, 'LaunchAgents', 'com.fionnbar.homework.guardian.agent.plist'),
       join(launchAgents, 'com.fionnbar.homework.guardian.agent.plist'),
@@ -148,8 +258,12 @@ function buildProductionApp(options) {
       join(templatesDirectory, 'LaunchDaemons', 'com.fionnbar.homework.guardian.daemon.plist'),
       join(launchDaemons, 'com.fionnbar.homework.guardian.daemon.plist'),
     )
+    cpSync(
+      join(templatesDirectory, 'LaunchDaemons', 'com.fionnbar.homework.service.plist'),
+      join(launchDaemons, 'com.fionnbar.homework.service.plist'),
+    )
     writeFileSync(join(resources, 'guardian-security.json'), `${JSON.stringify({
-      protocolVersion: 3,
+      protocolVersion: 6,
       version,
       daemonMachService: identifiers.daemon,
       allowedDaemonClients: [identifiers.parent, identifiers.agent],
@@ -158,6 +272,11 @@ function buildProductionApp(options) {
       policyAuthority: 'privileged-daemon',
       childSessionStart: 'signed-agent-restrictive-only',
       completionAuthority: 'daemon-capability-plus-service-proof',
+      lifecycleAuthentication: 'root-shared-hmac-sha256',
+      parentAuthorization: 'native-agent-daemon-attestation',
+      googleCredentials: 'signed-user-session-keychain-broker',
+      serviceRuntime: 'bundled-node',
+      dataOwnership: 'root-only-0700',
       enforcementIncluded: true,
     }, null, 2)}\n`)
 
@@ -165,6 +284,8 @@ function buildProductionApp(options) {
       join(contents, 'Info.plist'),
       join(launchAgents, 'com.fionnbar.homework.guardian.agent.plist'),
       join(launchDaemons, 'com.fionnbar.homework.guardian.daemon.plist'),
+      join(launchDaemons, 'com.fionnbar.homework.service.plist'),
+      join(templatesDirectory, 'NodeRuntime.entitlements'),
     ]) {
       execFileSync('/usr/bin/plutil', ['-lint', plist], { stdio: 'ignore' })
     }
@@ -172,19 +293,32 @@ function buildProductionApp(options) {
     if (options.identity) {
       sign(paths.agent, options.identity, identifiers.agent)
       sign(paths.daemon, options.identity, identifiers.daemon)
+      sign(paths.service, options.identity, identifiers.service)
+      sign(
+        paths.serviceRuntime,
+        options.identity,
+        identifiers.serviceRuntime,
+        join(templatesDirectory, 'NodeRuntime.entitlements')
+      )
       sign(options.output, options.identity)
     }
   }
+
+  validateServiceResources(serviceResources)
 
   const signatures = {
     parent: signatureMetadata(options.output),
     agent: signatureMetadata(paths.agent),
     daemon: signatureMetadata(paths.daemon),
+    service: signatureMetadata(paths.service),
+    serviceRuntime: signatureMetadata(paths.serviceRuntime),
   }
   const teams = new Set(Object.values(signatures).map((signature) => signature.teamIdentifier).filter(Boolean))
   const identifiersMatch = signatures.parent.identifier === identifiers.parent
     && signatures.agent.identifier === identifiers.agent
     && signatures.daemon.identifier === identifiers.daemon
+    && signatures.service.identifier === identifiers.service
+    && signatures.serviceRuntime.identifier === identifiers.serviceRuntime
   const signingReady = Object.values(signatures).every((signature) => (
     signature.valid && signature.hardenedRuntime && signature.teamIdentifier
   )) && teams.size === 1 && identifiersMatch
@@ -195,7 +329,11 @@ function buildProductionApp(options) {
     version,
     builtAt: new Date().toISOString(),
     minimumMacOS: '13.0',
-    architecture: 'SMAppService enforcement agent + policy daemon with authenticated XPC',
+    architecture: 'SMAppService agent + guardian daemon + root-owned local service',
+    lifecycleAuthentication: 'root-shared HMAC-SHA256',
+    parentAuthorization: 'native agent + daemon attestation',
+    googleCredentials: 'signed user-session Keychain broker',
+    rootOwnedServiceIncluded: true,
     enforcementIncluded: true,
     installReady: signingReady && notarizationReady,
     productionReady: false,

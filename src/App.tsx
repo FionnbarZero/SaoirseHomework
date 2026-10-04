@@ -28,6 +28,7 @@ import {
 import {
   DAYS,
   OPTIONAL_ACTIVITIES,
+  OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
   REQUIRED_ACTIVITIES,
   activeRequiredActivities,
@@ -48,8 +49,10 @@ import {
 import {
   advanceFindingProgress,
   applyCompletedCorrections,
+  evaluateWritingChoice,
   inspectAmbiguousDraft,
   inspectDraft,
+  scoreWritingResponses,
   writingReviewStatus,
 } from './writing'
 import {
@@ -64,12 +67,12 @@ import {
   addParentRewardCredit,
   beginLiveGoogleAuthorization,
   connectMockGoogle,
+  completeWritingGame,
   disconnectLiveGoogle,
   disconnectMockGoogle,
   endControlledSession,
   heartbeatControlledSession,
   hydrateFromService,
-  getReadingGameSession,
   getParentAuthorizationStatus,
   getSecurityStatus,
   loadStateFromService,
@@ -304,30 +307,6 @@ function App() {
     }
   }, [serviceStatus, state.entered])
 
-  useEffect(() => {
-    const gameSessionId = state.activeGameSession?.id
-    if (!gameSessionId || serviceStatus !== 'online') return
-    let cancelled = false
-    const refresh = () => {
-      getReadingGameSession(gameSessionId)
-        .then(({ state: storedState, meta }) => {
-          if (cancelled) return
-          setState(storedState)
-          setServiceMeta(meta)
-          setSessionError('')
-        })
-        .catch((error) => {
-          if (cancelled) return
-          setSessionError(error instanceof Error ? error.message : 'The game status could not be checked.')
-        })
-    }
-    const interval = window.setInterval(refresh, 2_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [state.activeGameSession?.id, serviceStatus])
-
   const navigate = (next: View) => {
     if (state.activeTimer && next !== 'session') {
       setView('session')
@@ -404,9 +383,9 @@ function App() {
       return
     }
 
-    const gameWindow = window.open('', 'reading-strategies-game', 'popup,width=900,height=720')
-    if (!gameWindow) {
-      setSessionError('Allow pop-ups for this app so the Reading Strategies game can open.')
+    if (latestState.current.activeGameSession?.status === 'pending' && latestState.current.activeGameSession.day === day) {
+      setSelectedDay(day)
+      setView('writing')
       return
     }
 
@@ -415,12 +394,24 @@ function App() {
       setState(response.state)
       setServiceMeta(response.meta)
       setSessionError('')
-      gameWindow.location.href = response.gameSession.launchUrl
-      gameWindow.focus()
+      setSelectedDay(day)
+      setView('writing')
     } catch (error) {
-      gameWindow.close()
-      setSessionError(error instanceof Error ? error.message : 'The Reading Strategies game could not start.')
+      setSessionError(error instanceof Error ? error.message : 'The writing game could not start.')
     }
+  }
+
+  const finishWritingGame = async (draftId: string) => {
+    const session = latestState.current.activeGameSession
+    if (!session || session.status !== 'pending') throw new Error('Start the daily writing activity first.')
+    if (serviceStatus !== 'online') throw new Error('Reconnect the local service before finishing the writing activity.')
+    await saveStateToService(latestState.current)
+    const response = await completeWritingGame(session.id, draftId)
+    setState(response.state)
+    setServiceMeta(response.meta)
+    setSessionError('')
+    setSelectedDay(session.day)
+    setView('day')
   }
 
   const completeTimer = async () => {
@@ -533,11 +524,7 @@ function App() {
               <button onClick={() => setSessionError('')} aria-label="Dismiss message"><X size={16} /></button>
             </div>
           )}
-          {view === 'path' && (
-            state.weekContext.headStart
-              ? <OptionalView state={state} startTimer={startTimer} headStart />
-              : <PathView state={state} selectedDay={selectedDay} openDay={openDay} />
-          )}
+          {view === 'path' && <PathView state={state} selectedDay={selectedDay} openDay={openDay} />}
           {view === 'day' && (
             <DayView
               state={state}
@@ -554,7 +541,7 @@ function App() {
           {view === 'options' && (
             <OptionalView state={state} startTimer={startTimer} onBack={() => setView('path')} />
           )}
-          {view === 'writing' && <WritingView state={state} setState={setState} />}
+          {view === 'writing' && <WritingView state={state} setState={setState} finishWritingGame={finishWritingGame} />}
           {view === 'rewards' && <RewardsView state={state} startTimer={startTimer} />}
           {view === 'parent' && (
             <ParentRoute
@@ -647,7 +634,7 @@ function EntryScreen({
 
 function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view: View) => void; rewardCount: number }) {
   const items: { id: View; label: string; icon: typeof Home }[] = [
-    { id: 'path', label: 'Week', icon: Home },
+    { id: 'path', label: 'Home', icon: Home },
     { id: 'options', label: 'Practice', icon: Music2 },
     { id: 'writing', label: 'Writing', icon: BookOpen },
     { id: 'rewards', label: 'Rewards', icon: Gift },
@@ -708,9 +695,19 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
         </div>
         <div className="bank-card compact">
           <span className="bank-icon"><Star size={20} fill="currentColor" /></span>
-          <div><small>WEEKLY PRACTICE</small><strong>{optionalTotal} <span>/ 13 banked</span></strong></div>
+          <div><small>WEEKLY PRACTICE</small><strong>{optionalTotal} <span>/ {OPTIONAL_SESSION_TOTAL} banked</span></strong></div>
         </div>
       </div>
+
+      {state.weekContext.headStart && (
+        <div className="head-start-note">
+          <Sparkles size={20} />
+          <div>
+            <strong>Sunday Head Start is open.</strong>
+            <p>Your full weekly plan stays here on Home. Optional practice completed today counts toward the upcoming week.</p>
+          </div>
+        </div>
+      )}
 
       <div className="quest-grid">
         <div className="journey-card">
@@ -801,8 +798,15 @@ function DayView({
         {REQUIRED_ACTIVITIES.map((activity) => {
           const done = completed.includes(activity.id)
           const self = activity.method === 'self'
-          const needsExternalSetup = activity.id === 'ninja-dojo'
-          const externalReady = !needsExternalSetup || state.activityConfiguration.ninjaDojo.ready
+          const configuration = activity.id === 'ninja-dojo'
+            ? state.activityConfiguration.ninjaDojo
+            : activity.id === 'du-chinese'
+              ? state.activityConfiguration.duChinese
+              : activity.id === 'level-chinese'
+                ? state.activityConfiguration.levelChinese
+                : null
+          const needsExternalSetup = Boolean(configuration)
+          const externalReady = !configuration || configuration.ready
           const canStartTimer = externalReady
           const gamePending = activity.id === 'reading-strategies' &&
             state.activeGameSession?.day === day &&
@@ -834,7 +838,7 @@ function DayView({
               {activity.method === 'timer' && done && <span className="verified-check"><Check size={20} /></span>}
               {activity.method === 'verified' && !done && (
                 <button className="row-button" onClick={() => startReadingGame(day)}>
-                  {gamePending ? 'Restart game' : 'Launch game'} <Play size={15} fill="currentColor" />
+                  {gamePending ? 'Continue writing' : 'Start writing'} <Play size={15} fill="currentColor" />
                 </button>
               )}
               {activity.method === 'verified' && done && <span className="verified-check"><ShieldCheck size={20} /></span>}
@@ -846,8 +850,8 @@ function DayView({
 
       <button className="practice-banner" onClick={openOptions}>
         <span className="practice-banner-icon"><Music2 size={27} /></span>
-        <span><small>WEEKLY PRACTICE BANK</small><strong>{state.optionalCompleted.length} of 13 sessions complete</strong></span>
-        <span className="banner-progress"><span style={{ width: `${(state.optionalCompleted.length / 13) * 100}%` }} /></span>
+        <span><small>WEEKLY PRACTICE BANK</small><strong>{state.optionalCompleted.length} of {OPTIONAL_SESSION_TOTAL} sessions complete</strong></span>
+        <span className="banner-progress"><span style={{ width: `${(state.optionalCompleted.length / OPTIONAL_SESSION_TOTAL) * 100}%` }} /></span>
         <ChevronRight />
       </button>
     </section>
@@ -881,7 +885,7 @@ function FridayFunView({
         <div className="friday-trophy"><Trophy size={58} strokeWidth={1.8} /></div>
         <p className="eyebrow">FRIDAY FUN!</p>
         <h2>You finished the quest.</h2>
-        <p>Friday’s work is complete, all 13 practice sessions are banked, and Free Mode is unlocked.</p>
+        <p>Friday’s work is complete, all {OPTIONAL_SESSION_TOTAL} practice sessions are banked, and Free Mode is unlocked.</p>
         <div className="friday-actions">
           <button className="secondary-button" onClick={openPath}><ArrowLeft size={17} /> See the week</button>
           <button className="primary-button" onClick={openRewards}>View saved rewards <Gift size={17} /></button>
@@ -942,17 +946,11 @@ function OptionalView({
           <h2>{headStart ? 'Build momentum for Monday.' : 'Choose your next session.'}</h2>
           <p>{headStart ? `These sessions are banked for the week of ${getWeekLabel(state.weekContext.weekId)}.` : 'Finish sessions early and they count toward the whole week.'}</p>
         </div>
-        <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of 13<br />banked</span></div>
+        <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of {OPTIONAL_SESSION_TOTAL}<br />banked</span></div>
       </div>
       <div className="practice-grid">
         {OPTIONAL_ACTIVITIES.map((activity) => {
           const completedCount = Array.from({ length: activity.sessions }).filter((_, index) => state.optionalCompleted.includes(optionalSessionKey(activity.id, index))).length
-          const configuration = activity.id === 'du-chinese'
-            ? state.activityConfiguration.duChinese
-            : activity.id === 'level-chinese'
-              ? state.activityConfiguration.levelChinese
-              : null
-          const canStart = !configuration || configuration.ready
           return (
             <article className={`practice-card practice-${activity.id}`} key={activity.id}>
               <div className="practice-top"><span className="large-activity-icon">{activity.icon}</span><span className="duration"><Clock3 size={14} /> {activity.minutes} min</span></div>
@@ -963,7 +961,7 @@ function OptionalView({
                   const key = optionalSessionKey(activity.id, index)
                   const done = state.optionalCompleted.includes(key)
                   return (
-                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done || !canStart} title={!configuration?.ready ? 'Parent setup is required' : configuration && !state.chromeConnected ? 'Managed Chrome is checked when the session starts' : undefined} onClick={() => startTimer({
+                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done} onClick={() => startTimer({
                       kind: 'optional', activityId: activity.id, sessionKey: key,
                       label: `${activity.title} · Session ${index + 1}`,
                       totalSeconds: activity.minutes * 60, remainingSeconds: activity.minutes * 60, running: true,
@@ -973,7 +971,7 @@ function OptionalView({
                   )
                 })}
               </div>
-              <small className="card-foot">{completedCount === activity.sessions ? 'All sessions banked' : !configuration ? `${activity.sessions - completedCount} left this week` : !configuration.ready ? 'Parent setup required' : !state.chromeConnected ? 'Managed Chrome required at launch' : `${activity.sessions - completedCount} left this week`}</small>
+              <small className="card-foot">{completedCount === activity.sessions ? 'All sessions banked' : `${activity.sessions - completedCount} left this week`}</small>
             </article>
           )
         })}
@@ -983,14 +981,60 @@ function OptionalView({
   )
 }
 
-function WritingView({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
+function WritingAccuracyGraph({ points }: { points: number[] }) {
+  if (!points.length) return null
+  const width = 320
+  const height = 120
+  const inset = 16
+  const coordinates = points.map((percent, index) => {
+    const x = points.length === 1
+      ? width / 2
+      : inset + (index / (points.length - 1)) * (width - inset * 2)
+    const y = inset + ((100 - percent) / 100) * (height - inset * 2)
+    return { x, y, percent }
+  })
+  return (
+    <figure className="accuracy-graph">
+      <figcaption>Accuracy after each response</figcaption>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Line graph of cumulative accuracy across ${points.length} responses, ending at ${points.at(-1)} percent`}>
+        <title>Cumulative writing-game accuracy</title>
+        <line x1={inset} y1={inset} x2={inset} y2={height - inset} />
+        <line x1={inset} y1={height - inset} x2={width - inset} y2={height - inset} />
+        <line className="guide" x1={inset} y1={height / 2} x2={width - inset} y2={height / 2} />
+        <polyline points={coordinates.map(({ x, y }) => `${x},${y}`).join(' ')} />
+        {coordinates.map(({ x, y, percent }, index) => <circle key={`${index}-${percent}`} cx={x} cy={y} r="4"><title>{`Response ${index + 1}: ${percent}% cumulative accuracy`}</title></circle>)}
+      </svg>
+      <span><b>0%</b><b>50%</b><b>100%</b></span>
+    </figure>
+  )
+}
+
+function WritingView({
+  state,
+  setState,
+  finishWritingGame,
+}: {
+  state: AppState
+  setState: React.Dispatch<React.SetStateAction<AppState>>
+  finishWritingGame: (draftId: string) => Promise<void>
+}) {
   const latest = state.drafts[0]
-  const [title, setTitle] = useState(latest?.title ?? '')
-  const [body, setBody] = useState(latest?.body ?? '')
+  const dailyWritingActive = state.activeGameSession?.status === 'pending'
+  const latestIsCurrentActivity = !dailyWritingActive || Boolean(
+    latest && state.activeGameSession &&
+    new Date(latest.updatedAt).getTime() >= new Date(state.activeGameSession.createdAt).getTime(),
+  )
+  const workingDraft = latestIsCurrentActivity ? latest : undefined
+  const [title, setTitle] = useState(workingDraft?.title ?? '')
+  const [body, setBody] = useState(workingDraft?.body ?? '')
   const [showReview, setShowReview] = useState(false)
-  const [reviewDraftId, setReviewDraftId] = useState<string | null>(latest?.id ?? null)
+  const [reviewDraftId, setReviewDraftId] = useState<string | null>(workingDraft?.id ?? null)
   const [answerMessage, setAnswerMessage] = useState('')
+  const [answerFeedback, setAnswerFeedback] = useState<null | ReturnType<typeof evaluateWritingChoice>>(null)
   const [spellingAnswer, setSpellingAnswer] = useState('')
+  const [finishingWriting, setFinishingWriting] = useState(false)
+  const [finishMessage, setFinishMessage] = useState('')
+  const questionHeadingRef = useRef<HTMLHeadingElement>(null)
   const analysis = useMemo(() => ({
     findings: inspectDraft(body, state.writingDictionary),
     reviewItems: inspectAmbiguousDraft(body),
@@ -1029,10 +1073,13 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   }, 0)
   const totalSpellingSteps = reviewSpellingWords.length * 9
   const spellingStepsComplete = completedSpellingSteps(reviewSpellingWords, reviewSpellingProgress)
+  const writingScore = scoreWritingResponses(reviewFindings, reviewProgress)
 
   useEffect(() => {
     setAnswerMessage('')
+    setAnswerFeedback(null)
     setSpellingAnswer('')
+    if (activeTrial) window.requestAnimationFrame(() => questionHeadingRef.current?.focus())
   }, [activeTrial?.id, activeSpellingStep?.wordId, activeSpellingStep?.phase, activeSpellingStep?.attempt])
 
   useEffect(() => {
@@ -1063,7 +1110,7 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   const save = () => {
     if (!title.trim() && !body.trim()) return
     const draft: Draft = {
-      id: latest?.id ?? crypto.randomUUID(),
+      id: workingDraft?.id ?? crypto.randomUUID(),
       title: title.trim() || 'Untitled writing',
       body,
       correctedBody: body,
@@ -1101,9 +1148,14 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   }
 
   const chooseAnswer = (choice: string) => {
+    if (!activeTrial || answerFeedback) return
+    setAnswerFeedback(evaluateWritingChoice(activeTrial, choice))
+  }
+
+  const continueAfterAnswer = () => {
     if (!reviewDraft || !activeFinding || !activeProgress || !activeTrial) return
-    const correct = choice === activeTrial.correctAnswer
-    const nextItem = advanceFindingProgress(activeProgress, correct, activeFinding.practice.length)
+    if (!answerFeedback) return
+    const nextItem = advanceFindingProgress(activeProgress, answerFeedback.correct, activeFinding.practice.length)
     const nextProgress = { ...reviewProgress, [activeFinding.id]: nextItem }
     const grammarCorrected = applyCompletedCorrections(reviewDraft.body, reviewFindings, nextProgress)
     const correctedBody = applyCompletedSpellingCorrections(
@@ -1130,7 +1182,7 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
           }
         : draft),
     }))
-    setAnswerMessage(correct ? 'Correct! Keep going.' : 'Try again. That answer does not advance your practice count.')
+    setAnswerFeedback(null)
   }
 
   const speakSpellingWord = () => {
@@ -1181,20 +1233,37 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
     if (result.correct) setSpellingAnswer('')
   }
 
+  const finishDailyWriting = async () => {
+    if (!reviewDraft || !dailyWritingActive) return
+    setFinishingWriting(true)
+    setFinishMessage('')
+    try {
+      await finishWritingGame(reviewDraft.id)
+    } catch (error) {
+      setFinishMessage(error instanceof Error ? error.message : 'The daily writing activity could not be completed.')
+    } finally {
+      setFinishingWriting(false)
+    }
+  }
+
   return (
     <section className="page writing-page">
       <div className="page-heading split-heading">
-        <div><p className="eyebrow">WRITING STUDIO</p><h2>Make your ideas clear.</h2><p>Your original words are always saved before review.</p></div>
+        <div>
+          <p className="eyebrow">{dailyWritingActive ? 'DAILY READING RESPONSE' : 'WRITING STUDIO'}</p>
+          <h2>{dailyWritingActive ? 'Read, write, practice, edit.' : 'Make your ideas clear.'}</h2>
+          <p>{dailyWritingActive ? 'Choose any passage to read, then write what you understood or thought about it. Your original words are saved before review.' : 'Your original words are always saved before review.'}</p>
+        </div>
         <div className="privacy-pill"><ShieldCheck size={18} /><span><strong>Private by design</strong><small>Checked on this Mac</small></span></div>
       </div>
       <div className="writing-grid">
         <div className="editor-card">
-          <input className="title-input" value={title} disabled={showReview} onChange={(event) => setTitle(event.target.value)} placeholder="Give your writing a title…" spellCheck={false} />
+          <input className="title-input" value={title} disabled={showReview} onChange={(event) => setTitle(event.target.value)} placeholder={dailyWritingActive ? 'Name the passage you read…' : 'Give your writing a title…'} spellCheck={false} />
           <textarea
             value={body}
             disabled={showReview}
             onChange={(event) => setBody(event.target.value)}
-            placeholder="Start writing here…"
+            placeholder={dailyWritingActive ? 'What happened in the passage? What did you learn, notice, or think about?' : 'Start writing here…'}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
@@ -1210,7 +1279,7 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Reviewed common misspellings only</small></p></div>
-              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>Save & check my writing</button>
+              <button className="primary-button full-button" disabled={!body.trim()} onClick={save}>{dailyWritingActive ? 'Save & build my practice game' : 'Save & check my writing'}</button>
             </div>
           ) : activeFinding && activeTrial ? (
             <div className="writing-exercise">
@@ -1219,14 +1288,34 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
                 <div><i style={{ width: `${totalExerciseSteps ? (completedExerciseSteps / totalExerciseSteps) * 100 : 100}%` }} /></div>
               </div>
               <small className="exercise-category">{activeFinding.category} · {activeProgress?.correctionComplete ? `practice ${Math.min(5, (activeProgress?.practiceCompleted ?? 0) + 1)} of 5` : 'your sentence'}</small>
-              <h4>{activeFinding.message}</h4>
+              <h4 ref={questionHeadingRef} tabIndex={-1}>{activeFinding.message}</h4>
               <p>{activeTrial.prompt}</p>
-              <div className="exercise-choices">
-                {activeTrial.choices.map((choice) => (
-                  <button key={choice} onClick={() => chooseAnswer(choice)}>{choice}</button>
-                ))}
+              <div className="exercise-choices" role="radiogroup" aria-label={activeTrial.prompt}>
+                {activeTrial.choices.map((choice) => {
+                  const selected = answerFeedback?.choice === choice
+                  const correctChoice = answerFeedback && choice === activeTrial.correctAnswer
+                  const incorrectChoice = answerFeedback && selected && !answerFeedback.correct
+                  const stateLabel = correctChoice ? ', correct answer' : incorrectChoice ? ', your answer, incorrect' : selected ? ', selected' : ''
+                  return (
+                    <button
+                      key={choice}
+                      className={correctChoice ? 'correct' : incorrectChoice ? 'incorrect' : selected ? 'selected' : ''}
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={`${choice}${stateLabel}`}
+                      disabled={Boolean(answerFeedback)}
+                      onClick={() => chooseAnswer(choice)}
+                    >{choice}</button>
+                  )
+                })}
               </div>
-              {answerMessage && <p className={answerMessage.startsWith('Correct') ? 'answer-message correct' : 'answer-message'} aria-live="polite">{answerMessage}</p>}
+              {answerFeedback && (
+                <div className={answerFeedback.correct ? 'answer-message correct' : 'answer-message'} role="status" aria-live="assertive">
+                  <strong>{answerFeedback.summary}</strong>
+                  <span>{answerFeedback.explanation}</span>
+                </div>
+              )}
+              {answerFeedback && <button className="primary-button full-button exercise-next" onClick={continueAfterAnswer}>Continue</button>}
               <button className="text-button" onClick={() => setShowReview(false)}>Return to draft</button>
             </div>
           ) : activeSpellingStep && activeSpellingWord ? (
@@ -1262,8 +1351,18 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
               <span><Check size={24} /></span>
               <h3>{reviewFindings.length || reviewSpellingWords.length ? 'Writing practice complete!' : 'No supported issues found.'}</h3>
               <p>Your untouched original and corrected copy are saved separately.</p>
+              {writingScore.total > 0 && (
+                <div className="writing-score-card">
+                  <small>SESSION SCORE</small>
+                  <strong>{writingScore.percent}%</strong>
+                  <p>{writingScore.correct} of {writingScore.total} responses correct</p>
+                  <WritingAccuracyGraph points={writingScore.cumulativePercent} />
+                </div>
+              )}
               {reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
               <div className="spelling-complete"><Check size={16} /><p><strong>Ready for Friday delivery.</strong> Every supported correction and spelling exercise is complete.</p></div>
+              {dailyWritingActive && <button className="primary-button full-button" disabled={finishingWriting} onClick={() => { void finishDailyWriting() }}>{finishingWriting ? 'Saving result…' : 'Finish daily writing activity'}</button>}
+              {finishMessage && <p className="answer-message" role="alert">{finishMessage}</p>}
               <button className="secondary-button full-button" onClick={() => setShowReview(false)}>Keep writing</button>
             </div>
           )}
@@ -1818,7 +1917,7 @@ function ParentView({
         <button className="admin-pill" onClick={() => { void lockParent() }}><CircleUserRound size={20} /><span><small>SESSION EXPIRES</small><strong>{authorization.expiresAt ? new Date(authorization.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Soon'} · Lock</strong></span></button>
       </div>
       <div className="parent-stats">
-        <div><small>WEEKLY PRACTICE</small><strong>{state.optionalCompleted.length}<span>/13</span></strong></div>
+        <div><small>WEEKLY PRACTICE</small><strong>{state.optionalCompleted.length}<span>/{OPTIONAL_SESSION_TOTAL}</span></strong></div>
         <div><small>REWARD CREDITS</small><strong>{state.rewardCredits.length}</strong></div>
         <div><small>WRITING DRAFTS</small><strong>{state.drafts.length}</strong></div>
         <div><small>GUARDIAN</small><strong className={state.guardianConnected ? 'status-good' : 'status-warn'}>{state.guardianConnected ? 'Connected' : 'Not linked'}</strong></div>

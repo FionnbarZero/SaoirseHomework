@@ -26,7 +26,8 @@ npm run build
 
 - Child entry screen and Monday–Friday quest path
 - Daily required activities and self-reported completion
-- Cumulative 13-session weekly practice bank
+- Daily Level Chinese and Du Chinese checklist activities with managed timers
+- Cumulative nine-session weekly music practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
 - Local writing drafts with deterministic grammar, capitalization, punctuation, and reviewed common-misspelling checks
@@ -48,6 +49,7 @@ npm run build
 - Root-owned, parent-authorized blocked-app policy with validated identifiers and audited revisions
 - Signed session-agent enforcement of only daemon-issued frontmost-application decisions
 - Server-issued daily child-session IDs with daemon-held completion capabilities and verified Free-mode proofs
+- Root-owned packaged service and SQLite directory with 15-second HMAC-authenticated lifecycle assertions
 - Production-app signing and notarization reports that stay non-production until second-Mac acceptance
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations
@@ -59,9 +61,10 @@ npm run build
 - Safe-by-default dry-run app-policy checks and an uninstalled LaunchAgent template
 - Manifest V3 managed-Chrome prototype with a stable development ID
 - Dynamic Homework-mode navigation rules and a parent-reviewed policy template
-- One-time Reading Strategies game sessions with hashed nonces and a 60-minute expiry
-- Exact-origin CORS, atomic `game-verified` completion, and replay rejection
-- Child-screen game launch, status polling, and a clearly labeled local verification simulator
+- Personalized reading-response writing with one original correction and five rule-matched trials per supported error
+- Reviewed Grade 5 practice for perfect tense, safe tense consistency, correlative conjunctions, preposition pronouns, interjections, direct address, and the existing capitalization and punctuation rules
+- Participation-based completion with locked answers, immediate rule feedback, stored accuracy, and a cumulative line graph
+- Server-verified writing evidence, edited-copy completion, expiry, and replay rejection
 - Persistent safe-mode Google connection and weekly delivery records
 - Duplicate-safe local document assembly, original/corrected writing sections, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
@@ -90,21 +93,18 @@ The UI labels the following honestly as pending because they require external in
 
 - Parent-authorized guardian installation and enforcement on the second Mac
 - Chrome Web Store publication and parent-installed policy on the second Mac
-- The production Reading Strategies game project and its exact integration origin (the local simulator exercises the completed contract)
 - Parent-created Google Cloud credentials and Family Link approval for the implemented live Google delivery path
 
 The browser does not claim to enforce applications or URLs by itself. Those controls belong to the guardian and extension described in the project plan.
 
 The managed Chrome extension supplies approved-origin and YouTube playback signals for external activities and rewards. The macOS guardian remains a prototype until it is parent-installed and tested on the child account, so application-level blocking is not yet a production enforcement boundary.
 
-Parent controls now fail closed behind a native guardian authorization protocol. See [PARENT_AUTH_SETUP.md](PARENT_AUTH_SETUP.md). The signed agent starts daemon-owned Homework sessions from server-issued daily IDs. Verified completion can release a session only with both the daemon's one-time capability and the service's matching Free-mode proof; parent exits remain administrator-authorized. Packaging the loopback service and SQLite behind a parent-owned boundary, notarization, and second-Mac bypass testing are still required.
+Parent controls now fail closed behind a native guardian authorization protocol. See [PARENT_AUTH_SETUP.md](PARENT_AUTH_SETUP.md). The production bundle includes a separate root-owned service launcher, a sealed Node runtime and server resources, and a root-only SQLite directory. Active lifecycle transitions carry short-lived HMAC assertions verified by the privileged daemon, so another process impersonating the loopback port cannot start or release a session. The signed login agent handles native Parent prompts and Google OAuth/Keychain operations; the daemon gives it only 15-second, scoped service grants and independently attests each Parent decision. Verified completion still requires the daemon's one-time capability and the matching Free-mode proof. Signing, notarization, recoverable upgrades, and second-Mac bypass testing are still required.
 
 Configure tracked school activities from the Parent screen. Launch URLs must use HTTPS (loopback HTTP is accepted for local testing), and any login or redirect origins must be entered explicitly. A configured external activity still cannot start until the managed Chrome extension is connected.
 
-To connect the production reading game, set `HOMEWORK_READING_GAME_URL` to its launch URL and `HOMEWORK_READING_GAME_ORIGIN` to that URL's exact origin. The game receives the one-time session data in the URL fragment and must POST the nonce to the supplied completion URL.
-
 The Parent screen's Google delivery proof remains deliberately local and is the default. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`.
 
-The live path is implemented but fail-closed until explicitly configured. It uses Authorization Code with PKCE, a loopback callback, macOS Keychain refresh-token storage, `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The writing flow marks a draft `complete` only after every supported correction and spelling response is finished; only complete drafts are eligible for live delivery.
+The live path is implemented but fail-closed until explicitly configured. In the packaged production architecture, the signed login agent performs Authorization Code with PKCE, token exchange, refresh, revocation, and login-Keychain storage; the root service receives only short-lived access tokens through its authenticated broker queue. It uses `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). The writing flow marks a draft `complete` only after every supported correction and spelling response is finished; only complete drafts are eligible for live delivery.
 
 Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

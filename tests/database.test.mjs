@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { createStore, getWeekContext } from '../server/database.mjs'
+import { inspectDraft } from '../src/writing.ts'
 
 function sampleState() {
   return {
@@ -91,9 +92,21 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 14)
+    assert.equal(reopened.info().schemaVersion, 15)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('protected service mode keeps the SQLite database owner-only', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-protected-db-'))
+  const filename = join(directory, 'homework.sqlite')
+  try {
+    const store = createStore(filename, { enforceFilePermissions: true })
+    assert.equal(statSync(filename).mode & 0o777, 0o600)
+    store.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -177,7 +190,10 @@ test('verified completion proof unlocks free mode and a correction rotates the l
   const started = store.startLearningSession()
   const weekId = started.session.weekId
 
-  for (const activityId of ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']) {
+  for (const activityId of [
+    'mandarin', 'level-chinese', 'du-chinese', 'math', 'english-packet',
+    'reading-strategies', 'ninja-dojo',
+  ]) {
     store.setDailyCompletion({
       day: 'Monday',
       activityId,
@@ -186,7 +202,7 @@ test('verified completion proof unlocks free mode and a correction rotates the l
       weekId,
     })
   }
-  for (const sessionKey of ['voena:0', 'drums:0', 'band:0']) {
+  for (const sessionKey of ['voena:0', 'drums:0']) {
     store.db.prepare(`
       INSERT INTO weekly_optional_completion (week_id, session_key, completed_at)
       VALUES (?, ?, ?)
@@ -201,10 +217,10 @@ test('verified completion proof unlocks free mode and a correction rotates the l
     weekId,
     day: 'Monday',
     eligibleAt: free.session.completionProof.eligibleAt,
-    requiredCompleted: 5,
-    requiredTarget: 5,
-    optionalCompleted: 3,
-    optionalTarget: 3,
+    requiredCompleted: 7,
+    requiredTarget: 7,
+    optionalCompleted: 2,
+    optionalTarget: 2,
   })
 
   store.setDailyCompletion({
@@ -506,10 +522,10 @@ test('managed Du Chinese phases reject browser credit and survive restart', () =
   try {
     const first = createStore(filename, clock.options('du-runtime-one'))
     const session = first.startSession({
-      kind: 'optional',
+      kind: 'required',
       activityId: 'du-chinese',
-      sessionKey: 'du-chinese:0',
-      label: 'Du Chinese · Session 1',
+      sessionKey: 'Monday',
+      label: 'Du Chinese',
       targetSeconds: 10,
       plan,
     })
@@ -550,8 +566,9 @@ test('managed Du Chinese phases reject browser credit and survive restart', () =
       activeOrigin: 'https://cards.example',
     })
     assert.equal(completed.status, 'completed')
-    assert.deepEqual(reopened.loadState().optionalCompleted, ['du-chinese:0'])
-    assert.equal(reopened.loadState().rewardCredits.length, 1)
+    assert.equal(reopened.loadState().requiredByDay.Monday.includes('du-chinese'), true)
+    assert.equal(reopened.loadState().optionalCompleted.length, 0)
+    assert.equal(reopened.loadState().rewardCredits.length, 0)
     reopened.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -562,10 +579,10 @@ test('Level Chinese waits for an exact managed-Chrome learning origin', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', clock.options())
   const session = store.startSession({
-    kind: 'optional',
+    kind: 'required',
     activityId: 'level-chinese',
-    sessionKey: 'level-chinese:0',
-    label: 'Level Chinese · Session 1',
+    sessionKey: 'Tuesday',
+    label: 'Level Chinese',
     targetSeconds: 5,
     plan: {
       phases: [
@@ -615,6 +632,7 @@ test('Level Chinese waits for an exact managed-Chrome learning origin', () => {
     1,
   )
   assert.equal(session.phaseId, 'clever-login')
+  assert.equal(store.loadState().requiredByDay.Tuesday.includes('level-chinese'), true)
   store.close()
 })
 
@@ -755,6 +773,66 @@ test('a valid one-time game token atomically records verified Reading Strategies
     store.listAudit().filter((event) => event.eventType === 'game_session_completed').length,
     1,
   )
+  store.close()
+})
+
+test('writing remediation requires every response but completion is based on participation and editing, not mastery', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const { session } = store.startGameSession({
+    activityId: 'reading-strategies',
+    day: 'Monday',
+    expectedOrigin: 'http://127.0.0.1:4179',
+  })
+  const body = 'She play games.'
+  const finding = inspectDraft(body)[0]
+  const state = sampleState()
+  state.activeTimer = null
+  state.drafts = [{
+    id: 'writing-game-draft',
+    title: 'My reading response',
+    body,
+    correctedBody: 'She plays games.',
+    updatedAt: '2026-10-03T16:00:01.000Z',
+    findings: [finding],
+    exerciseProgress: {
+      [finding.id]: {
+        correctionComplete: true,
+        practiceCompleted: 4,
+        incorrectAttempts: 5,
+        attemptResults: [false, false, false, false, false],
+      },
+    },
+    spellingWords: [],
+    spellingProgress: {},
+    reviewStatus: 'practice',
+  }]
+  clock.advance(1_000)
+  store.saveState(state)
+
+  assertServiceError(
+    () => store.completeWritingGameSession({ id: session.id, draftId: 'writing-game-draft' }),
+    409,
+    'writing_practice_incomplete',
+  )
+
+  state.drafts[0].exerciseProgress[finding.id] = {
+    correctionComplete: true,
+    practiceCompleted: 5,
+    incorrectAttempts: 6,
+    attemptResults: [false, false, false, false, false, false],
+  }
+  state.drafts[0].updatedAt = '2026-10-03T16:00:02.000Z'
+  clock.advance(1_000)
+  store.saveState(state)
+  const completed = store.completeWritingGameSession({ id: session.id, draftId: 'writing-game-draft' })
+
+  assert.equal(completed.evidence.correct, 0)
+  assert.equal(completed.evidence.total, 6)
+  assert.equal(completed.evidence.percent, 0)
+  assert.equal(completed.evidence.edited, true)
+  assert.equal(store.loadState().requiredByDay.Monday.includes('reading-strategies'), true)
+  assert.equal(store.listCompletions()[0].source, 'writing-remediation')
   store.close()
 })
 
@@ -1036,15 +1114,13 @@ test('weekly context changes at Sunday 4 a.m. in the configured time zone', () =
   assert.equal(monday.weekId, '2026-10-05')
 })
 
-test('six Sunday sessions and seven Monday sessions share one bank, then archive once', () => {
+test('six Sunday sessions and three Monday sessions share one bank, then archive once', () => {
   const clock = controlledClock('2026-10-04T11:00:00.000Z')
   const store = createStore(':memory:', clock.options())
   const allSessions = [
     'voena:0', 'voena:1', 'voena:2',
     'drums:0', 'drums:1', 'drums:2',
     'band:0', 'band:1', 'band:2',
-    'level-chinese:0', 'level-chinese:1',
-    'du-chinese:0', 'du-chinese:1',
   ]
 
   const sunday = store.loadState()
@@ -1079,10 +1155,10 @@ test('six Sunday sessions and seven Monday sessions share one bank, then archive
     method: 'self-reported',
     weekId: monday.weekContext.weekId,
   })
-  assert.equal(store.loadState().optionalCompleted.length, 13)
+  assert.equal(store.loadState().optionalCompleted.length, 9)
 
   clock.setWall('2026-10-11T10:59:59.000Z')
-  assert.equal(store.loadState().optionalCompleted.length, 13)
+  assert.equal(store.loadState().optionalCompleted.length, 9)
   clock.setWall('2026-10-11T11:00:00.000Z')
   const nextWeek = store.loadState()
   assert.equal(nextWeek.weekContext.weekId, '2026-10-12')
@@ -1097,7 +1173,7 @@ test('six Sunday sessions and seven Monday sessions share one bank, then archive
   assert.equal(
     store.db.prepare('SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?')
       .get('2026-10-05').count,
-    13,
+    9,
   )
   assert.equal(
     store.listAudit().filter((event) => event.eventType === 'weekly_plan_rolled_over').length,
@@ -1155,6 +1231,47 @@ test('schema 7 migrates existing unscoped completions into the active week once'
       1,
     )
     reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('existing Level Chinese and Du Chinese practice credit moves into the daily checklist', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-chinese-migration-'))
+  const filename = join(directory, 'homework.sqlite')
+
+  try {
+    const clock = controlledClock('2026-10-05T16:00:00.000Z')
+    const initial = createStore(filename, clock.options())
+    const { weekId } = initial.loadState().weekContext
+    initial.close()
+
+    const legacy = new DatabaseSync(filename)
+    legacy.prepare(`DELETE FROM app_meta WHERE key = 'daily_chinese_activities_migrated'`).run()
+    legacy.prepare('UPDATE weekly_plan SET optional_target = 13 WHERE week_id = ?').run(weekId)
+    const insertOptional = legacy.prepare(`
+      INSERT INTO weekly_optional_completion (week_id, session_key, completed_at)
+      VALUES (?, ?, ?)
+    `)
+    insertOptional.run(weekId, 'level-chinese:0', '2026-10-05T16:05:00.000Z')
+    insertOptional.run(weekId, 'du-chinese:0', '2026-10-05T16:10:00.000Z')
+    insertOptional.run(weekId, 'voena:0', '2026-10-05T16:15:00.000Z')
+    legacy.close()
+
+    const migrated = createStore(filename, clock.options())
+    const state = migrated.loadState()
+    assert.equal(state.requiredByDay.Monday.includes('level-chinese'), true)
+    assert.equal(state.requiredByDay.Monday.includes('du-chinese'), true)
+    assert.deepEqual(state.optionalCompleted, ['voena:0'])
+    assert.equal(
+      migrated.db.prepare('SELECT optional_target FROM weekly_plan WHERE week_id = ?').get(weekId).optional_target,
+      9,
+    )
+    assert.equal(
+      migrated.listAudit().filter((event) => event.eventType === 'chinese_activities_moved_to_daily_checklist').length,
+      1,
+    )
+    migrated.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -1244,13 +1361,14 @@ test('a controlled session completed after rollover stays with the week where it
 test('Friday Free Mode unlocks once, relocks after a correction, and resets on rollover', () => {
   const clock = controlledClock('2026-10-09T16:00:00.000Z')
   const store = createStore(':memory:', clock.options())
-  const required = ['mandarin', 'math', 'english-packet', 'reading-strategies', 'ninja-dojo']
+  const required = [
+    'mandarin', 'level-chinese', 'du-chinese', 'math', 'english-packet',
+    'reading-strategies', 'ninja-dojo',
+  ]
   const optional = [
     'voena:0', 'voena:1', 'voena:2',
     'drums:0', 'drums:1', 'drums:2',
     'band:0', 'band:1', 'band:2',
-    'level-chinese:0', 'level-chinese:1',
-    'du-chinese:0', 'du-chinese:1',
   ]
 
   for (const activityId of required) {

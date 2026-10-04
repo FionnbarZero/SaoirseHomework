@@ -1,0 +1,388 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly LABEL="com.fionnbar.homework.guardian"
+readonly SCRIPT_DIRECTORY="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+readonly BUNDLE_ROOT="${SCRIPT_DIRECTORY}"
+readonly PAYLOAD_ROOT="${BUNDLE_ROOT}/payload"
+readonly MANIFEST_PATH="${BUNDLE_ROOT}/manifest.sha256"
+readonly BUNDLE_METADATA="${BUNDLE_ROOT}/bundle.json"
+readonly INSTALL_ROOT="/Library/Application Support/FionnbarHomework"
+readonly BACKUP_ROOT="/Library/Application Support/FionnbarHomework Backups"
+readonly BINARY_DESTINATION="${INSTALL_ROOT}/bin/homework-guardian"
+readonly CONFIG_DESTINATION="${INSTALL_ROOT}/config/guardian.json"
+readonly INSTALL_STATE="${INSTALL_ROOT}/config/install-state"
+readonly LAUNCH_AGENT_DESTINATION="/Library/LaunchAgents/${LABEL}.plist"
+
+COMMAND="${1:-help}"
+if [[ $# -gt 0 ]]; then shift; fi
+CHILD_USER=""
+BACKUP_ID=""
+
+usage() {
+  cat <<'USAGE'
+Fionnbar Homework guardian deployment administrator
+
+Usage:
+  ./guardian-admin bundle-report
+  ./guardian-admin plan --child-user USER
+  sudo ./guardian-admin install --child-user USER
+  sudo ./guardian-admin health --child-user USER
+  sudo ./guardian-admin uninstall --child-user USER
+  sudo ./guardian-admin rollback --child-user USER --backup-id ID
+
+The package installs only a signed, hardened, dry-run guardian. It refuses
+enforcement and refuses to deploy the prototype shared secret into a child
+account. Uninstall is recoverable and preserves logs.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --child-user)
+      [[ $# -ge 2 ]] || { echo "ERROR: --child-user requires a value" >&2; exit 64; }
+      CHILD_USER="$2"
+      shift 2
+      ;;
+    --backup-id)
+      [[ $# -ge 2 ]] || { echo "ERROR: --backup-id requires a value" >&2; exit 64; }
+      BACKUP_ID="$2"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown option: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
+error() {
+  echo "ERROR: $*" >&2
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || { error "required command is unavailable: $1"; return 1; }
+}
+
+verify_manifest() {
+  [[ -f "$MANIFEST_PATH" ]] || { error "bundle manifest is missing"; return 1; }
+  (cd "$BUNDLE_ROOT" && /usr/bin/shasum -a 256 -c "$(basename "$MANIFEST_PATH")" >/dev/null) || {
+    error "bundle checksum verification failed"
+    return 1
+  }
+}
+
+config_value() {
+  local filename="$1" key="$2"
+  /usr/bin/plutil -extract "$key" raw -o - "$filename" 2>/dev/null || true
+}
+
+verify_safe_configuration() {
+  local configuration="${1:-${PAYLOAD_ROOT}/guardian.json}"
+  local launch_agent="${2:-${PAYLOAD_ROOT}/${LABEL}.plist.template}"
+  [[ -f "$configuration" ]] || { error "guardian configuration is missing: $configuration"; return 1; }
+  /usr/bin/plutil -p "$configuration" >/dev/null || {
+    error "guardian configuration is invalid"
+    return 1
+  }
+  [[ "$(config_value "$configuration" allowEnforcement)" == "false" ]] || {
+    error "deployment configuration must keep allowEnforcement=false"
+    return 1
+  }
+  [[ -z "$(config_value "$configuration" sharedSecret)" ]] || {
+    error "deployment configuration must not contain the prototype shared secret"
+    return 1
+  }
+  if /usr/bin/grep -q -- '--enforce' "$launch_agent"; then
+    error "deployment LaunchAgent must not request enforcement"
+    return 1
+  fi
+}
+
+signature_team() {
+  local binary="${1:-${PAYLOAD_ROOT}/homework-guardian}"
+  /usr/bin/codesign -dv --verbose=4 "$binary" 2>&1 |
+    /usr/bin/awk -F= '/^TeamIdentifier=/{print $2; exit}'
+}
+
+verify_signature() {
+  local binary="${1:-${PAYLOAD_ROOT}/homework-guardian}"
+  /usr/bin/codesign --verify --strict "$binary" >/dev/null 2>&1 || {
+    error "guardian binary is not signed"
+    return 1
+  }
+  local details
+  details="$(/usr/bin/codesign -dv --verbose=4 "$binary" 2>&1)"
+  [[ "$details" == *"runtime"* ]] || {
+    error "guardian signature does not enable the hardened runtime"
+    return 1
+  }
+  local team
+  team="$(signature_team "$binary")"
+  [[ -n "$team" && "$team" != "not set" ]] || {
+    error "guardian requires a non-ad-hoc Apple development team signature"
+    return 1
+  }
+}
+
+bundle_report() {
+  local ready="yes"
+  echo "Bundle: ${BUNDLE_ROOT}"
+  if verify_manifest; then echo "Checksums: valid"; else ready="no"; fi
+  if verify_safe_configuration; then echo "Configuration: dry-run and secret-free"; else ready="no"; fi
+  if verify_signature; then
+    echo "Code signing: valid hardened signature ($(signature_team "${PAYLOAD_ROOT}/homework-guardian"))"
+  else
+    echo "Code signing: BLOCKED"
+    ready="no"
+  fi
+  echo "INSTALL_READY=${ready}"
+  [[ "$ready" == "yes" ]]
+}
+
+require_macos_13() {
+  [[ "$(/usr/bin/uname -s)" == "Darwin" ]] || { error "installation is supported only on macOS"; return 1; }
+  local major
+  major="$(/usr/bin/sw_vers -productVersion | /usr/bin/awk -F. '{print $1}')"
+  [[ "$major" =~ ^[0-9]+$ && "$major" -ge 13 ]] || {
+    error "macOS 13 or later is required"
+    return 1
+  }
+}
+
+require_child_user() {
+  [[ -n "$CHILD_USER" ]] || { error "--child-user is required"; return 1; }
+  /usr/bin/id "$CHILD_USER" >/dev/null 2>&1 || { error "child user does not exist: $CHILD_USER"; return 1; }
+  if /usr/bin/id -Gn "$CHILD_USER" | /usr/bin/tr ' ' '\n' | /usr/bin/grep -qx 'admin'; then
+    error "the child account must be a standard user, not an administrator"
+    return 1
+  fi
+}
+
+child_uid() {
+  /usr/bin/id -u "$CHILD_USER"
+}
+
+child_group() {
+  /usr/bin/id -gn "$CHILD_USER"
+}
+
+child_home() {
+  /usr/bin/dscl . -read "/Users/${CHILD_USER}" NFSHomeDirectory | /usr/bin/awk '{print $2}'
+}
+
+require_root() {
+  [[ "$(/usr/bin/id -u)" -eq 0 ]] || { error "this command requires sudo"; return 1; }
+}
+
+host_plan() {
+  local ready="yes"
+  if bundle_report; then :; else ready="no"; fi
+  if require_macos_13; then echo "Host: supported macOS"; else ready="no"; fi
+  if require_child_user; then
+    echo "Child account: ${CHILD_USER} (standard user, uid $(child_uid))"
+    if /bin/launchctl print "gui/$(child_uid)" >/dev/null 2>&1; then
+      echo "Child login session: active"
+    else
+      error "the child user must be logged in before planning or installing"
+      ready="no"
+    fi
+  else
+    ready="no"
+  fi
+  if [[ "$ready" == "yes" ]]; then
+    echo "PLAN_READY=yes"
+    return 0
+  fi
+  echo "PLAN_READY=no"
+  return 2
+}
+
+backup_current() {
+  local reason="$1"
+  local backup_id
+  backup_id="$(/bin/date -u '+%Y%m%dT%H%M%SZ')-${reason}"
+  local destination="${BACKUP_ROOT}/${backup_id}"
+  /bin/mkdir -p "$destination"
+  /usr/sbin/chown root:wheel "$BACKUP_ROOT" "$destination"
+  /bin/chmod 700 "$BACKUP_ROOT" "$destination"
+  [[ -f "$BINARY_DESTINATION" ]] && /bin/cp -p "$BINARY_DESTINATION" "${destination}/homework-guardian"
+  [[ -f "$CONFIG_DESTINATION" ]] && /bin/cp -p "$CONFIG_DESTINATION" "${destination}/guardian.json"
+  [[ -f "$INSTALL_STATE" ]] && /bin/cp -p "$INSTALL_STATE" "${destination}/install-state"
+  [[ -f "$LAUNCH_AGENT_DESTINATION" ]] && /bin/cp -p "$LAUNCH_AGENT_DESTINATION" "${destination}/${LABEL}.plist"
+  echo "$backup_id"
+}
+
+render_launch_agent() {
+  local destination="$1"
+  local binary_escaped config_escaped log_escaped
+  binary_escaped="$(printf '%s' "$BINARY_DESTINATION" | /usr/bin/sed 's/[&|]/\\&/g')"
+  config_escaped="$(printf '%s' "$CONFIG_DESTINATION" | /usr/bin/sed 's/[&|]/\\&/g')"
+  log_escaped="$(printf '%s' "$(child_home)/Library/Logs/FionnbarHomework" | /usr/bin/sed 's/[&|]/\\&/g')"
+  /usr/bin/sed \
+    -e "s|__GUARDIAN_BINARY__|${binary_escaped}|g" \
+    -e "s|__GUARDIAN_CONFIG__|${config_escaped}|g" \
+    -e "s|__GUARDIAN_LOG_DIRECTORY__|${log_escaped}|g" \
+    "${PAYLOAD_ROOT}/${LABEL}.plist.template" > "$destination"
+  /usr/bin/plutil -lint "$destination" >/dev/null
+}
+
+write_install_state() {
+  local version
+  version="$(/usr/bin/plutil -extract version raw -o - "$BUNDLE_METADATA")"
+  /usr/bin/printf 'CHILD_USER=%s\nCHILD_UID=%s\nCHILD_HOME=%s\nVERSION=%s\n' \
+    "$CHILD_USER" "$(child_uid)" "$(child_home)" "$version" > "$INSTALL_STATE"
+  /usr/sbin/chown root:wheel "$INSTALL_STATE"
+  /bin/chmod 600 "$INSTALL_STATE"
+}
+
+bootstrap_agent() {
+  local uid
+  uid="$(child_uid)"
+  /bin/launchctl print "gui/${uid}" >/dev/null 2>&1 || {
+    error "the child user must be logged in so the GUI launchd domain exists"
+    return 1
+  }
+  /bin/launchctl bootout "gui/${uid}/${LABEL}" >/dev/null 2>&1 || true
+  /bin/launchctl bootstrap "gui/${uid}" "$LAUNCH_AGENT_DESTINATION"
+  /bin/launchctl kickstart -k "gui/${uid}/${LABEL}"
+}
+
+restore_backup_snapshot() {
+  local source="$1"
+  /bin/launchctl bootout "gui/$(child_uid)/${LABEL}" >/dev/null 2>&1 || true
+  /bin/rm -f "$LAUNCH_AGENT_DESTINATION" "$BINARY_DESTINATION" "$CONFIG_DESTINATION" "$INSTALL_STATE"
+  [[ -f "${source}/homework-guardian" ]] && /usr/bin/install -o root -g wheel -m 755 "${source}/homework-guardian" "$BINARY_DESTINATION"
+  [[ -f "${source}/guardian.json" ]] && /usr/bin/install -o root -g wheel -m 644 "${source}/guardian.json" "$CONFIG_DESTINATION"
+  [[ -f "${source}/install-state" ]] && /usr/bin/install -o root -g wheel -m 600 "${source}/install-state" "$INSTALL_STATE"
+  if [[ -f "${source}/${LABEL}.plist" ]]; then
+    /usr/bin/install -o root -g wheel -m 644 "${source}/${LABEL}.plist" "$LAUNCH_AGENT_DESTINATION"
+    /bin/launchctl bootstrap "gui/$(child_uid)" "$LAUNCH_AGENT_DESTINATION" >/dev/null 2>&1 || true
+  fi
+}
+
+install_guardian() {
+  require_root
+  host_plan
+  local backup_id
+  backup_id="$(backup_current preinstall)"
+  local backup_source="${BACKUP_ROOT}/${backup_id}"
+  rollback_failed_install() {
+    local status=$?
+    trap - ERR
+    error "installation failed; restoring the exact preinstall snapshot"
+    restore_backup_snapshot "$backup_source"
+    exit "$status"
+  }
+  trap rollback_failed_install ERR
+  local log_directory
+  log_directory="$(child_home)/Library/Logs/FionnbarHomework"
+  /usr/bin/install -d -o root -g wheel -m 755 "${INSTALL_ROOT}/bin" "${INSTALL_ROOT}/config"
+  /usr/bin/install -d -o "$CHILD_USER" -g "$(child_group)" -m 700 "$log_directory"
+  /usr/bin/install -o root -g wheel -m 755 "${PAYLOAD_ROOT}/homework-guardian" "$BINARY_DESTINATION"
+  /usr/bin/install -o root -g wheel -m 644 "${PAYLOAD_ROOT}/guardian.json" "$CONFIG_DESTINATION"
+  local temporary_plist
+  temporary_plist="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/fionnbar-launch-agent.XXXXXX")"
+  trap '/bin/rm -f "$temporary_plist"' EXIT
+  render_launch_agent "$temporary_plist"
+  /usr/bin/install -o root -g wheel -m 644 "$temporary_plist" "$LAUNCH_AGENT_DESTINATION"
+  write_install_state
+  bootstrap_agent
+  trap - ERR
+  echo "Installed dry-run guardian for ${CHILD_USER}."
+  echo "Rollback backup: ${backup_id}"
+  echo "Enforcement: BLOCKED until the signed privileged broker milestone is complete."
+}
+
+check_mode_owner() {
+  local path="$1" expected_owner="$2" expected_mode="$3"
+  [[ -e "$path" ]] || { error "missing: $path"; return 1; }
+  local owner mode
+  owner="$(/usr/bin/stat -f '%Su:%Sg' "$path")"
+  mode="$(/usr/bin/stat -f '%Lp' "$path")"
+  [[ "$owner" == "$expected_owner" ]] || { error "wrong owner for $path: $owner"; return 1; }
+  [[ "$mode" == "$expected_mode" ]] || { error "wrong mode for $path: $mode"; return 1; }
+}
+
+health_guardian() {
+  require_macos_13
+  require_child_user
+  local healthy="yes"
+  check_mode_owner "$BINARY_DESTINATION" "root:wheel" 755 || healthy="no"
+  check_mode_owner "$CONFIG_DESTINATION" "root:wheel" 644 || healthy="no"
+  check_mode_owner "$INSTALL_STATE" "root:wheel" 600 || healthy="no"
+  check_mode_owner "$LAUNCH_AGENT_DESTINATION" "root:wheel" 644 || healthy="no"
+  verify_signature "$BINARY_DESTINATION" || healthy="no"
+  verify_safe_configuration "$CONFIG_DESTINATION" "$LAUNCH_AGENT_DESTINATION" || healthy="no"
+  if /bin/launchctl print "gui/$(child_uid)/${LABEL}" >/dev/null 2>&1; then
+    echo "LaunchAgent: loaded"
+  else
+    error "LaunchAgent is not loaded"
+    healthy="no"
+  fi
+  echo "ENFORCEMENT=disabled"
+  echo "PARENT_AUTHORIZATION=blocked-until-privileged-broker"
+  echo "HEALTHY=${healthy}"
+  [[ "$healthy" == "yes" ]]
+}
+
+uninstall_guardian() {
+  require_root
+  require_macos_13
+  require_child_user
+  local backup_id
+  backup_id="$(backup_current uninstall)"
+  /bin/launchctl bootout "gui/$(child_uid)/${LABEL}" >/dev/null 2>&1 || true
+  /bin/rm -f "$LAUNCH_AGENT_DESTINATION" "$BINARY_DESTINATION" "$CONFIG_DESTINATION" "$INSTALL_STATE"
+  /bin/rmdir "${INSTALL_ROOT}/bin" "${INSTALL_ROOT}/config" "$INSTALL_ROOT" >/dev/null 2>&1 || true
+  echo "Guardian uninstalled. Logs were preserved."
+  echo "Recoverable backup: ${backup_id}"
+}
+
+validate_backup_id() {
+  [[ "$BACKUP_ID" =~ ^[0-9]{8}T[0-9]{6}Z-(preinstall|uninstall)$ ]] || {
+    error "--backup-id must be an ID printed by install or uninstall"
+    return 1
+  }
+}
+
+rollback_guardian() {
+  require_root
+  require_macos_13
+  require_child_user
+  validate_backup_id
+  local source="${BACKUP_ROOT}/${BACKUP_ID}"
+  [[ -d "$source" ]] || { error "backup not found: $BACKUP_ID"; return 1; }
+  [[ -f "${source}/homework-guardian" && -f "${source}/guardian.json" && -f "${source}/${LABEL}.plist" ]] || {
+    error "backup does not contain a complete guardian installation"
+    return 1
+  }
+  verify_signature "${source}/homework-guardian"
+  verify_safe_configuration "${source}/guardian.json" "${source}/${LABEL}.plist"
+  /usr/bin/install -d -o root -g wheel -m 755 "${INSTALL_ROOT}/bin" "${INSTALL_ROOT}/config"
+  restore_backup_snapshot "$source"
+  [[ -f "$INSTALL_STATE" ]] || write_install_state
+  bootstrap_agent
+  echo "Guardian restored from backup ${BACKUP_ID}."
+}
+
+case "$COMMAND" in
+  help) usage ;;
+  bundle-report) bundle_report ;;
+  plan) host_plan ;;
+  install) install_guardian ;;
+  health) health_guardian ;;
+  uninstall) uninstall_guardian ;;
+  rollback) rollback_guardian ;;
+  *)
+    error "unknown command: $COMMAND"
+    usage >&2
+    exit 64
+    ;;
+esac

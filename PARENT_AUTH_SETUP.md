@@ -49,4 +49,6 @@ During Homework mode, enforcing mode shows a locked recovery screen if the guard
 
 This milestone proves the authorization protocol and native macOS prompt, but it does not install a privileged, code-signed guardian. Before calling the boundary production-ready, move the shared secret and configuration out of the child account, install a reviewed signed helper/agent from an administrator account, validate file ownership and permissions, and run the bypass and crash-recovery tests on the second Mac. Do not copy the example secret or a real secret into source control.
 
+The second-Mac tooling in [`guardian/deployment/`](guardian/deployment/) packages only a signed, secret-free, dry-run agent and deliberately blocks this shared-secret feasibility mode. Parent authorization will join that deployment only after the signed Service Management daemon and authenticated XPC boundary are implemented.
+
 Apple notes that Authorization Services is intended for non-sandboxed macOS software that restricts its own features and that the Security Agent handles authentication. The guardian therefore must remain outside an App Sandbox.

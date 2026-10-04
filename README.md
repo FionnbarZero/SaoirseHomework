@@ -40,6 +40,8 @@ npm run build
 - Ten-minute HttpOnly parent sessions, explicit lock, sensitive-action reauthorization, and restart revocation
 - Server-enforced protection for parent overrides, rewards, writing review tools, URLs, Google controls/artifacts, audit history, and reset
 - Enforcing-mode recovery lock when the guardian, managed Chrome, or local service fails during Homework mode
+- Checksum-protected second-Mac guardian review bundles with signed-binary, standard-user, ownership, dry-run, and secret-exclusion gates
+- Root-owned dry-run installation, health checks, recoverable uninstall, and exact-backup rollback tooling
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations
 - Five-second focus heartbeats using monotonic elapsed time

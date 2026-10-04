@@ -8,5 +8,6 @@ data
 *.tsbuildinfo
 .DS_Store
 guardian/.build
+guardian/build
 chrome/private
 chrome/build

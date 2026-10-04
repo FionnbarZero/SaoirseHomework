@@ -35,4 +35,6 @@ See `../PARENT_AUTH_SETUP.md` for the shared-secret and native authorization tes
 
 ## Installation boundary
 
-Do not enable enforcement or load the LaunchAgent on a daily-use account. The next feasibility step is to create the standard child account on the second Mac, install a reviewed code-signed helper/agent and parent-owned configuration, fill the absolute paths in the LaunchAgent template, and test authorization, bypass resistance, and recovery while a parent is present. The command-line prototype and JSON secret are not yet a production installation boundary.
+Do not enable enforcement or manually load the template LaunchAgent on a daily-use account. The reviewed deployment tooling in [`deployment/`](deployment/) can build and validate a signed dry-run-only bundle, install root-owned files, run health checks, and perform recoverable uninstall or rollback. It intentionally refuses unsigned binaries, administrator child accounts, enforcement, and embedded shared secrets.
+
+The next production gate is the signed `SMAppService` agent/daemon and authenticated XPC boundary described in the deployment guide. The command-line prototype and JSON secret remain a feasibility path, not a production installation boundary.

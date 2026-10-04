@@ -1115,7 +1115,7 @@ function WritingView({
   const reviewAreas = [
     { name: 'Grammar', label: 'Agreement, articles, and basic tense' },
     { name: 'Capitalization', label: 'Sentence starts and known names' },
-    { name: 'Punctuation', label: 'End marks and simple commas' },
+    { name: 'Punctuation', label: 'Sentence breaks, commas, and quotations' },
     { name: 'Spelling', label: 'Reviewed common misspellings only' },
   ] as const
 
@@ -1399,7 +1399,7 @@ function WritingView({
               {revisingFromDraftId && <div className="revision-callout"><strong>Revise version {state.drafts.find((draft) => draft.id === revisingFromDraftId)?.versionNumber ?? 1}</strong><span>Correct the errors you practiced, then check the new version.</span></div>}
               <div className="review-category"><span>✓</span><p><strong>Grammar</strong><small>Agreement, articles, and basic tense</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
-              <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>End marks and simple commas</small></p></div>
+              <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>Sentence breaks, commas, and quotations</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Local professional dictionary and reviewed context</small></p></div>
               <button className="primary-button full-button" disabled={!body.trim() || checkingWriting} onClick={save}>{checkingWriting ? 'Checking on this Mac…' : revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
             </div>

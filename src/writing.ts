@@ -381,6 +381,70 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['“That was amazing!” Fionnbar said.', '“That was amazing”! Fionnbar said.', '“that was amazing!” fionnbar said.'],
     ],
   ),
+  'unexpected-midword-capital': practiceSet(
+    'unexpected-midword-capital',
+    'Choose the sentence that uses capitals correctly.',
+    'An ordinary verb in the middle of a sentence begins with a lowercase letter unless it is part of a title or name.',
+    [
+      ['I walked to the store.', 'I Walked to the store.', 'I WALKED to the store.'],
+      ['She played after school.', 'She Played after school.', 'She PLayed after school.'],
+      ['We visited the library.', 'We Visited the library.', 'We VIsited the library.'],
+      ['They bought a new game.', 'They Bought a new game.', 'They BOught a new game.'],
+      ['He opened the door.', 'He Opened the door.', 'He OPened the door.'],
+      ['I wrote a short story.', 'I Wrote a short story.', 'I WRote a short story.'],
+      ['She found her notebook.', 'She Found her notebook.', 'She FOund her notebook.'],
+      ['We finished the project.', 'We Finished the project.', 'We FInished the project.'],
+      ['They laughed at the joke.', 'They Laughed at the joke.', 'They LAughed at the joke.'],
+    ],
+  ),
+  'subject-verb-comma': practiceSet(
+    'subject-verb-comma',
+    'Choose the sentence without an incorrect comma between the subject and verb.',
+    'Do not place a comma between a sentence’s subject and its verb.',
+    [
+      ['The lady was kind.', 'The lady, was kind.', 'The lady was, kind.'],
+      ['The dog is sleeping.', 'The dog, is sleeping.', 'The dog is, sleeping.'],
+      ['My friend has arrived.', 'My friend, has arrived.', 'My friend has, arrived.'],
+      ['The books were heavy.', 'The books, were heavy.', 'The books were, heavy.'],
+      ['Their teacher was helpful.', 'Their teacher, was helpful.', 'Their teacher was, helpful.'],
+      ['There was a goldfish.', 'There, was a goldfish.', 'There was, a goldfish.'],
+      ['Our class is ready.', 'Our class, is ready.', 'Our class is, ready.'],
+      ['A bird was singing.', 'A bird, was singing.', 'A bird was, singing.'],
+      ['Her backpack has a zipper.', 'Her backpack, has a zipper.', 'Her backpack has, a zipper.'],
+    ],
+  ),
+  'stray-followup-fragment': practiceSet(
+    'stray-followup-fragment',
+    'Choose the version without a stray sentence fragment.',
+    'Every group of words kept as a sentence must express a complete thought; remove an accidental fragment left after a completed quotation.',
+    [
+      ['Maya said, “What a beautiful fish!”', 'Maya said, “What a beautiful fish!” I got.', 'Maya said, “What a beautiful fish!” Got.'],
+      ['Leo shouted, “Watch out!”', 'Leo shouted, “Watch out!” I did.', 'Leo shouted, “Watch out!” Did.'],
+      ['Dad said, “That was close!”', 'Dad said, “That was close!” I was.', 'Dad said, “That was close!” Was.'],
+      ['Ava said, “I found the key!”', 'Ava said, “I found the key!” I found.', 'Ava said, “I found the key!” Found.'],
+      ['Mom said, “Dinner is ready!”', 'Mom said, “Dinner is ready!” It was.', 'Mom said, “Dinner is ready!” Was ready.'],
+      ['Ben yelled, “We won!”', 'Ben yelled, “We won!” I got.', 'Ben yelled, “We won!” Got it.'],
+      ['Nora said, “The puppy is adorable!”', 'Nora said, “The puppy is adorable!” I saw.', 'Nora said, “The puppy is adorable!” Saw.'],
+      ['Sam shouted, “The bus is here!”', 'Sam shouted, “The bus is here!” It got.', 'Sam shouted, “The bus is here!” Got.'],
+      ['Liam said, “That goal was amazing!”', 'Liam said, “That goal was amazing!” I had.', 'Liam said, “That goal was amazing!” Had.'],
+    ],
+  ),
+  'whats-up-contraction': practiceSet(
+    'whats-up-contraction',
+    'Choose the correctly written dialogue.',
+    '“What’s” is the contraction of “what is,” so it needs an apostrophe and a capital letter at the beginning of dialogue.',
+    [
+      ['He asked, “What’s up?”', 'He asked, “What up?”', 'He asked, “Whats up?”'],
+      ['Maya asked, “What’s that?”', 'Maya asked, “What that?”', 'Maya asked, “Whats that?”'],
+      ['Dad asked, “What’s wrong?”', 'Dad asked, “What wrong?”', 'Dad asked, “Whats wrong?”'],
+      ['She said, “What’s happening?”', 'She said, “What happening?”', 'She said, “Whats happening?”'],
+      ['Leo asked, “What’s next?”', 'Leo asked, “What next?”', 'Leo asked, “Whats next?”'],
+      ['Mom asked, “What’s for dinner?”', 'Mom asked, “What for dinner?”', 'Mom asked, “Whats for dinner?”'],
+      ['Ava asked, “What’s the answer?”', 'Ava asked, “What the answer?”', 'Ava asked, “Whats the answer?”'],
+      ['Ben said, “What’s new?”', 'Ben said, “What new?”', 'Ben said, “Whats new?”'],
+      ['The coach asked, “What’s our plan?”', 'The coach asked, “What our plan?”', 'The coach asked, “Whats our plan?”'],
+    ],
+  ),
   'perfect-tense-participle': practiceSet(
     'perfect-tense-participle',
     'Choose the sentence that forms the perfect tense correctly.',
@@ -503,6 +567,7 @@ RULE_PRACTICE['quotation-capitalization'] = RULE_PRACTICE['direct-dialogue-quote
 RULE_PRACTICE['quotation-punctuation-inside'] = RULE_PRACTICE['direct-dialogue-quotes']
 RULE_PRACTICE['dialogue-tag-comma'] = RULE_PRACTICE['direct-dialogue-quotes']
 RULE_PRACTICE['dialogue-tag-capitalization'] = RULE_PRACTICE['direct-dialogue-quotes']
+RULE_PRACTICE['comma-splice'] = RULE_PRACTICE['fused-sentence-break']
 
 function sentenceBounds(body: string, index: number) {
   let start = index
@@ -511,6 +576,7 @@ function sentenceBounds(body: string, index: number) {
   let end = index
   while (end < body.length && !/[.!?\n]/.test(body[end])) end += 1
   if (end < body.length && /[.!?]/.test(body[end])) end += 1
+  while (end < body.length && /[”"']/.test(body[end])) end += 1
   return { start, end }
 }
 
@@ -655,7 +721,12 @@ function proofreadingFinding(
   sameRuleIndex: number,
 ): Finding | null {
   const original = body.slice(match.offset, match.offset + match.length)
-  const replacement = match.replacements.find((item) => item !== original)
+  const nearbyText = body.slice(Math.max(0, match.offset - 12), match.offset + match.length + 18)
+  const contextualReplacement = original.toLowerCase() === 'gus'
+    && /\bthe\s+gus\s+(?:is|was|seems|looks|said)\b/i.test(nearbyText)
+    ? match.replacements.find((item) => item.toLowerCase() === 'guy')
+    : undefined
+  const replacement = contextualReplacement ?? match.replacements.find((item) => item !== original)
   if (replacement === undefined) return null
   const category = proofreadingCategory(match)
   const safeRule = match.ruleId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'review'
@@ -748,6 +819,75 @@ export function inspectDraft(
   if (!body.trim()) return findings
 
   let match: RegExpExecArray | null
+
+  const unexpectedCapitalizedVerb = /\b(I|you|we|they|he|she|it)\s+(Walked|Went|Bought|Played|Jumped|Looked|Saw|Got|Was|Were|Said|Asked|Made|Found|Read|Wrote|Felt|Ran|Cried|Laughed|Wanted|Visited|Opened|Closed|Finished|Started|Had|Did)\b/g
+  while ((match = unexpectedCapitalizedVerb.exec(body)) !== null) {
+    const verb = match[2]
+    const start = match.index + match[0].lastIndexOf(verb)
+    addFinding(body, findings, {
+      ruleId: 'unexpected-midword-capital', category: 'Capitalization', start, end: start + verb.length,
+      replacement: verb.toLowerCase(), message: `“${verb}” is an ordinary verb in the middle of the sentence.`,
+      suggestion: `Use the lowercase form “${verb.toLowerCase()}”.`, wrongReplacement: verb.toUpperCase(),
+    })
+  }
+
+  const subjectVerbCommaPatterns = [
+    /\b(there)(,\s+)(?=(?:is|are|was|were)\b)/gi,
+    /\b((?:the|a|an|my|your|his|her|our|their)\s+[A-Za-z][A-Za-z'’-]*)(,\s+)(?=(?:is|are|was|were|has|have|had)\b)/gi,
+  ]
+  for (const pattern of subjectVerbCommaPatterns) {
+    while ((match = pattern.exec(body)) !== null) {
+      const start = match.index + match[1].length
+      addFinding(body, findings, {
+        ruleId: 'subject-verb-comma', category: 'Punctuation', start, end: start + match[2].length,
+        replacement: ' ', message: 'A comma incorrectly separates the sentence’s subject from its verb.',
+        suggestion: 'Remove the comma between the subject and verb.', wrongReplacement: ',, ',
+      })
+    }
+  }
+
+  const commaSplicePatterns = [
+    /\b(?:is|are|was|were)\s+[a-z][a-z'’-]*(,\s+)(I|he|she|it|we|they|the\s+[A-Za-z][A-Za-z'’-]*)\s+(?=(?:is|are|was|were|said|asked|replied|went|walked|had|has|did|does|bought|made|felt|looked)\b)/gi,
+    /\b(?:bought|got|found|saw|made|carried|opened|finished)\s+(?:a|an|the|my|your|his|her|our|their)\s+[A-Za-z][A-Za-z'’-]*(,\s+)(I|he|she|it|we|they|the\s+[A-Za-z][A-Za-z'’-]*)\s+(?=(?:is|are|was|were|said|asked|replied|went|walked|had|has|did|does|made|felt|looked)\b)/gi,
+  ]
+  for (const pattern of commaSplicePatterns) {
+    while ((match = pattern.exec(body)) !== null) {
+      const separatorOffset = match[0].indexOf(match[1])
+      const start = match.index + separatorOffset
+      addFinding(body, findings, {
+        ruleId: 'comma-splice', category: 'Punctuation', start,
+        end: start + match[1].length + 1,
+        replacement: `. ${match[2][0].toUpperCase()}`,
+        message: 'A comma joins two complete sentences here, creating a run-on sentence.',
+        suggestion: 'Use a period and begin the second sentence with a capital letter.',
+        wrongReplacement: `, ${match[2][0].toUpperCase()}`,
+      })
+    }
+  }
+
+  const strayAfterQuotation = /([!?][”"])(\s+)I got\./g
+  while ((match = strayAfterQuotation.exec(body)) !== null) {
+    const start = match.index + match[1].length
+    addFinding(body, findings, {
+      ruleId: 'stray-followup-fragment', category: 'Grammar', start,
+      end: match.index + match[0].length, replacement: '',
+      message: '“I got” is a stray fragment after the completed quotation.',
+      suggestion: 'Remove the accidental fragment so the quotation stands as a complete thought.',
+      wrongReplacement: ' I got it.',
+      contextStart: sentenceBounds(body, match.index).start,
+      contextEnd: match.index + match[0].length,
+    })
+  }
+
+  const whatsUpQuotation = /([“"])(what)\s+up(?=[!?])/gi
+  while ((match = whatsUpQuotation.exec(body)) !== null) {
+    const start = match.index + match[1].length
+    addFinding(body, findings, {
+      ruleId: 'whats-up-contraction', category: 'Grammar', start, end: start + match[2].length,
+      replacement: 'What’s', message: '“What up” is missing the verb in the contraction “What’s.”',
+      suggestion: 'Write “What’s up?” with a capital letter and an apostrophe.', wrongReplacement: 'Whats',
+    })
+  }
 
   const yesterdayPattern = /\bYesterday,?\s+(I|he|she|we|they)\s+(walk|play|jump|cook|look|visit)\b/gi
   const pastTense: Record<string, string> = {
@@ -1040,11 +1180,17 @@ export function inspectDraft(
   while ((match = unquotedLikeDialogue.exec(body)) !== null) {
     const separatorStart = match.index + match[1].length
     const firstLetter = match[3][0]
+    const whatsUp = /^what(?:['’]s|\s+is)?\s+up\b/i.test(match[3])
+    const primaryEnd = whatsUp
+      ? separatorStart + match[2].length + 'what'.length
+      : separatorStart + match[2].length + 1
+    const primaryReplacement = whatsUp ? ', “What’s' : `, “${firstLetter.toUpperCase()}`
     const punctuationStart = match.index + match[0].length - match[5].length
     addFinding(body, findings, {
-      ruleId: 'missing-dialogue-quotes', category: 'Punctuation',
-      start: separatorStart, end: separatorStart + match[2].length + 1,
-      replacement: `, “${firstLetter.toUpperCase()}`,
+      ruleId: whatsUp ? 'whats-up-contraction' : 'missing-dialogue-quotes',
+      category: whatsUp ? 'Grammar' : 'Punctuation',
+      start: separatorStart, end: primaryEnd,
+      replacement: primaryReplacement,
       additionalEdits: [{
         start: punctuationStart,
         end: punctuationStart + match[5].length,
@@ -1052,9 +1198,13 @@ export function inspectDraft(
       }],
       contextStart: sentenceBounds(body, match.index).start,
       contextEnd: punctuationStart + match[5].length,
-      message: 'The words after “was like” are direct dialogue and need quotation marks.',
-      suggestion: 'Introduce the spoken words with a comma and place them inside quotation marks.',
-      wrongReplacement: ` “${firstLetter.toUpperCase()}`,
+      message: whatsUp
+        ? 'This dialogue needs quotation marks and the contraction “What’s.”'
+        : 'The words after “was like” are direct dialogue and need quotation marks.',
+      suggestion: whatsUp
+        ? 'Write the dialogue as “What’s up!”'
+        : 'Introduce the spoken words with a comma and place them inside quotation marks.',
+      wrongReplacement: whatsUp ? ' “Whats' : ` “${firstLetter.toUpperCase()}`,
     })
   }
 

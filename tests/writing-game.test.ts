@@ -101,6 +101,11 @@ test('every generated answer set has exactly one reviewed correct choice', () =>
     'Wow that was close!',
     'Thanks Mom.',
     'I saw my freind.',
+    'I Walked home.',
+    'The lady there, was kind.',
+    'She was kind, she went home.',
+    'Maya said, “That was close!” I got.',
+    'He asked, “what up?”',
   ]
 
   for (const finding of drafts.flatMap((draft) => inspectWritingFindings(draft))) {

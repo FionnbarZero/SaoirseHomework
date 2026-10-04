@@ -195,8 +195,13 @@ test('the checker recognizes missing and incorrectly punctuated direct quotation
   const childPassage = 'The lady therewas nice she said what a bueatiful fish I got. I was happy. and then the gus was like. what up!'
   const findings = inspectDraft(childPassage)
   const dialogueFindings = findings.filter((finding) => finding.ruleId === 'missing-dialogue-quotes')
-  assert.equal(dialogueFindings.length, 2)
-  assert.equal(dialogueFindings.every((finding) => finding.additionalEdits?.length === 1), true)
+  assert.equal(dialogueFindings.length, 1)
+  assert.equal(findings.filter((finding) => finding.ruleId === 'whats-up-contraction').length, 1)
+  assert.equal(
+    findings.filter((finding) => ['missing-dialogue-quotes', 'whats-up-contraction'].includes(finding.ruleId))
+      .every((finding) => finding.additionalEdits?.length === 1),
+    true,
+  )
 
   const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
     correctionComplete: true,
@@ -205,7 +210,69 @@ test('the checker recognizes missing and incorrectly punctuated direct quotation
   }]))
   assert.equal(
     applyCompletedCorrections(childPassage, findings, progress),
-    'The lady therewas nice she said, “What a bueatiful fish I got.” I was happy. And then the gus was like, “What up!”',
+    'The lady therewas nice she said, “What a bueatiful fish I got.” I was happy. And then the gus was like, “What’s up!”',
+  )
+})
+
+test('the checker repairs the reported goldfish passage without trusting the first spelling suggestion', () => {
+  const body = 'I Walked to the store and I bought a goldfish. The lady there, was nice,  she said, "what a bueatiful fish!" I got. I was happy. And then I went next door and bought a soda, the gus was like. what up!'
+  const findings = inspectWritingFindings(body, undefined, [
+    {
+      offset: body.indexOf('bueatiful'),
+      length: 'bueatiful'.length,
+      message: 'Possible spelling mistake found.',
+      shortMessage: 'Spelling mistake',
+      replacements: ['beautiful'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    },
+    {
+      offset: body.indexOf('gus'),
+      length: 'gus'.length,
+      message: 'Possible spelling mistake found.',
+      shortMessage: 'Spelling mistake',
+      replacements: ['Gus', 'us', 'gas', 'bus', 'gun', 'guns', 'guy'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    },
+    {
+      offset: body.indexOf('what up'),
+      length: 'what'.length,
+      message: 'It seems that a verb is missing after “what”.',
+      shortMessage: '',
+      replacements: ['what is'],
+      ruleId: 'MISSING_VERB_AFTER_WHAT',
+      category: 'Grammar',
+      issueType: 'grammar',
+    },
+  ])
+
+  const requiredRules = [
+    'unexpected-midword-capital',
+    'subject-verb-comma',
+    'comma-splice',
+    'quotation-capitalization',
+    'stray-followup-fragment',
+    'whats-up-contraction',
+  ]
+  for (const ruleId of requiredRules) {
+    assert.ok(findings.some((finding) => finding.ruleId === ruleId), `${ruleId} should be detected`)
+  }
+  assert.equal(findings.filter((finding) => finding.ruleId === 'comma-splice').length, 2)
+  assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.replacement, 'guy')
+  assert.equal(findings.every((finding) => finding.practice.length === 3), true)
+  assert.equal(findings.every((finding) => finding.correction.choices.includes(finding.correction.correctAnswer)), true)
+
+  const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+  }]))
+  assert.equal(
+    applyCompletedCorrections(body, findings, progress),
+    'I walked to the store and I bought a goldfish. The lady there was nice. She said, "What a beautiful fish!" I was happy. And then I went next door and bought a soda. The guy was like, “What’s up!”',
   )
 })
 
@@ -234,6 +301,11 @@ test('every personalized finding creates three reviewed multiple-choice trials w
     'Wow that was close!',
     'Thanks Mom.',
     'The main character Eddie went to the store bought a hamster it died and he was sad.',
+    'I Walked home.',
+    'The lady there, was kind.',
+    'She was kind, she went home.',
+    'Maya said, “That was close!” I got.',
+    'He asked, “what up?”',
   ]
   const findings = samples.flatMap((sample) => inspectDraft(sample))
   const ruleIds = new Set(findings.map((finding) => finding.ruleId))
@@ -242,6 +314,7 @@ test('every personalized finding creates three reviewed multiple-choice trials w
     'article-a',
     'article-an',
     'calendar-capital',
+    'comma-splice',
     'compound-predicate-conjunction',
     'compound-sentence-comma',
     'contraction-apostrophe',
@@ -259,11 +332,15 @@ test('every personalized finding creates three reviewed multiple-choice trials w
     'pronoun-i',
     'sentence-capital',
     'simple-list-commas',
+    'stray-followup-fragment',
+    'subject-verb-comma',
     'subject-verb-plural',
     'subject-verb-singular',
     'tense-yesterday',
     'terminal-punctuation',
     'title-capital',
+    'unexpected-midword-capital',
+    'whats-up-contraction',
   ])
   for (const finding of findings) {
     assert.equal(finding.practice.length, 3, `${finding.ruleId} should have three similar trials`)

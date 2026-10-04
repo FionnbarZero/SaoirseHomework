@@ -74,6 +74,7 @@ function sentenceBounds(body: string, index: number) {
   let end = index
   while (end < body.length && !/[.!?\n]/.test(body[end])) end += 1
   if (end < body.length && /[.!?]/.test(body[end])) end += 1
+  while (end < body.length && /[”"']/.test(body[end])) end += 1
   return { start, end }
 }
 

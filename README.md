@@ -32,6 +32,8 @@ npm run build
 - Local writing drafts with deterministic grammar, capitalization, and punctuation checks
 - One original-sentence correction plus five three-choice practice trials for every supported finding
 - Restart-safe exercise progress, unchanged original drafts, and separately persisted corrected copies
+- Parent-editable capitalization dictionaries for known names and places
+- Persistent, non-blocking parent review queue for ambiguous repeated-word, tense, and run-on suggestions
 - Parent preview dashboard and completion overrides
 - SQLite persistence for daily completions, optional sessions, rewards, writing, and active timers
 - Server-owned controlled sessions with unique IDs and fixed activity durations

@@ -59,6 +59,22 @@ export type FindingProgress = {
   incorrectAttempts: number
 }
 
+export type WritingDictionary = {
+  knownNames: string[]
+  knownPlaces: string[]
+}
+
+export type WritingReviewItem = {
+  id: string
+  draftId: string
+  category: 'Grammar' | 'Punctuation' | 'Capitalization'
+  message: string
+  excerpt: string
+  status: 'pending' | 'resolved'
+  createdAt: string
+  resolvedAt?: string
+}
+
 export type Draft = {
   id: string
   title: string
@@ -187,6 +203,8 @@ export type AppState = {
   freeModeByDay: Partial<Record<DayName, string>>
   rewardCredits: RewardCredit[]
   drafts: Draft[]
+  writingDictionary: WritingDictionary
+  writingReviewQueue: WritingReviewItem[]
   activeTimer: ActiveTimer | null
   activeGameSession: GameSession | null
   completionRecords: CompletionRecord[]
@@ -338,6 +356,8 @@ export const defaultState: AppState = {
   freeModeByDay: {},
   rewardCredits: [],
   drafts: [],
+  writingDictionary: { knownNames: ['Fionnbar'], knownPlaces: [] },
+  writingReviewQueue: [],
   activeTimer: null,
   activeGameSession: null,
   completionRecords: [],

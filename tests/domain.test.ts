@@ -9,7 +9,13 @@ import {
   optionalSessionKey,
   type AppState,
 } from '../src/domain.ts'
-import { advanceFindingProgress, applyCompletedCorrections, inspectDraft, writingReviewStatus } from '../src/writing.ts'
+import {
+  advanceFindingProgress,
+  applyCompletedCorrections,
+  inspectAmbiguousDraft,
+  inspectDraft,
+  writingReviewStatus,
+} from '../src/writing.ts'
 
 test('optional sessions have stable unique keys', () => {
   assert.equal(optionalSessionKey('voena', 0), 'voena:0')
@@ -91,6 +97,21 @@ test('incorrect writing answers do not advance the exercise counter', () => {
   assert.deepEqual(wrongCorrection, { correctionComplete: false, practiceCompleted: 0, incorrectAttempts: 1 })
   assert.deepEqual(wrongPractice, { correctionComplete: true, practiceCompleted: 0, incorrectAttempts: 2 })
   assert.deepEqual(practiced, { correctionComplete: true, practiceCompleted: 1, incorrectAttempts: 2 })
+})
+
+test('the parent dictionary supplies exact capitalization without guessing', () => {
+  const findings = inspectDraft('fionnbar visited san francisco.', {
+    knownNames: ['Fionnbar'],
+    knownPlaces: ['San Francisco'],
+  })
+  assert.deepEqual(findings.map((finding) => finding.ruleId), ['known-name', 'known-place'])
+  assert.deepEqual(findings.map((finding) => finding.replacement), ['Fionnbar', 'San Francisco'])
+})
+
+test('ambiguous writing suggestions enter a non-blocking parent review queue', () => {
+  const items = inspectAmbiguousDraft('I saw the the sign. Yesterday I go home.')
+  assert.deepEqual(items.map((item) => item.id.split('-').slice(0, -1).join('-')), ['repeated-word', 'irregular-tense'])
+  assert.equal(items.every((item) => item.message.includes('may') || item.message.includes('should review')), true)
 })
 
 test('Friday Fun stays locked until Friday work and all practice are complete', () => {

@@ -34,6 +34,8 @@ function emptyState(weekContext = emptyWeekContext()) {
     freeModeByDay: {},
     rewardCredits: [],
     drafts: [],
+    writingDictionary: { knownNames: ['Fionnbar'], knownPlaces: [] },
+    writingReviewQueue: [],
     activeTimer: null,
     activeGameSession: null,
     completionRecords: [],
@@ -65,6 +67,44 @@ function assertState(state) {
   if (!Array.isArray(state.optionalCompleted)) throw new Error('Invalid optional completion state')
   if (!Array.isArray(state.rewardCredits)) throw new Error('Invalid reward state')
   if (!Array.isArray(state.drafts)) throw new Error('Invalid writing state')
+}
+
+function normalizeDictionaryEntries(values) {
+  const entries = Array.isArray(values) ? values : []
+  const unique = new Map()
+  for (const value of entries) {
+    const item = String(value ?? '').trim().replace(/\s+/g, ' ')
+    if (!item || item.length > 80) continue
+    unique.set(item.toLocaleLowerCase(), item)
+    if (unique.size >= 100) break
+  }
+  return [...unique.values()]
+}
+
+function normalizeWritingDictionary(value) {
+  return {
+    knownNames: normalizeDictionaryEntries(value?.knownNames ?? ['Fionnbar']),
+    knownPlaces: normalizeDictionaryEntries(value?.knownPlaces),
+  }
+}
+
+function normalizeWritingReviewQueue(value) {
+  if (!Array.isArray(value)) return []
+  return value.slice(-200).flatMap((item) => {
+    const id = String(item?.id ?? '').slice(0, 240)
+    const draftId = String(item?.draftId ?? '').slice(0, 160)
+    if (!id || !draftId) return []
+    return [{
+      id,
+      draftId,
+      category: ['Grammar', 'Punctuation', 'Capitalization'].includes(item.category) ? item.category : 'Grammar',
+      message: String(item.message ?? '').slice(0, 500),
+      excerpt: String(item.excerpt ?? '').slice(0, 500),
+      status: item.status === 'resolved' ? 'resolved' : 'pending',
+      createdAt: String(item.createdAt ?? new Date(0).toISOString()),
+      ...(item.resolvedAt ? { resolvedAt: String(item.resolvedAt) } : {}),
+    }]
+  })
 }
 
 function asIso(value) {
@@ -788,6 +828,8 @@ export function createStore(filename, options = {}) {
     state.chromeConnected = getChromeExtensionStatus().connected
     state.activityConfiguration = getActivityConfiguration()
     state.googleProof = getGoogleProofState()
+    state.writingDictionary = normalizeWritingDictionary(safeJson(settings.writing_dictionary ?? '{}', {}))
+    state.writingReviewQueue = normalizeWritingReviewQueue(safeJson(settings.writing_review_queue ?? '[]', []))
 
     for (const row of db.prepare(`
       SELECT day, activity_id FROM weekly_daily_completion
@@ -924,6 +966,8 @@ export function createStore(filename, options = {}) {
       importBrowserTimer(state.activeTimer, now, weekId)
       setSetting.run('entered', state.entered ? '1' : '0')
       setSetting.run('guardian_connected', state.guardianConnected ? '1' : '0')
+      setSetting.run('writing_dictionary', JSON.stringify(normalizeWritingDictionary(state.writingDictionary)))
+      setSetting.run('writing_review_queue', JSON.stringify(normalizeWritingReviewQueue(state.writingReviewQueue)))
       setMeta.run('initialized', '1')
       setMeta.run('last_write_at', now)
       db.exec('COMMIT')

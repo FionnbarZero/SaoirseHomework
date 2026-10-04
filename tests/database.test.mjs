@@ -33,6 +33,16 @@ function sampleState() {
       exerciseProgress: { example: { correctionComplete: true, practiceCompleted: 5, incorrectAttempts: 1 } },
       reviewStatus: 'spelling-pending',
     }],
+    writingDictionary: { knownNames: ['Fionnbar', 'Ms. Rivera'], knownPlaces: ['San Francisco'] },
+    writingReviewQueue: [{
+      id: 'draft-1:repeated-word-4',
+      draftId: 'draft-1',
+      category: 'Grammar',
+      message: 'A word may repeat.',
+      excerpt: 'The the dog ran.',
+      status: 'pending',
+      createdAt: '2026-10-03T07:00:00.000Z',
+    }],
     activeTimer: {
       kind: 'required',
       activityId: 'ninja-dojo',
@@ -70,6 +80,8 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.drafts[0].correctedBody, 'Today I tested persistence.')
     assert.equal(restored.drafts[0].exerciseProgress.example.practiceCompleted, 5)
     assert.equal(restored.drafts[0].reviewStatus, 'spelling-pending')
+    assert.deepEqual(restored.writingDictionary.knownPlaces, ['San Francisco'])
+    assert.equal(restored.writingReviewQueue[0].status, 'pending')
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)

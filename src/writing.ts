@@ -1,4 +1,4 @@
-import type { Finding, FindingProgress, WritingTrial } from './domain'
+import type { Finding, FindingProgress, WritingDictionary, WritingTrial } from './domain'
 
 type Category = Finding['category']
 
@@ -100,7 +100,14 @@ function capitalizeLike(value: string, replacement: string) {
   return /^[A-Z]/.test(value) ? `${replacement[0].toUpperCase()}${replacement.slice(1)}` : replacement
 }
 
-export function inspectDraft(body: string): Finding[] {
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function inspectDraft(
+  body: string,
+  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+): Finding[] {
   const findings: Finding[] = []
   if (!body.trim()) return findings
 
@@ -197,6 +204,28 @@ export function inspectDraft(body: string): Finding[] {
       replacement: pronoun, message: `“${match[1]}” does not match “themselves”.`,
       suggestion: `Use “${pronoun}”.`, wrongReplacement: `${pronoun}s`,
     })
+  }
+
+  for (const [kind, entries] of [
+    ['name', dictionary.knownNames],
+    ['place', dictionary.knownPlaces],
+  ] as const) {
+    for (const entry of entries) {
+      const expected = entry.trim()
+      if (!expected) continue
+      const pattern = new RegExp(`\\b${escapeRegex(expected.toLowerCase())}\\b`, 'g')
+      const lowered = body.toLowerCase()
+      while ((match = pattern.exec(lowered)) !== null) {
+        const actual = body.slice(match.index, match.index + expected.length)
+        if (actual === expected) continue
+        addFinding(body, findings, {
+          ruleId: `known-${kind}`, category: 'Capitalization', start: match.index,
+          end: match.index + expected.length, replacement: expected,
+          message: `The known ${kind} “${expected}” needs its saved capitalization.`,
+          suggestion: `Write “${expected}”.`, wrongReplacement: expected.toUpperCase(),
+        })
+      }
+    }
   }
 
   const sentenceCapital = /(^|[.!?]\s+|\n\s*)([a-z])/gm
@@ -307,6 +336,53 @@ export function inspectDraft(body: string): Finding[] {
   }
 
   return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
+}
+
+export type AmbiguousWritingFinding = {
+  id: string
+  category: 'Grammar' | 'Punctuation'
+  message: string
+  excerpt: string
+}
+
+export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
+  const items: AmbiguousWritingFinding[] = []
+  let match: RegExpExecArray | null
+  const repeatedWord = /\b([a-z]{2,})\s+\1\b/gi
+  while ((match = repeatedWord.exec(body)) !== null) {
+    items.push({
+      id: `repeated-word-${match.index}`,
+      category: 'Grammar',
+      message: `“${match[0]}” may repeat a word accidentally.`,
+      excerpt: sentenceBounds(body, match.index).start === sentenceBounds(body, match.index).end
+        ? match[0]
+        : body.slice(sentenceBounds(body, match.index).start, sentenceBounds(body, match.index).end),
+    })
+  }
+
+  const irregularYesterday = /\byesterday\b[^.!?\n]{0,70}\b(go|see|eat|run|write|make|take)\b/gi
+  while ((match = irregularYesterday.exec(body)) !== null) {
+    const bounds = sentenceBounds(body, match.index)
+    items.push({
+      id: `irregular-tense-${match.index}`,
+      category: 'Grammar',
+      message: 'This sentence may need an irregular past-tense verb. A parent should review it.',
+      excerpt: body.slice(bounds.start, bounds.end),
+    })
+  }
+
+  for (const [paragraphIndex, paragraph] of body.split(/\n+/).entries()) {
+    const words = paragraph.trim().match(/\S+/g) ?? []
+    if (words.length >= 35 && !/[.!?]/.test(paragraph)) {
+      items.push({
+        id: `long-sentence-${paragraphIndex}`,
+        category: 'Punctuation',
+        message: 'This long passage may need sentence breaks, but the app cannot decide them safely.',
+        excerpt: `${paragraph.trim().slice(0, 160)}${paragraph.trim().length > 160 ? '…' : ''}`,
+      })
+    }
+  }
+  return items
 }
 
 export function applyCompletedCorrections(

@@ -45,7 +45,13 @@ import {
   type DayName,
   type Draft,
 } from './domain'
-import { advanceFindingProgress, applyCompletedCorrections, inspectDraft, writingReviewStatus } from './writing'
+import {
+  advanceFindingProgress,
+  applyCompletedCorrections,
+  inspectAmbiguousDraft,
+  inspectDraft,
+  writingReviewStatus,
+} from './writing'
 import {
   acknowledgeControlledSession,
   connectMockGoogle,
@@ -85,6 +91,11 @@ function loadState(): AppState {
       ...parsed,
       requiredByDay: { ...defaultState.requiredByDay, ...parsed.requiredByDay },
       freeModeByDay: { ...defaultState.freeModeByDay, ...parsed.freeModeByDay },
+      writingDictionary: {
+        knownNames: parsed.writingDictionary?.knownNames ?? defaultState.writingDictionary.knownNames,
+        knownPlaces: parsed.writingDictionary?.knownPlaces ?? defaultState.writingDictionary.knownPlaces,
+      },
+      writingReviewQueue: Array.isArray(parsed.writingReviewQueue) ? parsed.writingReviewQueue : [],
       activityConfiguration: {
         ninjaDojo: { ...defaultState.activityConfiguration.ninjaDojo, ...savedConfiguration?.ninjaDojo },
         duChinese: { ...defaultState.activityConfiguration.duChinese, ...savedConfiguration?.duChinese },
@@ -850,7 +861,11 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
   const [showReview, setShowReview] = useState(false)
   const [reviewDraftId, setReviewDraftId] = useState<string | null>(latest?.id ?? null)
   const [answerMessage, setAnswerMessage] = useState('')
-  const findings = useMemo(() => inspectDraft(body), [body])
+  const analysis = useMemo(() => ({
+    findings: inspectDraft(body, state.writingDictionary),
+    reviewItems: inspectAmbiguousDraft(body),
+  }), [body, state.writingDictionary])
+  const findings = analysis.findings
   const reviewDraft = state.drafts.find((draft) => draft.id === reviewDraftId)
   const reviewFindings = reviewDraft?.findings ?? findings
   const reviewProgress = reviewDraft?.exerciseProgress ?? {}
@@ -888,7 +903,28 @@ function WritingView({ state, setState }: { state: AppState; setState: React.Dis
       exerciseProgress: {},
       reviewStatus: findings.length ? 'practice' : 'spelling-pending',
     }
-    setState((current) => ({ ...current, drafts: [draft, ...current.drafts.filter((item) => item.id !== draft.id)] }))
+    const createdAt = new Date().toISOString()
+    setState((current) => {
+      const existing = new Map(current.writingReviewQueue.map((item) => [item.id, item]))
+      const reviewItems = analysis.reviewItems.map((item) => {
+        const id = `${draft.id}:${item.id}`
+        return existing.get(id) ?? {
+          ...item,
+          id,
+          draftId: draft.id,
+          status: 'pending' as const,
+          createdAt,
+        }
+      })
+      return {
+        ...current,
+        drafts: [draft, ...current.drafts.filter((item) => item.id !== draft.id)],
+        writingReviewQueue: [
+          ...current.writingReviewQueue.filter((item) => item.draftId !== draft.id),
+          ...reviewItems,
+        ],
+      }
+    })
     setReviewDraftId(draft.id)
     setShowReview(true)
   }
@@ -1136,8 +1172,17 @@ function ParentView({
   const [activityConfig, setActivityConfig] = useState<ActivityConfiguration>(() => structuredClone(state.activityConfiguration))
   const [configurationBusy, setConfigurationBusy] = useState(false)
   const [configurationMessage, setConfigurationMessage] = useState('')
+  const [knownNames, setKnownNames] = useState(state.writingDictionary.knownNames.join('\n'))
+  const [knownPlaces, setKnownPlaces] = useState(state.writingDictionary.knownPlaces.join('\n'))
+  const [writingConfigurationMessage, setWritingConfigurationMessage] = useState('')
 
   const parseOrigins = (value: string) => value.split(/[\n,]+/).map((origin) => origin.trim()).filter(Boolean)
+  const parseDictionary = (value: string) => [...new Map(
+    value.split(/[\n,]+/)
+      .map((item) => item.trim().replace(/\s+/g, ' '))
+      .filter((item) => item && item.length <= 80)
+      .map((item) => [item.toLocaleLowerCase(), item]),
+  ).values()].slice(0, 100)
 
   const saveConfiguration = async () => {
     if (serviceStatus !== 'online') {
@@ -1156,6 +1201,35 @@ function ParentView({
     } finally {
       setConfigurationBusy(false)
     }
+  }
+
+  const saveWritingConfiguration = () => {
+    const writingDictionary = {
+      knownNames: parseDictionary(knownNames),
+      knownPlaces: parseDictionary(knownPlaces),
+    }
+    setState((current) => ({ ...current, writingDictionary }))
+    setWritingConfigurationMessage('The local names and places dictionary was saved. Recheck a draft to apply it.')
+    void recordAudit('writing_dictionary_updated', {
+      knownNames: writingDictionary.knownNames.length,
+      knownPlaces: writingDictionary.knownPlaces.length,
+    }).catch(() => {})
+  }
+
+  const toggleWritingReview = (id: string) => {
+    const resolved = state.writingReviewQueue.find((item) => item.id === id)?.status === 'pending'
+    setState((current) => ({
+      ...current,
+      writingReviewQueue: current.writingReviewQueue.map((item) => {
+        if (item.id !== id) return item
+        return {
+          ...item,
+          status: resolved ? 'resolved' : 'pending',
+          ...(resolved ? { resolvedAt: new Date().toISOString() } : { resolvedAt: undefined }),
+        }
+      }),
+    }))
+    void recordAudit('writing_review_status_changed', { reviewId: id, resolved }).catch(() => {})
   }
 
   const connectGoogleProof = async () => {
@@ -1331,6 +1405,33 @@ function ParentView({
           <button className="primary-button" onClick={saveConfiguration} disabled={configurationBusy || serviceStatus !== 'online'}><ShieldCheck size={16} /> {configurationBusy ? 'Saving…' : 'Save activity setup'}</button>
         </div>
         {configurationMessage && <p className="google-proof-message configuration-message" role="status">{configurationMessage}</p>}
+      </div>
+      <div className="parent-panel writing-review-panel">
+        <div className="panel-heading">
+          <div><h3>Writing review tools</h3><p>Teach the local checker known capitalization and review ambiguous, non-blocking suggestions.</p></div>
+          <span className="mock-badge">{state.writingReviewQueue.filter((item) => item.status === 'pending').length} TO REVIEW</span>
+        </div>
+        <div className="writing-tools-grid">
+          <div className="writing-dictionary-form">
+            <label><span>Known names</span><textarea rows={5} value={knownNames} onChange={(event) => setKnownNames(event.target.value)} placeholder={'Fionnbar\nTeacher name'} /></label>
+            <label><span>Known places</span><textarea rows={5} value={knownPlaces} onChange={(event) => setKnownPlaces(event.target.value)} placeholder={'San Francisco\nSchool name'} /></label>
+            <p>Use one name or place per line. The saved capitalization becomes the required form during the next draft check.</p>
+            <button className="primary-button" onClick={saveWritingConfiguration}><BookOpen size={16} /> Save writing dictionary</button>
+            {writingConfigurationMessage && <p className="google-proof-message" role="status">{writingConfigurationMessage}</p>}
+          </div>
+          <div className="writing-review-list">
+            <div className="delivery-heading"><strong>Ambiguous findings</strong><small>These never block writing practice</small></div>
+            {state.writingReviewQueue.length === 0 ? (
+              <div className="completion-empty">No ambiguous writing findings are waiting for parent review.</div>
+            ) : state.writingReviewQueue.slice().reverse().slice(0, 10).map((item) => (
+              <div className={`writing-review-row ${item.status}`} key={item.id}>
+                <span><strong>{item.category}</strong><small>{item.status}</small></span>
+                <div><strong>{item.message}</strong><p>{item.excerpt}</p></div>
+                <button className="row-button" onClick={() => toggleWritingReview(item.id)}>{item.status === 'pending' ? 'Mark reviewed' : 'Reopen'}</button>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
       <div className="parent-panel google-proof-panel">
         <div className="panel-heading">

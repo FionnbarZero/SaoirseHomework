@@ -352,6 +352,22 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['He carried the box, climbed the stairs, and set it down.', 'He carried the box climbed the stairs and set it down.', 'He carried the box, climbed the stairs and set it down.'],
     ],
   ),
+  'dummy-pronoun-it': practiceSet(
+    'dummy-pronoun-it',
+    'Choose the sentence that uses “it” before an adjective and a that-clause.',
+    'Use the pronoun “it” in a pattern such as “Isn’t it amazing that…?”',
+    [
+      ['Isn’t it amazing that birds can fly?', 'Isn’t an amazing that birds can fly?', 'Isn’t its amazing that birds can fly?'],
+      ['Wasn’t it surprising that the team won?', 'Wasn’t a surprising that the team won?', 'Wasn’t its surprising that the team won?'],
+      ['Isn’t it interesting that whales are mammals?', 'Isn’t an interesting that whales are mammals?', 'Isn’t its interesting that whales are mammals?'],
+      ['Wasn’t it strange that the door was open?', 'Wasn’t a strange that the door was open?', 'Wasn’t its strange that the door was open?'],
+      ['Isn’t it wonderful that everyone helped?', 'Isn’t a wonderful that everyone helped?', 'Isn’t its wonderful that everyone helped?'],
+      ['Wasn’t it funny how the puppy jumped?', 'Wasn’t a funny how the puppy jumped?', 'Wasn’t its funny how the puppy jumped?'],
+      ['Isn’t it odd that the light is still on?', 'Isn’t an odd that the light is still on?', 'Isn’t its odd that the light is still on?'],
+      ['Wasn’t it great that the rain stopped?', 'Wasn’t a great that the rain stopped?', 'Wasn’t its great that the rain stopped?'],
+      ['Isn’t it surprising how quickly plants grow?', 'Isn’t a surprising how quickly plants grow?', 'Isn’t its surprising how quickly plants grow?'],
+    ],
+  ),
   'appositive-name-commas': practiceSet(
     'appositive-name-commas',
     'Choose the sentence that sets off the character’s name correctly.',
@@ -903,8 +919,9 @@ const REVIEWED_STORY_NAMES = ['Harry', 'Ron', 'Ann', 'Billy', 'Mike']
 function inferredProperNames(body: string) {
   const names = new Map<string, string>()
   const ignored = new Set([
-    'a', 'an', 'and', 'he', 'her', 'him', 'his', 'i', 'it', 'main', 'my', 'she', 'the', 'their',
-    'them', 'they', 'this', 'we', 'who', 'you', 'your',
+    'a', 'an', 'and', 'aunt', 'brother', 'dad', 'father', 'he', 'her', 'him', 'his', 'i', 'it',
+    'main', 'mom', 'mother', 'my', 'she', 'sister', 'the', 'their', 'them', 'they', 'this', 'uncle',
+    'we', 'who', 'you', 'your',
   ])
   const remember = (value: string) => {
     const normalized = value.toLowerCase()
@@ -939,7 +956,7 @@ export function inspectDraft(
 
   let match: RegExpExecArray | null
 
-  const fusedClauses = /\b([A-Za-z'’-]+)(\s+)(I|he|she|it|we|they)(?=\s+(?:am|is|are|was|were|has|have|had|do|does|did|walk|walks|walked|run|runs|ran|go|goes|went|build|builds|built|try|tries|tried|triend|make|makes|made|happen|happens|happened|live|lives|lived|hate|hates|hated|pray|prays|prayed)\b)/gi
+  const fusedClauses = /\b([A-Za-z'’-]+)(\s+)(I|he|she|it|we|they)(?=\s+(?:am|is|are|was|were|has|have|had|do|does|did|can|can['’]t|could|couldn['’]t|will|won['’]t|would|wouldn['’]t|should|shouldn['’]t|may|might|must|walk|walks|walked|run|runs|ran|go|goes|went|build|builds|built|try|tries|tried|triend|make|makes|made|happen|happens|happened|live|lives|lived|hate|hates|hated|pray|prays|prayed)\b)/gi
   const clauseJoiners = new Set(['adn', 'after', 'although', 'and', 'as', 'becasue', 'because', 'before', 'but', 'if', 'or', 'since', 'so', 'that', 'than', 'then', 'unless', 'when', 'where', 'which', 'while', 'who'])
   while ((match = fusedClauses.exec(body)) !== null) {
     const prefix = body.slice(0, match.index).trimEnd()
@@ -981,6 +998,18 @@ export function inspectDraft(
         suggestion: 'Use commas between the three actions, including before the final “and.”',
       })
     }
+  }
+
+  const wrongDummyPronoun = /\b(isn['’]t|wasn['’]t)\s+(a|an)\s+(amazing|interesting|strange|surprising|wonderful|great|funny|odd)\s+(that|how|when)\b/gi
+  while ((match = wrongDummyPronoun.exec(body)) !== null) {
+    const start = match.index + match[1].length + 1
+    addFinding(body, findings, {
+      ruleId: 'dummy-pronoun-it', category: 'Grammar', start,
+      end: start + match[2].length, replacement: 'it',
+      message: `“${match[1]} ${match[2]} ${match[3]} ${match[4]}” needs the pronoun “it.”`,
+      suggestion: `Use “${match[1]} it ${match[3]} ${match[4]}.”`,
+      wrongReplacement: 'its',
+    })
   }
 
   const dailyJourney = /\b(?:walk|walks|walked|go|goes|went)\s+(?:to\s+(?:school|work|the park)|home)\s+(everyday)(?=[.!?\n]|$)/gi

@@ -66,6 +66,23 @@ test('the Huck paragraph exposes every supported error category in one pass', ()
   assert.ok(ambiguous.some((item) => item.ruleId === 'pronoun-before-noun'))
 })
 
+test('the Wings of Fire paragraph catches its run-on and malformed adjective clause', () => {
+  const body = `Tsunami's friends were in a cave, and there was a storm that was coming up so she tried to get them out of the cave, but the guards wouldn't let them come out they wouldn't give her the key and so she finally convinced them, but then they were really scared the queen coral was going to fire them or hurt them so tsunami backed her mother into a corner to make sure that she wasn't going to hurt the guards that let her friends go. She said mother isn't an amazing that these guards followed your commands and your brother shark did not.  Her mother said yes, that is quite true. `
+  const findings = inspectWritingFindings(body)
+  assert.ok(findings.some((finding) => finding.ruleId === 'fused-sentence-break'))
+  assert.ok(findings.some((finding) => finding.ruleId === 'dummy-pronoun-it' && finding.category === 'Grammar'))
+  assert.equal(findings.some((finding) => finding.ruleId === 'known-name' && finding.replacement === 'Mother'), false)
+
+  const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+  }]))
+  const corrected = applyCompletedCorrections(body, findings, progress)
+  assert.match(corrected, /come out\. They wouldn't give her the key/)
+  assert.match(corrected, /mother isn't it amazing that/)
+})
+
 test('the deterministic writing rules cover high-confidence grammar cases', () => {
   const findings = inspectDraft('Yesterday I walk home. She play games with this books.')
   assert.deepEqual(

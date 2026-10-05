@@ -6,6 +6,7 @@ export const GOOGLE_SCOPES = [
   'openid',
   'email',
   'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/gmail.send',
 ]
 
@@ -16,6 +17,7 @@ const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo'
 const DRIVE_ENDPOINT = 'https://www.googleapis.com/drive/v3'
 const DOCS_ENDPOINT = 'https://docs.googleapis.com/v1'
 const GMAIL_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1'
+export const WRITING_LOG_NAMED_RANGE = 'fionnbar_homework_writing_log_v1'
 
 function liveError(message, code = 'google_live_error', status = 502, cause) {
   const error = new Error(message, cause ? { cause } : undefined)
@@ -145,6 +147,55 @@ export function buildWeeklyDocumentText(delivery, drafts) {
   return sections.join('\n')
 }
 
+function safeDate(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? new Date(0) : date
+}
+
+function writingLogProgress(draft) {
+  const findings = Array.isArray(draft.findings) ? draft.findings : []
+  const completed = findings.reduce((total, finding) => {
+    const progress = draft.exerciseProgress?.[finding.id]
+    return total + (progress?.correctionComplete ? 1 : 0) + Number(progress?.practiceCompleted ?? 0)
+  }, 0)
+  const total = findings.reduce(
+    (sum, finding) => sum + (Array.isArray(finding.practice) ? finding.practice.length : 3) + 1,
+    0,
+  )
+  if (draft.reviewStatus === 'complete') return 'Correction status: complete'
+  if (total === 0) return 'Correction status: no supported corrections found'
+  return `Correction status: ${Math.min(completed, total)} of ${total} practice steps complete`
+}
+
+export function buildWritingLogText(drafts) {
+  const ordered = [...(Array.isArray(drafts) ? drafts : [])]
+    .filter((draft) => String(draft?.body ?? '').trim())
+    .sort((left, right) => safeDate(right.updatedAt).getTime() - safeDate(left.updatedAt).getTime())
+  const sections = [
+    'Fionnbar Writing Attempts & Corrections',
+    'Newest entries appear first.',
+    '',
+  ]
+  for (const draft of ordered) {
+    sections.push(
+      `${draft.title || 'Untitled writing'} — Version ${Math.max(1, Number(draft.versionNumber) || 1)}`,
+      `Saved ${safeDate(draft.updatedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}`,
+      writingLogProgress(draft),
+      '',
+      'Writing attempt',
+      String(draft.body ?? ''),
+      '',
+      'Corrections',
+      String(draft.correctedBody || draft.body || ''),
+      '',
+      '────────────────────────────────────────',
+      '',
+    )
+  }
+  if (ordered.length === 0) sections.push('No writing attempts have been saved yet.', '', '')
+  return sections.join('\n')
+}
+
 export function buildGmailRawMessage({ from, to, subject, text, pdf, filename, messageId }) {
   const boundary = `fionnbar_${randomBytes(18).toString('hex')}`
   const normalizedText = String(text).replace(/\r?\n/g, '\r\n')
@@ -200,10 +251,51 @@ export function createGoogleLiveIntegration(options) {
     fetch: fetchImpl = globalThis.fetch,
     now = () => new Date(),
     timeZone = 'America/Los_Angeles',
+    writingLogDocumentId = '',
+    writingLogTabId = 't.0',
   } = options
   const pendingAuthorizations = new Map()
   let accessTokenCache = null
   let processing = null
+  let writingLogProcessing = null
+  let pendingWritingLogDrafts = null
+  let writingLogLastSyncedAt = null
+  let writingLogLastError = null
+  let writingLogDraftCount = 0
+
+  const normalizedWritingLogDocumentId = String(writingLogDocumentId).trim()
+  const normalizedWritingLogTabId = String(writingLogTabId || 't.0').trim() || 't.0'
+  const writingLogDocumentUrl = normalizedWritingLogDocumentId
+    ? `https://docs.google.com/document/d/${encodeURIComponent(normalizedWritingLogDocumentId)}/edit?tab=${encodeURIComponent(normalizedWritingLogTabId)}`
+    : null
+
+  function getWritingLogState() {
+    const connected = store.getLiveGoogleState().connected
+    const configured = Boolean(normalizedWritingLogDocumentId)
+    return {
+      configured,
+      connected,
+      documentId: configured ? normalizedWritingLogDocumentId : null,
+      documentUrl: writingLogDocumentUrl,
+      tabId: configured ? normalizedWritingLogTabId : null,
+      status: !configured
+        ? 'not-configured'
+        : mode !== 'live'
+          ? 'safe-test'
+          : !connected
+            ? 'authorization-required'
+            : writingLogLastError
+              ? 'failed'
+              : writingLogProcessing
+                ? 'syncing'
+                : writingLogLastSyncedAt
+                  ? 'synced'
+                  : 'ready',
+      draftCount: writingLogDraftCount,
+      lastSyncedAt: writingLogLastSyncedAt,
+      lastError: writingLogLastError,
+    }
+  }
 
   function assertEnabled() {
     if (mode !== 'live') {
@@ -278,6 +370,7 @@ export function createGoogleLiveIntegration(options) {
           : now().getTime() + 3_600_000,
       }
       store.connectLiveGoogle({ accountEmail: credentials.accountEmail, scopes: GOOGLE_SCOPES })
+      await queueWritingLogSync(store.loadState().drafts)
       return store.getLiveGoogleState()
     }
     if (authorizationError) throw liveError(`Google authorization was not completed: ${authorizationError}`, 'google_oauth_denied', 400)
@@ -313,6 +406,7 @@ export function createGoogleLiveIntegration(options) {
       expiresAt: now().getTime() + Math.max(60, Number(tokens.expires_in) || 3600) * 1000,
     }
     store.connectLiveGoogle({ accountEmail: user.email, scopes: GOOGLE_SCOPES })
+    await queueWritingLogSync(store.loadState().drafts)
     return store.getLiveGoogleState()
   }
 
@@ -391,6 +485,92 @@ export function createGoogleLiveIntegration(options) {
       throw liveError(apiMessage(body, `Google API request failed (${response.status})`), 'google_api_failed', 502)
     }
     return response
+  }
+
+  async function syncWritingLog(drafts = store.loadState().drafts) {
+    assertEnabled()
+    if (!normalizedWritingLogDocumentId) {
+      throw liveError('The writing log document is not configured', 'writing_log_not_configured', 409)
+    }
+    const text = buildWritingLogText(drafts)
+    try {
+      const documentEndpoint = `${DOCS_ENDPOINT}/documents/${encodeURIComponent(normalizedWritingLogDocumentId)}`
+      const document = await responseBody(await googleRequest(`${documentEndpoint}?includeTabsContent=true`))
+      if (document.documentId !== normalizedWritingLogDocumentId) {
+        throw liveError('Google returned a different writing log document', 'writing_log_target_mismatch', 409)
+      }
+      const targetTab = document.tabs?.find((tab) => tab.tabProperties?.tabId === normalizedWritingLogTabId)
+      if (Array.isArray(document.tabs) && !targetTab) {
+        throw liveError('The configured writing log tab was not found', 'writing_log_tab_not_found', 409)
+      }
+      const namedRanges = targetTab?.documentTab?.namedRanges ?? document.namedRanges
+      const namedRange = namedRanges?.[WRITING_LOG_NAMED_RANGE]?.namedRanges?.[0]
+      const requests = namedRange
+        ? [{
+            replaceNamedRangeContent: {
+              namedRangeName: WRITING_LOG_NAMED_RANGE,
+              tabsCriteria: { tabIds: [normalizedWritingLogTabId] },
+              text,
+            },
+          }]
+        : [
+            {
+              insertText: {
+                location: { index: 1, tabId: normalizedWritingLogTabId },
+                text,
+              },
+            },
+            {
+              createNamedRange: {
+                name: WRITING_LOG_NAMED_RANGE,
+                range: {
+                  startIndex: 1,
+                  endIndex: 1 + text.length,
+                  tabId: normalizedWritingLogTabId,
+                },
+              },
+            },
+          ]
+      const updated = await responseBody(await googleRequest(`${documentEndpoint}:batchUpdate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests,
+          ...(document.revisionId ? { writeControl: { requiredRevisionId: document.revisionId } } : {}),
+        }),
+      }))
+      writingLogDraftCount = Array.isArray(drafts) ? drafts.filter((draft) => String(draft?.body ?? '').trim()).length : 0
+      writingLogLastSyncedAt = now().toISOString()
+      writingLogLastError = null
+      return {
+        ...getWritingLogState(),
+        revisionId: updated.writeControl?.requiredRevisionId ?? updated.writeControl?.targetRevisionId ?? null,
+      }
+    } catch (error) {
+      writingLogLastError = error instanceof Error ? error.message : 'The writing log could not be updated.'
+      throw error
+    }
+  }
+
+  function queueWritingLogSync(drafts) {
+    pendingWritingLogDrafts = structuredClone(Array.isArray(drafts) ? drafts : [])
+    if (writingLogProcessing) return writingLogProcessing
+    if (mode !== 'live' || !normalizedWritingLogDocumentId || !store.getLiveGoogleState().connected) {
+      return Promise.resolve(getWritingLogState())
+    }
+    writingLogProcessing = (async () => {
+      while (pendingWritingLogDrafts) {
+        const nextDrafts = pendingWritingLogDrafts
+        pendingWritingLogDrafts = null
+        try {
+          await syncWritingLog(nextDrafts)
+        } catch {
+          // Local writing remains durable. The status endpoint exposes the sync failure for retry.
+        }
+      }
+      return getWritingLogState()
+    })().finally(() => { writingLogProcessing = null })
+    return writingLogProcessing
   }
 
   async function findOrCreateFolder(name, parentId) {
@@ -611,6 +791,9 @@ export function createGoogleLiveIntegration(options) {
     processDelivery,
     retryDelivery,
     runQueue,
+    getWritingLogState,
+    queueWritingLogSync,
+    syncWritingLog,
     disconnect,
   }
 }

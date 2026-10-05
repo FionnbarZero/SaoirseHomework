@@ -19,7 +19,7 @@ import { normalizeProofreadingMatches } from './proofreader.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 22
+const SCHEMA_VERSION = 24
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -39,6 +39,7 @@ const OPTIONAL_SESSION_KEYS = new Set([
 ])
 const OPTIONAL_TARGETS = { Monday: 2, Tuesday: 4, Wednesday: 6, Thursday: 8, Friday: 9 }
 const DEFAULT_TIME_ZONE = 'America/Los_Angeles'
+const AI_PROOFREADING_MODES = new Set(['off', 'shadow', 'review', 'assist'])
 
 function emptyWeekContext() {
   return {
@@ -134,14 +135,51 @@ function normalizeWritingReviewQueue(value) {
     return [{
       id,
       draftId,
-      category: ['Grammar', 'Punctuation', 'Capitalization'].includes(item.category) ? item.category : 'Grammar',
+      category: ['Grammar', 'Punctuation', 'Capitalization', 'Spelling'].includes(item.category) ? item.category : 'Grammar',
       message: String(item.message ?? '').slice(0, 500),
       excerpt: String(item.excerpt ?? '').slice(0, 500),
+      ...(item.explanation ? { explanation: String(item.explanation).slice(0, 500) } : {}),
+      ...(item.suggestion ? { suggestion: String(item.suggestion).slice(0, 400) } : {}),
+      ...(item.source === 'ai' ? { source: 'ai' } : { source: 'local' }),
+      ...(item.confidence && ['high', 'medium', 'low'].includes(item.confidence)
+        ? { confidence: item.confidence }
+        : {}),
       status: item.status === 'resolved' ? 'resolved' : 'pending',
+      ...(item.status === 'resolved' && ['confirmed', 'dismissed'].includes(item.decision)
+        ? { decision: item.decision }
+        : {}),
       createdAt: String(item.createdAt ?? new Date(0).toISOString()),
       ...(item.resolvedAt ? { resolvedAt: String(item.resolvedAt) } : {}),
     }]
   })
+}
+
+function normalizeWritingReviewSuggestions(value) {
+  if (!Array.isArray(value)) return []
+  return value.slice(-100).flatMap((item) => {
+    const id = String(item?.id ?? '').slice(0, 200)
+    if (!id) return []
+    return [{
+      id,
+      category: ['Grammar', 'Punctuation', 'Capitalization', 'Spelling'].includes(item.category) ? item.category : 'Grammar',
+      message: String(item.message ?? '').slice(0, 500),
+      excerpt: String(item.excerpt ?? '').slice(0, 500),
+      ...(item.explanation ? { explanation: String(item.explanation).slice(0, 500) } : {}),
+      ...(item.suggestion ? { suggestion: String(item.suggestion).slice(0, 400) } : {}),
+      source: item.source === 'ai' ? 'ai' : 'local',
+      ...(item.confidence && ['high', 'medium', 'low'].includes(item.confidence)
+        ? { confidence: item.confidence }
+        : {}),
+    }]
+  })
+}
+
+function reviewSuggestionsForDraft(body, value) {
+  const suggestions = [
+    ...inspectAmbiguousDraft(body),
+    ...normalizeWritingReviewSuggestions(value).filter((item) => item.source === 'ai'),
+  ]
+  return [...new Map(suggestions.map((item) => [item.id, item])).values()]
 }
 
 function asIso(value) {
@@ -311,6 +349,7 @@ export function createStore(filename, options = {}) {
     CREATE TABLE IF NOT EXISTS writing_submission (
       id TEXT PRIMARY KEY,
       week_id TEXT,
+      activity_key TEXT,
       revision_group_id TEXT,
       version_number INTEGER NOT NULL DEFAULT 1,
       title TEXT NOT NULL,
@@ -318,6 +357,7 @@ export function createStore(filename, options = {}) {
       corrected_body TEXT,
       findings_json TEXT NOT NULL,
       proofreading_matches_json TEXT NOT NULL DEFAULT '[]',
+      review_suggestions_json TEXT NOT NULL DEFAULT '[]',
       exercise_progress_json TEXT NOT NULL DEFAULT '{}',
       spelling_words_json TEXT NOT NULL DEFAULT '[]',
       spelling_progress_json TEXT NOT NULL DEFAULT '{}',
@@ -515,10 +555,12 @@ export function createStore(filename, options = {}) {
   ensureColumn('game_session', 'week_id', 'TEXT')
   ensureColumn('writing_submission', 'corrected_body', 'TEXT')
   ensureColumn('writing_submission', 'week_id', 'TEXT')
+  ensureColumn('writing_submission', 'activity_key', 'TEXT')
   ensureColumn('writing_submission', 'revision_group_id', 'TEXT')
   ensureColumn('writing_submission', 'version_number', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'proofreading_matches_json', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn('writing_submission', 'review_suggestions_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'review_status', "TEXT NOT NULL DEFAULT 'draft'")
@@ -551,9 +593,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
-      id, week_id, revision_group_id, version_number, title, body, corrected_body, findings_json, proofreading_matches_json, exercise_progress_json,
-      spelling_words_json, spelling_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, week_id, activity_key, revision_group_id, version_number, title, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json,
+      exercise_progress_json, spelling_words_json, spelling_progress_json, review_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -1242,7 +1284,7 @@ export function createStore(filename, options = {}) {
 
     state.drafts = db
       .prepare(`
-      SELECT id, week_id, title, body, corrected_body, findings_json, proofreading_matches_json, exercise_progress_json,
+      SELECT id, week_id, activity_key, title, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, exercise_progress_json,
                revision_group_id, version_number, spelling_words_json, spelling_progress_json,
                review_status, updated_at
         FROM writing_submission ORDER BY updated_at DESC
@@ -1251,6 +1293,7 @@ export function createStore(filename, options = {}) {
       .map((row) => ({
         id: row.id,
         weekId: row.week_id ?? weekContext.weekId,
+        activityKey: row.activity_key ?? undefined,
         revisionGroupId: row.revision_group_id ?? row.id,
         versionNumber: Math.max(1, Number(row.version_number) || 1),
         title: row.title,
@@ -1258,6 +1301,7 @@ export function createStore(filename, options = {}) {
         correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
         proofreadingMatches: safeJson(row.proofreading_matches_json, []),
+        reviewSuggestions: reviewSuggestionsForDraft(row.body, safeJson(row.review_suggestions_json, [])),
         exerciseProgress: safeJson(row.exercise_progress_json, {}),
         spellingWords: safeJson(row.spelling_words_json, []),
         spellingProgress: safeJson(row.spelling_progress_json, {}),
@@ -1480,6 +1524,7 @@ export function createStore(filename, options = {}) {
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
         const proofreadingMatches = normalizeProofreadingMatches(draft.proofreadingMatches, body)
+        const reviewSuggestions = reviewSuggestionsForDraft(body, draft.reviewSuggestions)
         const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
@@ -1491,15 +1536,19 @@ export function createStore(filename, options = {}) {
           return progress?.correctionComplete === true &&
             Number(progress.practiceCompleted) >= finding.practice.length
         })
-        const reviewStatus = grammarComplete ? 'complete' : 'practice'
+        const reviewStatus = body.trim()
+          ? grammarComplete ? 'complete' : 'practice'
+          : 'draft'
         const correctedBody = applyCompletedCorrections(body, findings, exerciseProgress)
         insertDraft.run(
-          String(draft.id), String(draft.weekId ?? weekId), String(draft.revisionGroupId ?? draft.id),
+          String(draft.id), String(draft.weekId ?? weekId), draft.activityKey ? String(draft.activityKey) : null,
+          String(draft.revisionGroupId ?? draft.id),
           Math.max(1, Math.floor(Number(draft.versionNumber) || 1)),
           String(draft.title ?? 'Untitled writing'), body,
           correctedBody,
           JSON.stringify(findings),
           JSON.stringify(proofreadingMatches),
+          JSON.stringify(reviewSuggestions),
           JSON.stringify(exerciseProgress),
           JSON.stringify(spellingWords),
           JSON.stringify(spellingProgress),
@@ -1509,7 +1558,10 @@ export function createStore(filename, options = {}) {
       }
 
       const existingReviews = new Map(previousReviewQueue.map((item) => [item.id, item]))
-      const writingReviewQueue = state.drafts.flatMap((draft) => inspectAmbiguousDraft(String(draft.body ?? ''))
+      const writingReviewQueue = state.drafts.flatMap((draft) => reviewSuggestionsForDraft(
+        String(draft.body ?? ''),
+        draft.reviewSuggestions,
+      )
         .map((item) => {
           const id = `${String(draft.id)}:${item.id}`
           return existingReviews.get(id) ?? {
@@ -1566,8 +1618,28 @@ export function createStore(filename, options = {}) {
     return loadState()
   }
 
-  function setWritingReviewStatus(id, status) {
+  function getAiProofreadingMode() {
+    const value = String(
+      db.prepare(`SELECT value FROM settings WHERE key = 'ai_proofreading_mode'`).get()?.value ?? 'off',
+    ).toLowerCase()
+    return AI_PROOFREADING_MODES.has(value) ? value : 'off'
+  }
+
+  function setAiProofreadingMode(input) {
+    const mode = String(input ?? '').trim().toLowerCase()
+    if (!AI_PROOFREADING_MODES.has(mode)) throw serviceError('Invalid AI proofreading mode')
+    const now = asIso(wallNow())
+    setSetting.run('ai_proofreading_mode', mode)
+    setMeta.run('last_write_at', now)
+    addAudit('ai_proofreading_mode_changed', { mode })
+    return mode
+  }
+
+  function setWritingReviewStatus(id, status, decision) {
     if (!['pending', 'resolved'].includes(status)) throw serviceError('Invalid writing review status')
+    if (status === 'resolved' && !['confirmed', 'dismissed'].includes(decision)) {
+      throw serviceError('Choose whether the finding was confirmed or dismissed')
+    }
     const current = normalizeWritingReviewQueue(safeJson(
       db.prepare(`SELECT value FROM settings WHERE key = 'writing_review_queue'`).get()?.value ?? '[]',
       [],
@@ -1575,10 +1647,23 @@ export function createStore(filename, options = {}) {
     const index = current.findIndex((item) => item.id === String(id))
     if (index < 0) throw serviceError('Writing review item was not found', 404, 'review_not_found')
     const resolvedAt = status === 'resolved' ? asIso(wallNow()) : undefined
-    current[index] = { ...current[index], status, ...(resolvedAt ? { resolvedAt } : {}) }
-    if (!resolvedAt) delete current[index].resolvedAt
+    current[index] = {
+      ...current[index],
+      status,
+      ...(resolvedAt ? { resolvedAt, decision } : {}),
+    }
+    if (!resolvedAt) {
+      delete current[index].resolvedAt
+      delete current[index].decision
+    }
     setSetting.run('writing_review_queue', JSON.stringify(current))
-    addAudit('writing_review_status_changed', { reviewId: String(id), status })
+    addAudit('writing_review_status_changed', {
+      reviewId: String(id),
+      status,
+      ...(decision ? { decision } : {}),
+      source: current[index].source,
+      confidence: current[index].confidence ?? null,
+    })
     return loadState()
   }
 
@@ -2861,6 +2946,8 @@ export function createStore(filename, options = {}) {
     setDailyCompletion,
     addParentRewardCredit,
     setWritingDictionary,
+    getAiProofreadingMode,
+    setAiProofreadingMode,
     setWritingReviewStatus,
     resetParentPreviewData,
     getRewardCredit,

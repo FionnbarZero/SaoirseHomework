@@ -9,6 +9,7 @@ import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
 import { createProofreader } from './proofreader.mjs'
+import { createAiProofreader } from './ai-proofreader.mjs'
 import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
@@ -27,12 +28,15 @@ const timeZone = process.env.HOMEWORK_TIME_ZONE || 'America/Los_Angeles'
 const googleMode = process.env.HOMEWORK_GOOGLE_MODE === 'live' ? 'live' : 'safe-test'
 const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim()
 const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
+const writingLogDocumentId = String(process.env.HOMEWORK_WRITING_LOG_DOCUMENT_ID ?? '').trim()
+const writingLogTabId = String(process.env.HOMEWORK_WRITING_LOG_TAB_ID ?? 't.0').trim() || 't.0'
 const guardianSharedSecret = String(process.env.HOMEWORK_GUARDIAN_SHARED_SECRET ?? '').trim()
 const lifecycleKeyFile = String(process.env.HOMEWORK_LIFECYCLE_KEY_FILE ?? '').trim()
 const requireRootOwnership = process.env.HOMEWORK_REQUIRE_ROOT_OWNERSHIP === '1'
 const securityMode = process.env.HOMEWORK_SECURITY_MODE === 'enforcing' ? 'enforcing' : 'preview'
 const parentAuthorization = createParentAuthorization()
 const proofreader = createProofreader()
+const aiProofreader = createAiProofreader()
 const parentSessionCookie = 'fionnbar_parent_session'
 if (requireRootOwnership) {
   enforceRootOwnedRuntime({ dataDirectory, keyFile: lifecycleKeyFile, serviceRoot: projectRoot })
@@ -66,6 +70,8 @@ const googleLive = createGoogleLiveIntegration({
   outputDirectory: googleLiveDirectory,
   mode: googleMode,
   timeZone,
+  writingLogDocumentId,
+  writingLogTabId,
 })
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
 const readingGameOrigin = new URL(
@@ -146,6 +152,12 @@ function sendHtml(response, status, body) {
     'Cache-Control': 'no-store',
   })
   response.end(body)
+}
+
+function proofreadingMatchesOverlap(left, right) {
+  const leftEnd = left.offset + left.length
+  const rightEnd = right.offset + right.length
+  return left.offset < rightEnd && leftEnd > right.offset
 }
 
 function requestCookie(request, name) {
@@ -488,8 +500,36 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/proofread' && request.method === 'POST') {
       const body = await readJson(request)
-      const result = await proofreader.check(body.text)
-      return sendJson(response, 200, result)
+      const mode = store.getAiProofreadingMode()
+      const [localResult, aiResult] = await Promise.all([
+        proofreader.check(body.text),
+        aiProofreader.check(body.text, mode),
+      ])
+      if (aiResult.analyzed) {
+        store.addAudit('ai_proofreading_completed', {
+          mode: aiResult.mode,
+          model: aiResult.model,
+          ...aiResult.counts,
+        })
+      } else if (aiResult.mode !== 'off' && aiResult.error) {
+        store.addAudit('ai_proofreading_unavailable', {
+          mode: aiResult.mode,
+          reason: aiResult.configured ? 'provider_unavailable' : 'not_configured',
+        })
+      }
+      const aiMatches = aiResult.matches.filter((candidate) => (
+        !localResult.matches.some((localMatch) => proofreadingMatchesOverlap(localMatch, candidate))
+      ))
+      return sendJson(response, 200, {
+        available: localResult.available || aiResult.analyzed,
+        engine: [
+          localResult.engine,
+          aiResult.analyzed ? `${aiResult.provider} · ${aiResult.mode}` : null,
+        ].filter(Boolean).join(' + '),
+        matches: [...localResult.matches, ...aiMatches],
+        ...(localResult.error ? { error: localResult.error } : {}),
+        ai: { ...aiResult, matches: aiMatches },
+      })
     }
 
     if (url.pathname === '/api/guardian/lifecycle' && request.method === 'GET') {
@@ -615,7 +655,17 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/state' && request.method === 'PUT') {
       const body = await readJson(request)
       const state = store.saveState(body.state ?? body)
+      void googleLive.queueWritingLogSync(state.drafts)
       return sendJson(response, 200, { state, meta: store.info() })
+    }
+
+    if (url.pathname === '/api/writing-log/status' && request.method === 'GET') {
+      return sendJson(response, 200, { writingLog: googleLive.getWritingLogState() })
+    }
+
+    if (url.pathname === '/api/writing-log/sync' && request.method === 'POST') {
+      const writingLog = await googleLive.syncWritingLog(store.loadState().drafts)
+      return sendJson(response, 200, { writingLog })
     }
 
     if (url.pathname === '/api/activity-configuration' && request.method === 'PUT') {
@@ -849,11 +899,34 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { state, meta: store.info() })
     }
 
+    if (url.pathname === '/api/parent/ai-proofreading' && request.method === 'GET') {
+      requireParent(request)
+      return sendJson(response, 200, aiProofreader.status(store.getAiProofreadingMode()))
+    }
+
+    if (url.pathname === '/api/parent/ai-proofreading' && request.method === 'PUT') {
+      requireParent(request)
+      const body = await readJson(request)
+      const status = aiProofreader.status(body.mode)
+      if (!status.configured && status.mode !== 'off') {
+        const error = new Error('Add OPENAI_API_KEY and HOMEWORK_OPENAI_MODEL to the local service before enabling AI proofreading')
+        error.status = 409
+        error.code = 'ai_proofreading_not_configured'
+        throw error
+      }
+      const mode = store.setAiProofreadingMode(status.mode)
+      return sendJson(response, 200, aiProofreader.status(mode))
+    }
+
     const writingReviewMatch = url.pathname.match(/^\/api\/parent\/writing-reviews\/([^/]+)$/)
     if (writingReviewMatch && request.method === 'PUT') {
       requireParent(request)
       const body = await readJson(request)
-      const state = store.setWritingReviewStatus(decodeURIComponent(writingReviewMatch[1]), body.status)
+      const state = store.setWritingReviewStatus(
+        decodeURIComponent(writingReviewMatch[1]),
+        body.status,
+        body.decision,
+      )
       return sendJson(response, 200, { state, meta: store.info() })
     }
 
@@ -1012,6 +1085,7 @@ const googleQueueInterval = setInterval(() => {
 googleQueueInterval.unref()
 const initialGoogleQueueRun = setTimeout(() => {
   void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
+  void googleLive.queueWritingLogSync(store.loadState().drafts)
 }, 2_000)
 initialGoogleQueueRun.unref()
 

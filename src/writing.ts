@@ -1,5 +1,16 @@
-import type { Finding, FindingProgress, ProofreadingMatch, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
+import type { Draft, Finding, FindingProgress, ProofreadingMatch, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
 import { inspectSpellingFindings, spellingPracticeComplete } from './spelling.ts'
+
+export function writingActivityKey(weekId: string, day: string) {
+  return `${weekId}:${day}`
+}
+
+export function draftBelongsToWritingActivity(
+  draft: Pick<Draft, 'activityKey'>,
+  activityKey: string,
+) {
+  return draft.activityKey === activityKey
+}
 
 type Category = Finding['category']
 
@@ -1518,6 +1529,7 @@ export type AmbiguousWritingFinding = {
   category: 'Grammar' | 'Punctuation'
   message: string
   excerpt: string
+  source: 'local'
 }
 
 export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
@@ -1529,6 +1541,7 @@ export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
       id: `repeated-word-${match.index}`,
       category: 'Grammar',
       message: `“${match[0]}” may repeat a word accidentally.`,
+      source: 'local',
       excerpt: sentenceBounds(body, match.index).start === sentenceBounds(body, match.index).end
         ? match[0]
         : body.slice(sentenceBounds(body, match.index).start, sentenceBounds(body, match.index).end),
@@ -1542,6 +1555,7 @@ export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
       id: `irregular-tense-${match.index}`,
       category: 'Grammar',
       message: 'This sentence may need an irregular past-tense verb. A parent should review it.',
+      source: 'local',
       excerpt: body.slice(bounds.start, bounds.end),
     })
   }
@@ -1553,6 +1567,7 @@ export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
         id: `long-sentence-${paragraphIndex}`,
         category: 'Punctuation',
         message: 'This long passage may need sentence breaks, but the app cannot decide them safely.',
+        source: 'local',
         excerpt: `${paragraph.trim().slice(0, 160)}${paragraph.trim().length > 160 ? '…' : ''}`,
       })
     }

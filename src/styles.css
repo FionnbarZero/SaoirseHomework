@@ -249,6 +249,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .head-start-note, .integration-note { margin-top: 19px; padding: 15px 18px; display: flex; align-items: center; gap: 12px; border: 1px dashed #c9b783; border-radius: 15px; background: rgba(255,247,221,.7); color: #80672e; }
 .head-start-note strong, .integration-note strong { font-size: 12px; }
 .head-start-note p, .integration-note p { margin: 2px 0 0; font-size: 10px; color: #958257; }
+.writing-log-note { align-items: flex-start; }
+.writing-log-note > div:nth-child(2) { flex: 1; }
+.writing-log-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.writing-log-actions .secondary-button { min-height: 34px; padding: 8px 12px; text-decoration: none; white-space: nowrap; }
+.writing-log-actions .secondary-button:disabled { opacity: .45; cursor: not-allowed; }
+.writing-log-message { font-weight: 800; }
 
 .privacy-pill, .admin-pill { display: flex; align-items: center; gap: 11px; min-width: 190px; border: 1px solid #bcd6ce; background: #e4f0ec; color: #2d6d63; padding: 12px 15px; border-radius: 14px; }
 .privacy-pill strong, .privacy-pill small, .admin-pill strong, .admin-pill small { display: block; }
@@ -270,6 +276,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .review-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: #f7e8b9; color: #a77317; }
 .review-heading h3 { margin: 0 0 3px; font-family: Georgia, serif; font-size: 18px; }
 .review-heading p { margin: 0; color: #8c918e; font-size: 10px; }
+.review-reset-button { margin-left: auto; flex: 0 0 auto; font-size: 11px; }
 .review-empty { display: grid; gap: 10px; margin-top: 18px; }
 .revision-callout { padding: 13px 14px; display: grid; gap: 4px; border: 1px solid #d7c17f; border-radius: 12px; color: #71581f; background: #fff5d8; }
 .revision-callout strong { font-size: 14px; }
@@ -479,6 +486,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .writing-dictionary-form > p, .writing-dictionary-form > button, .writing-dictionary-form > .google-proof-message { grid-column: 1 / -1; }
 .writing-dictionary-form > p { margin: 0; color: #8b918d; font-size: 9px; line-height: 1.45; }
 .writing-dictionary-form > button { justify-content: center; }
+.ai-proofreading-settings { grid-column: 1 / -1; padding: 13px; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 9px 12px; border: 1px solid #cdded9; border-radius: 12px; background: #f1f7f5; }
+.ai-proofreading-settings .delivery-heading, .ai-proofreading-settings > p, .ai-proofreading-settings > .ai-model-label, .ai-proofreading-settings > .google-proof-message { grid-column: 1 / -1; }
+.ai-proofreading-settings label { min-width: 0; }
+.ai-proofreading-settings select { width: 100%; border: 1px solid #c9d5d1; border-radius: 9px; padding: 9px 10px; color: var(--ink); background: white; font-size: 9px; }
+.ai-proofreading-settings > p { margin: 0; color: #6f7d78; font-size: 8px; line-height: 1.45; }
+.ai-proofreading-settings > button { align-self: end; white-space: nowrap; }
+.ai-model-label { color: #668078; font-size: 8px; }
 .writing-review-list { min-width: 0; }
 .writing-review-row { min-height: 84px; padding: 12px 16px; display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 11px; border-bottom: 1px solid #ebe6dc; }
 .writing-review-row:last-child { border-bottom: 0; }
@@ -487,6 +501,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .writing-review-row > span small { margin-top: 3px; color: #9a9e9a; font-size: 7px; font-weight: 900; text-transform: uppercase; }
 .writing-review-row > div strong { font-size: 10px; line-height: 1.35; }
 .writing-review-row > div p { margin: 4px 0 0; overflow: hidden; color: #8c918d; font-family: Georgia, serif; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.writing-review-row > div .review-explanation { color: #68756f; font-family: Inter, ui-rounded, sans-serif; white-space: normal; }
+.review-decision-actions { display: flex; align-items: center; gap: 5px; }
 .writing-review-row.resolved { opacity: .58; }
 .google-proof-panel { margin-top: 18px; }
 .mock-badge { flex: 0 0 auto; border-radius: 999px; padding: 7px 10px; color: #775a22; background: #f3e8c9; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
@@ -606,8 +622,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .configuration-actions button { justify-content: center; }
   .writing-tools-grid { grid-template-columns: 1fr; }
   .writing-dictionary-form { border-right: 0; border-bottom: 1px solid var(--line); }
+  .ai-proofreading-settings { grid-template-columns: 1fr; }
+  .ai-proofreading-settings > * { grid-column: 1; }
   .writing-review-row { grid-template-columns: 65px minmax(0, 1fr); }
   .writing-review-row > button { grid-column: 2; justify-self: start; }
+  .writing-review-row > .review-decision-actions { grid-column: 2; justify-self: start; }
   .delivery-row { align-items: flex-start; }
   .delivery-actions { grid-column: 2 / 4; justify-content: flex-start; }
   .session-page { min-height: calc(100vh - 66px); padding: 18px; }

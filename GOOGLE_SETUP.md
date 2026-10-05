@@ -25,7 +25,9 @@ These steps must be completed by the parent who manages Fionnbar's account:
 4. Create an OAuth 2.0 client with application type **Desktop app**.
 5. In Family Link, allow Fionnbar's account to authorize this third-party app when prompted.
 
-The app requests only identity/email, `drive.file`, and `gmail.send`. `drive.file` limits Drive access to files the app creates or that the user explicitly opens with it. A broader Docs scope is not requested because the Docs batch-update endpoint accepts `drive.file` for app-created documents.
+The app requests identity/email, `drive.file`, `documents`, and `gmail.send`. `drive.file` limits Drive access to files the app creates or that the user explicitly opens with it. The Docs scope is used only by the configured existing writing-log document.
+
+When `HOMEWORK_WRITING_LOG_DOCUMENT_ID` points to an existing family document, the app also requests the Google Docs scope. That additional scope is required because `drive.file` alone cannot update a pre-existing document that the app did not create. The Writing screen writes only to the configured document and tab; changing the destination requires changing the local parent-controlled environment configuration and restarting the service.
 
 Official references:
 
@@ -49,6 +51,8 @@ Edit `.env`:
 HOMEWORK_GOOGLE_MODE=live
 HOMEWORK_GOOGLE_CLIENT_ID=your-desktop-client-id.apps.googleusercontent.com
 HOMEWORK_GOOGLE_CLIENT_SECRET=your-desktop-client-secret-if-provided
+HOMEWORK_WRITING_LOG_DOCUMENT_ID=the-existing-google-doc-id
+HOMEWORK_WRITING_LOG_TAB_ID=t.0
 HOMEWORK_TIME_ZONE=America/Los_Angeles
 ```
 
@@ -66,6 +70,8 @@ Open `http://127.0.0.1:4179`, go to the Parent screen, save the school recipient
 In the packaged production app, the signed login agent generates and validates PKCE/state, exchanges and refreshes tokens, and stores the refresh token in the logged-in user's Keychain under `com.fionnbar.homework.google`. The root service queues only typed broker operations authenticated by 15-second daemon grants and receives only a short-lived access token. It cannot read the login Keychain. A direct development service keeps the original local Keychain adapter so the Google proof can still be exercised without installing the production components.
 
 Use **Revoke Google access** to call Google's revoke endpoint and delete the Keychain token. Delivery history and local PDFs are retained for the audit trail.
+
+After authorization, every saved Writing state is queued to the configured document. The app owns one named range at the top of the selected tab, rebuilds only that range, and sorts versions by `updatedAt` descending so the latest attempt and its corrections stay at the top. The rest of the document is preserved.
 
 ## Writing eligibility
 

@@ -2,14 +2,35 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   advanceFindingProgress,
+  draftBelongsToWritingActivity,
   evaluateWritingChoice,
   inspectDraft,
   inspectWritingFindings,
   resolveWritingChoice,
   scoreWritingResponses,
   skipRemainingWritingTrials,
+  writingActivityKey,
   writingReviewStatus,
 } from '../src/writing.ts'
+
+test('writing drafts belong only to their homework day', () => {
+  const mondayKey = writingActivityKey('2026-09-28', 'Monday')
+  const tuesdayKey = writingActivityKey('2026-09-28', 'Tuesday')
+  const mondayDraft = {
+    activityKey: mondayKey,
+    updatedAt: '2026-09-28T20:00:00.000Z',
+  }
+
+  assert.equal(draftBelongsToWritingActivity(mondayDraft, mondayKey), true)
+  assert.equal(draftBelongsToWritingActivity(mondayDraft, tuesdayKey), false)
+})
+
+test('an unkeyed legacy draft stays in history instead of reopening in a new daily editor', () => {
+  const activityKey = writingActivityKey('2026-09-28', 'Monday')
+  const legacyDraft = { updatedAt: '2026-09-28T20:00:00.000Z' }
+
+  assert.equal(draftBelongsToWritingActivity(legacyDraft, activityKey), false)
+})
 
 test('a wrong first attempt must be corrected but the correction does not change its score', () => {
   const finding = inspectDraft('She play games.')[0]

@@ -35,6 +35,7 @@ import {
   dayIsComplete,
   defaultState,
   formatTimer,
+  getBrowserWeekContext,
   getFridayFunSummary,
   getToday,
   getWeekLabel,
@@ -49,12 +50,14 @@ import {
 import {
   advanceFindingProgress,
   applyCompletedCorrections,
+  draftBelongsToWritingActivity,
   inspectAmbiguousDraft,
   inspectWritingFindings,
   resolveWritingChoice,
   scoreWritingResponses,
   skipRemainingWritingTrials,
   type WritingAnswerState,
+  writingActivityKey,
   writingReviewStatus,
 } from './writing'
 import {
@@ -76,7 +79,9 @@ import {
   heartbeatControlledSession,
   hydrateFromService,
   getParentAuthorizationStatus,
+  getAiProofreadingStatus,
   getSecurityStatus,
+  getWritingLogStatus,
   loadStateFromService,
   lockParentSession,
   pollParentAuthorization,
@@ -86,6 +91,7 @@ import {
   runLiveGoogleDelivery,
   runMockGoogleDelivery,
   saveActivityConfiguration,
+  saveAiProofreadingMode,
   saveLiveGoogleConfiguration,
   saveStateToService,
   saveWritingDictionary,
@@ -95,10 +101,14 @@ import {
   startLearningSession,
   startParentAuthorization,
   startReadingGame as startReadingGameSession,
+  syncWritingLog,
   ServiceRequestError,
   type ParentAuthorizationStatus,
+  type AiProofreadingMode,
+  type AiProofreadingStatus,
   type SecurityStatus,
   type ServiceMeta,
+  type WritingLogState,
 } from './service'
 
 type View = 'path' | 'day' | 'options' | 'writing' | 'rewards' | 'parent' | 'session'
@@ -207,6 +217,47 @@ function App() {
     }, 250)
     return () => window.clearTimeout(timeout)
   }, [state, hydrated, serviceStatus])
+
+  useEffect(() => {
+    if (!hydrated) return
+    let cancelled = false
+    let refreshing = false
+    const refreshHomeworkDay = () => {
+      const next = getBrowserWeekContext()
+      const current = latestState.current.weekContext
+      if (next.weekId === current.weekId && next.localDay === current.localDay) return
+
+      if (serviceStatus !== 'online') {
+        setState((stateNow) => ({ ...stateNow, weekContext: next }))
+        return
+      }
+      if (refreshing) return
+      refreshing = true
+      loadStateFromService()
+        .then(({ state: storedState, meta }) => {
+          if (cancelled) return
+          setState(storedState)
+          setServiceMeta(meta)
+        })
+        .catch(() => {
+          if (!cancelled) setServiceStatus('offline')
+        })
+        .finally(() => { refreshing = false })
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshHomeworkDay()
+    }
+    const interval = window.setInterval(refreshHomeworkDay, 60_000)
+    window.addEventListener('focus', refreshHomeworkDay)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    refreshHomeworkDay()
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshHomeworkDay)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [hydrated, serviceStatus])
 
   const reconnectService = () => {
     setServiceStatus('connecting')
@@ -563,7 +614,18 @@ function App() {
           {view === 'options' && (
             <OptionalView state={state} startTimer={startTimer} onBack={() => setView('path')} />
           )}
-          {view === 'writing' && <WritingView state={state} setState={setState} finishWritingGame={finishWritingGame} />}
+          {view === 'writing' && (
+            <WritingView
+              key={writingActivityKey(
+                state.weekContext.weekId,
+                state.weekContext.localDay,
+              )}
+              state={state}
+              setState={setState}
+              serviceStatus={serviceStatus}
+              finishWritingGame={finishWritingGame}
+            />
+          )}
           {view === 'rewards' && <RewardsView state={state} startTimer={startTimer} />}
           {view === 'parent' && (
             <ParentRoute
@@ -1034,26 +1096,28 @@ function WritingAccuracyGraph({ points }: { points: number[] }) {
 function WritingView({
   state,
   setState,
+  serviceStatus,
   finishWritingGame,
 }: {
   state: AppState
   setState: React.Dispatch<React.SetStateAction<AppState>>
+  serviceStatus: 'connecting' | 'online' | 'offline'
   finishWritingGame: (draftId: string) => Promise<void>
 }) {
-  const latest = state.drafts.find((draft) => !draft.weekId || draft.weekId === state.weekContext.weekId)
   const dailyWritingActive = state.activeGameSession?.status === 'pending'
-  const latestNeedsWork = Boolean(
-    latest && (latest.reviewStatus !== 'complete' || (latest.findings?.length ?? 0) > 0),
+  const currentWritingKey = writingActivityKey(
+    state.weekContext.weekId,
+    state.weekContext.localDay,
   )
-  const latestIsCurrentActivity = !dailyWritingActive || Boolean(
-    latest && state.activeGameSession &&
-    (latestNeedsWork || new Date(latest.updatedAt).getTime() >= new Date(state.activeGameSession.createdAt).getTime()),
+  const workingDraft = state.drafts.find((draft) =>
+    (!draft.weekId || draft.weekId === state.weekContext.weekId) &&
+    draftBelongsToWritingActivity(draft, currentWritingKey),
   )
-  const workingDraft = latestIsCurrentActivity ? latest : undefined
+  const automaticBlankDraftId = useRef(crypto.randomUUID())
   const [title, setTitle] = useState(workingDraft?.title ?? '')
   const [body, setBody] = useState(workingDraft?.body ?? '')
   const [showReview, setShowReview] = useState(Boolean(
-    workingDraft && (
+    workingDraft?.body.trim() && (
       workingDraft.reviewStatus !== 'complete' ||
       (dailyWritingActive && (workingDraft.findings?.length ?? 0) === 0)
     ),
@@ -1071,6 +1135,9 @@ function WritingView({
   const [finishMessage, setFinishMessage] = useState('')
   const [checkingWriting, setCheckingWriting] = useState(false)
   const [proofreadingMessage, setProofreadingMessage] = useState('')
+  const [writingLog, setWritingLog] = useState<WritingLogState | null>(null)
+  const [writingLogMessage, setWritingLogMessage] = useState('')
+  const [writingLogBusy, setWritingLogBusy] = useState(false)
   const questionHeadingRef = useRef<HTMLHeadingElement>(null)
   const analysis = useMemo(() => ({
     findings: inspectWritingFindings(body, state.writingDictionary),
@@ -1119,6 +1186,77 @@ function WritingView({
     { name: 'Spelling', label: 'Reviewed common misspellings only' },
   ] as const
 
+  const writingLogFingerprint = state.drafts
+    .map((draft) => `${draft.id}:${draft.updatedAt}`)
+    .join('|')
+
+  useEffect(() => {
+    if (workingDraft) return
+    const id = automaticBlankDraftId.current
+    const blankDraft: Draft = {
+      id,
+      weekId: state.weekContext.weekId,
+      activityKey: currentWritingKey,
+      revisionGroupId: id,
+      versionNumber: 1,
+      title: '',
+      body: '',
+      correctedBody: '',
+      updatedAt: new Date().toISOString(),
+      findings: [],
+      proofreadingMatches: [],
+      reviewSuggestions: [],
+      exerciseProgress: {},
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'draft',
+    }
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.some((draft) =>
+        (!draft.weekId || draft.weekId === state.weekContext.weekId) &&
+        draftBelongsToWritingActivity(draft, currentWritingKey))
+        ? current.drafts
+        : [blankDraft, ...current.drafts.filter((draft) => draft.body.trim())],
+    }))
+    setReviewDraftId(id)
+  }, [currentWritingKey, setState, state.weekContext.weekId, workingDraft])
+
+  useEffect(() => {
+    if (serviceStatus !== 'online') return
+    let cancelled = false
+    const refresh = () => {
+      getWritingLogStatus()
+        .then((response) => {
+          if (!cancelled) setWritingLog(response.writingLog)
+        })
+        .catch(() => {
+          if (!cancelled) setWritingLog(null)
+        })
+    }
+    void refresh()
+    const interval = window.setInterval(refresh, 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [serviceStatus, writingLogFingerprint])
+
+  const syncWritingLogNow = async () => {
+    setWritingLogBusy(true)
+    setWritingLogMessage('')
+    try {
+      await saveStateToService(state)
+      const response = await syncWritingLog()
+      setWritingLog(response.writingLog)
+      setWritingLogMessage('The writing log is up to date. Newest entries are at the top.')
+    } catch (error) {
+      setWritingLogMessage(error instanceof Error ? error.message : 'The writing log could not be updated.')
+    } finally {
+      setWritingLogBusy(false)
+    }
+  }
+
   useEffect(() => {
     setAnswerMessage('')
     setAnswerState(null)
@@ -1155,12 +1293,25 @@ function WritingView({
     if (!title.trim() && !body.trim()) return
     const submittedBody = body
     setCheckingWriting(true)
-    setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation on this Mac…')
+    setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation…')
     try {
       const proofreading = await proofreadWriting(submittedBody).catch(() => ({
         available: false,
         engine: 'reviewed offline rules',
         matches: [],
+        ai: {
+          configured: false,
+          mode: 'off' as const,
+          model: null,
+          provider: 'OpenAI Responses API',
+          sendsOnlyCurrentPassage: true,
+          storesResponses: false,
+          available: false,
+          analyzed: false,
+          matches: [],
+          reviewItems: [],
+          counts: { total: 0, practice: 0, review: 0, ignored: 0 },
+        },
       }))
       const checkedFindings = inspectWritingFindings(
         submittedBody,
@@ -1179,9 +1330,14 @@ function WritingView({
       const versionNumber = revisionSource
         ? (revisionSource.versionNumber ?? 1) + 1
         : existingDraft?.versionNumber ?? 1
+      const reviewSuggestions = [
+        ...analysis.reviewItems,
+        ...proofreading.ai.reviewItems,
+      ]
       const draft: Draft = {
         id: draftId,
         weekId: state.weekContext.weekId,
+        activityKey: currentWritingKey,
         revisionGroupId,
         versionNumber,
         title: title.trim() || 'Untitled writing',
@@ -1190,6 +1346,7 @@ function WritingView({
         updatedAt: new Date().toISOString(),
         findings: checkedFindings,
         proofreadingMatches: proofreading.matches,
+        reviewSuggestions,
         exerciseProgress: {},
         spellingWords: analysis.spellingWords,
         spellingProgress: {},
@@ -1198,7 +1355,7 @@ function WritingView({
       const createdAt = new Date().toISOString()
       setState((current) => {
         const existing = new Map(current.writingReviewQueue.map((item) => [item.id, item]))
-        const reviewItems = analysis.reviewItems.map((item) => {
+        const reviewItems = reviewSuggestions.map((item) => {
           const id = `${draft.id}:${item.id}`
           return existing.get(id) ?? {
             ...item,
@@ -1217,9 +1374,19 @@ function WritingView({
           ],
         }
       })
-      setProofreadingMessage(proofreading.available
-        ? `${proofreading.engine} checked this version locally.`
-        : 'The professional proofreader was unavailable, so reviewed offline rules were used.')
+      const localMessage = proofreading.available
+        ? `${proofreading.engine} checked this version.`
+        : 'The professional proofreader was unavailable, so reviewed offline rules were used.'
+      const aiMessage = proofreading.ai.analyzed
+        ? proofreading.ai.mode === 'shadow'
+          ? ` AI shadow review checked ${proofreading.ai.counts.total} possible ${proofreading.ai.counts.total === 1 ? 'issue' : 'issues'} without showing or applying them.`
+          : proofreading.ai.mode === 'review'
+            ? ` AI sent ${proofreading.ai.counts.review} ${proofreading.ai.counts.review === 1 ? 'suggestion' : 'suggestions'} to Parent review.`
+            : ` AI added ${proofreading.ai.counts.practice} high-confidence ${proofreading.ai.counts.practice === 1 ? 'correction' : 'corrections'} and sent ${proofreading.ai.counts.review} to Parent review.`
+        : proofreading.ai.mode !== 'off' && proofreading.ai.error
+          ? ' AI review was unavailable; the local checks still completed.'
+          : ''
+      setProofreadingMessage(`${localMessage}${aiMessage}`)
       setReviewDraftId(draft.id)
       setRevisingFromDraftId(null)
       setShowReview(true)
@@ -1236,6 +1403,42 @@ function WritingView({
     setBody(reviewDraft.body)
     setRevisingFromDraftId(reviewDraft.id)
     setReviewDraftId(null)
+    setFinishMessage('')
+    setProofreadingMessage('')
+    setShowReview(false)
+  }
+
+  const startFreshDraft = () => {
+    const id = crypto.randomUUID()
+    const blankDraft: Draft = {
+      id,
+      weekId: state.weekContext.weekId,
+      activityKey: currentWritingKey,
+      revisionGroupId: id,
+      versionNumber: 1,
+      title: '',
+      body: '',
+      correctedBody: '',
+      updatedAt: new Date().toISOString(),
+      findings: [],
+      proofreadingMatches: [],
+      reviewSuggestions: [],
+      exerciseProgress: {},
+      spellingWords: [],
+      spellingProgress: {},
+      reviewStatus: 'draft',
+    }
+    setState((current) => ({
+      ...current,
+      drafts: [blankDraft, ...current.drafts.filter((draft) => draft.body.trim())],
+    }))
+    setTitle('')
+    setBody('')
+    setReviewDraftId(id)
+    setRevisingFromDraftId(null)
+    setAnswerMessage('')
+    setAnswerState(null)
+    setSpellingAnswer('')
     setFinishMessage('')
     setProofreadingMessage('')
     setShowReview(false)
@@ -1374,7 +1577,7 @@ function WritingView({
           <h2>{dailyWritingActive ? 'Read, write, practice, edit.' : 'Make your ideas clear.'}</h2>
           <p>{dailyWritingActive ? 'Choose any passage to read, then write what you understood or thought about it. Your original words are saved before review.' : 'Your original words are always saved before review.'}</p>
         </div>
-        <div className="privacy-pill"><ShieldCheck size={18} /><span><strong>Private by design</strong><small>Checked on this Mac</small></span></div>
+        <div className="privacy-pill"><ShieldCheck size={18} /><span><strong>Local-first checks</strong><small>Parent controls any AI review</small></span></div>
       </div>
       <div className={`writing-grid${showReview ? ' game-open' : ''}`}>
         <div className="editor-card">
@@ -1392,7 +1595,7 @@ function WritingView({
           <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Local spelling help is on · Your work stays on this Mac</span></div>
         </div>
         <aside className="review-card" role={showReview ? 'dialog' : undefined} aria-modal={showReview || undefined} aria-label={showReview ? 'Correction game' : undefined}>
-          <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div></div>
+          <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div>{showReview && <button className="text-button review-reset-button" type="button" onClick={startFreshDraft}>Start new draft</button>}</div>
           {proofreadingMessage && <p className="proofreading-status" role="status">{proofreadingMessage}</p>}
           {!showReview ? (
             <div className="review-empty">
@@ -1401,7 +1604,7 @@ function WritingView({
               <div className="review-category"><span>ABC</span><p><strong>Capitalization</strong><small>Sentence starts and known names</small></p></div>
               <div className="review-category"><span>.,?</span><p><strong>Punctuation</strong><small>Sentence breaks, commas, and quotations</small></p></div>
               <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Local professional dictionary and reviewed context</small></p></div>
-              <button className="primary-button full-button" disabled={!body.trim() || checkingWriting} onClick={save}>{checkingWriting ? 'Checking on this Mac…' : revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
+              <button className="primary-button full-button" disabled={!body.trim() || checkingWriting} onClick={save}>{checkingWriting ? 'Checking writing…' : revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
             </div>
           ) : activeFinding && activeTrial ? (
             <div className="writing-exercise">
@@ -1522,6 +1725,30 @@ function WritingView({
             </div>
           )}
         </aside>
+      </div>
+      <div className="integration-note writing-log-note">
+        <FileText size={19} />
+        <div>
+          <strong>Fionnbar’s writing log</strong>
+          <p>{writingLog?.status === 'synced'
+            ? `Synced ${writingLog.draftCount} saved ${writingLog.draftCount === 1 ? 'entry' : 'entries'} · newest first.`
+            : writingLog?.status === 'syncing'
+              ? 'Saving attempts and corrections to the linked document…'
+              : writingLog?.status === 'failed'
+                ? writingLog.lastError || 'The last document sync failed. Local copies are still safe.'
+                : writingLog?.status === 'authorization-required'
+                  ? 'Linked and waiting for Parent Google authorization.'
+                  : writingLog?.status === 'safe-test'
+                    ? 'Linked. Safe-test mode keeps writing local until live Google is enabled in Parent.'
+                    : writingLog?.configured
+                      ? 'Linked and ready to sync saved attempts and corrections.'
+                      : 'No writing log document is configured.'}</p>
+          {writingLogMessage && <p className="writing-log-message" role="status">{writingLogMessage}</p>}
+        </div>
+        <div className="writing-log-actions">
+          {writingLog?.documentUrl && <a className="secondary-button" href={writingLog.documentUrl} target="_blank" rel="noreferrer">Open log</a>}
+          {writingLog?.configured && <button className="secondary-button" type="button" disabled={writingLogBusy || serviceStatus !== 'online' || writingLog.status === 'safe-test' || writingLog.status === 'authorization-required'} onClick={() => { void syncWritingLogNow() }}>{writingLogBusy ? 'Syncing…' : 'Sync now'}</button>}
+        </div>
       </div>
       <div className="integration-note"><Clock3 size={19} /><div><strong>Every version is saved for Friday.</strong><p>After the final check is correct, authorized live Google delivery puts each version in the weekly document and emails it to the teacher Friday at 12:00 p.m. Safe-test mode keeps it local.</p></div></div>
     </section>
@@ -1806,6 +2033,10 @@ function ParentView({
   const [knownNames, setKnownNames] = useState(state.writingDictionary.knownNames.join('\n'))
   const [knownPlaces, setKnownPlaces] = useState(state.writingDictionary.knownPlaces.join('\n'))
   const [writingConfigurationMessage, setWritingConfigurationMessage] = useState('')
+  const [aiProofreading, setAiProofreading] = useState<AiProofreadingStatus | null>(null)
+  const [aiProofreadingMode, setAiProofreadingMode] = useState<AiProofreadingMode>('off')
+  const [aiProofreadingBusy, setAiProofreadingBusy] = useState(false)
+  const [aiProofreadingMessage, setAiProofreadingMessage] = useState('')
 
   useEffect(() => {
     const receiveAuthorization = (event: MessageEvent) => {
@@ -1822,6 +2053,21 @@ function ParentView({
     window.addEventListener('message', receiveAuthorization)
     return () => window.removeEventListener('message', receiveAuthorization)
   }, [setState])
+
+  useEffect(() => {
+    if (serviceStatus !== 'online') return
+    let cancelled = false
+    getAiProofreadingStatus()
+      .then((status) => {
+        if (cancelled) return
+        setAiProofreading(status)
+        setAiProofreadingMode(status.mode)
+      })
+      .catch((error) => {
+        if (!cancelled) setAiProofreadingMessage(error instanceof Error ? error.message : 'AI proofreading status is unavailable.')
+      })
+    return () => { cancelled = true }
+  }, [serviceStatus])
 
   const parseOrigins = (value: string) => value.split(/[\n,]+/).map((origin) => origin.trim()).filter(Boolean)
   const parseDictionary = (value: string) => [...new Map(
@@ -1865,10 +2111,27 @@ function ParentView({
     }
   }
 
-  const toggleWritingReview = async (id: string) => {
-    const resolved = state.writingReviewQueue.find((item) => item.id === id)?.status === 'pending'
+  const saveAiConfiguration = async () => {
+    setAiProofreadingBusy(true)
+    setAiProofreadingMessage('')
     try {
-      const response = await saveWritingReviewStatus(id, resolved ? 'resolved' : 'pending')
+      const status = await saveAiProofreadingMode(aiProofreadingMode)
+      setAiProofreading(status)
+      setAiProofreadingMode(status.mode)
+      setAiProofreadingMessage(status.mode === 'off'
+        ? 'AI proofreading is off. Writing stays with the local checker.'
+        : `${status.mode === 'shadow' ? 'Shadow' : status.mode === 'review' ? 'Parent review' : 'Guided practice'} mode is active.`)
+    } catch (error) {
+      setAiProofreadingMessage(error instanceof Error ? error.message : 'AI proofreading mode could not be saved.')
+    } finally {
+      setAiProofreadingBusy(false)
+    }
+  }
+
+  const reviewWritingSuggestion = async (id: string, decision?: 'confirmed' | 'dismissed') => {
+    const status = decision ? 'resolved' : 'pending'
+    try {
+      const response = await saveWritingReviewStatus(id, status, decision)
       setState(response.state)
     } catch (error) {
       setWritingConfigurationMessage(error instanceof Error ? error.message : 'The review status could not be saved.')
@@ -2139,6 +2402,22 @@ function ParentView({
         </div>
         <div className="writing-tools-grid">
           <div className="writing-dictionary-form">
+            <div className="ai-proofreading-settings">
+              <div className="delivery-heading"><strong>AI second pass</strong><small>{aiProofreading?.configured ? 'READY' : 'NOT CONFIGURED'}</small></div>
+              <label>
+                <span>Review mode</span>
+                <select value={aiProofreadingMode} onChange={(event) => setAiProofreadingMode(event.target.value as AiProofreadingMode)}>
+                  <option value="off">Off — local checks only</option>
+                  <option value="shadow" disabled={!aiProofreading?.configured}>Shadow — measure, show nothing</option>
+                  <option value="review" disabled={!aiProofreading?.configured}>Parent review — no child corrections</option>
+                  <option value="assist" disabled={!aiProofreading?.configured}>Guided practice — high confidence only</option>
+                </select>
+              </label>
+              <p>Only the current passage is sent. The title, name, history, and writing log are excluded. Responses are requested with storage disabled.</p>
+              {aiProofreading?.model && <small className="ai-model-label">Model: {aiProofreading.model}</small>}
+              <button className="secondary-button" disabled={aiProofreadingBusy || serviceStatus !== 'online'} onClick={saveAiConfiguration}>{aiProofreadingBusy ? 'Saving…' : 'Save AI mode'}</button>
+              {aiProofreadingMessage && <p className="google-proof-message" role="status">{aiProofreadingMessage}</p>}
+            </div>
             <label><span>Known names</span><textarea rows={5} value={knownNames} onChange={(event) => setKnownNames(event.target.value)} placeholder={'Fionnbar\nTeacher name'} /></label>
             <label><span>Known places</span><textarea rows={5} value={knownPlaces} onChange={(event) => setKnownPlaces(event.target.value)} placeholder={'San Francisco\nSchool name'} /></label>
             <p>Use one name or place per line. The saved capitalization becomes the required form during the next draft check.</p>
@@ -2146,14 +2425,21 @@ function ParentView({
             {writingConfigurationMessage && <p className="google-proof-message" role="status">{writingConfigurationMessage}</p>}
           </div>
           <div className="writing-review-list">
-            <div className="delivery-heading"><strong>Ambiguous findings</strong><small>These never block writing practice</small></div>
+            <div className="delivery-heading"><strong>Parent review findings</strong><small>These never block writing practice</small></div>
             {state.writingReviewQueue.length === 0 ? (
               <div className="completion-empty">No ambiguous writing findings are waiting for parent review.</div>
             ) : state.writingReviewQueue.slice().reverse().slice(0, 10).map((item) => (
               <div className={`writing-review-row ${item.status}`} key={item.id}>
-                <span><strong>{item.category}</strong><small>{item.status}</small></span>
-                <div><strong>{item.message}</strong><p>{item.excerpt}</p></div>
-                <button className="row-button" onClick={() => toggleWritingReview(item.id)}>{item.status === 'pending' ? 'Mark reviewed' : 'Reopen'}</button>
+                <span><strong>{item.category}</strong><small>{item.source === 'ai' ? `AI · ${item.confidence ?? 'review'} · ${item.decision ?? item.status}` : item.decision ?? item.status}</small></span>
+                <div><strong>{item.message}</strong><p>{item.excerpt}</p>{item.explanation && <p className="review-explanation">{item.explanation}</p>}</div>
+                {item.status === 'pending' ? (
+                  <span className="review-decision-actions">
+                    <button className="row-button" onClick={() => reviewWritingSuggestion(item.id, 'confirmed')}>Confirm</button>
+                    <button className="row-button" onClick={() => reviewWritingSuggestion(item.id, 'dismissed')}>Dismiss</button>
+                  </span>
+                ) : (
+                  <button className="row-button" onClick={() => reviewWritingSuggestion(item.id)}>Reopen</button>
+                )}
               </div>
             ))}
           </div>

@@ -8,6 +8,12 @@ import { resolve } from 'node:path'
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const processes = []
 
+try {
+  process.loadEnvFile?.(join(projectRoot, '.env'))
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error
+}
+
 async function proofreaderIsRunning() {
   try {
     const response = await fetch('http://127.0.0.1:8081/v2/languages', {

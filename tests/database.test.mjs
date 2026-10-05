@@ -89,12 +89,76 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 22)
+    assert.equal(reopened.info().schemaVersion, 24)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test('AI parent-review suggestions remain attached to their draft across saves', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.activeTimer = null
+  state.drafts[0].reviewSuggestions = [{
+    id: 'ai-subject-verb-0-8',
+    category: 'Grammar',
+    message: 'The subject and verb may not agree. Suggested change: “She walks”',
+    excerpt: 'She walk home.',
+    explanation: 'A singular subject needs a matching present-tense verb.',
+    suggestion: 'She walks',
+    source: 'ai',
+    confidence: 'medium',
+  }]
+
+  const imported = store.saveState(state)
+  const aiItem = imported.writingReviewQueue.find((item) => item.source === 'ai')
+  assert.ok(aiItem)
+  assert.equal(aiItem.status, 'pending')
+  assert.equal(imported.drafts[0].reviewSuggestions.some((item) => item.source === 'ai'), true)
+
+  const confirmed = store.setWritingReviewStatus(aiItem.id, 'resolved', 'confirmed')
+  assert.equal(confirmed.writingReviewQueue.find((item) => item.id === aiItem.id)?.decision, 'confirmed')
+
+  const savedAgain = store.saveState(confirmed)
+  assert.equal(savedAgain.writingReviewQueue.some((item) => item.source === 'ai'), true)
+  assert.equal(savedAgain.writingReviewQueue.find((item) => item.id === aiItem.id)?.decision, 'confirmed')
+  store.close()
+})
+
+test('a persisted blank writing workspace remains a draft and preserves earlier versions', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.activeTimer = null
+  state.drafts.unshift({
+    id: 'fresh-draft',
+    weekId: '2026-09-28',
+    activityKey: '2026-09-28:Sunday',
+    revisionGroupId: 'fresh-draft',
+    versionNumber: 1,
+    title: '',
+    body: '',
+    correctedBody: '',
+    updatedAt: '2026-10-04T08:00:00.000Z',
+    findings: [],
+    proofreadingMatches: [],
+    reviewSuggestions: [],
+    exerciseProgress: {},
+    spellingWords: [],
+    spellingProgress: {},
+    reviewStatus: 'draft',
+  })
+
+  const saved = store.saveState(state)
+  assert.equal(saved.drafts.length, 2)
+  assert.equal(saved.drafts[0].id, 'fresh-draft')
+  assert.equal(saved.drafts[0].activityKey, '2026-09-28:Sunday')
+  assert.equal(saved.drafts[0].body, '')
+  assert.equal(saved.drafts[0].reviewStatus, 'draft')
+  assert.equal(saved.drafts[1].id, 'draft-1')
+  assert.equal(saved.drafts[1].body, 'Today I receive a persistence test.')
+  store.close()
 })
 
 test('server-validated local proofreading matches persist and are recomputed into findings', () => {

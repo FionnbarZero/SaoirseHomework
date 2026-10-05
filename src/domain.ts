@@ -103,17 +103,25 @@ export type ProofreadingMatch = {
 export type WritingReviewItem = {
   id: string
   draftId: string
-  category: 'Grammar' | 'Punctuation' | 'Capitalization'
+  category: 'Grammar' | 'Punctuation' | 'Capitalization' | 'Spelling'
   message: string
   excerpt: string
+  explanation?: string
+  suggestion?: string
+  source?: 'local' | 'ai'
+  confidence?: 'high' | 'medium' | 'low'
   status: 'pending' | 'resolved'
+  decision?: 'confirmed' | 'dismissed'
   createdAt: string
   resolvedAt?: string
 }
 
+export type WritingReviewSuggestion = Omit<WritingReviewItem, 'draftId' | 'status' | 'decision' | 'createdAt' | 'resolvedAt'>
+
 export type Draft = {
   id: string
   weekId?: string
+  activityKey?: string
   revisionGroupId?: string
   versionNumber?: number
   title: string
@@ -122,6 +130,7 @@ export type Draft = {
   updatedAt: string
   findings: Finding[]
   proofreadingMatches?: ProofreadingMatch[]
+  reviewSuggestions?: WritingReviewSuggestion[]
   exerciseProgress?: Record<string, FindingProgress>
   spellingWords?: SpellingWord[]
   spellingProgress?: Record<string, SpellingProgress>

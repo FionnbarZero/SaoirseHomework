@@ -6,8 +6,10 @@ import test from 'node:test'
 import { createStore } from '../server/database.mjs'
 import {
   GOOGLE_SCOPES,
+  WRITING_LOG_NAMED_RANGE,
   buildGmailRawMessage,
   buildGoogleAuthorizationUrl,
+  buildWritingLogText,
   buildWeeklyDocumentText,
   createGoogleLiveIntegration,
   createPkcePair,
@@ -76,6 +78,95 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
   assert.match(mime, /Message-ID: <stable-message@homework\.local>/)
   assert.match(mime, /Content-Type: application\/pdf/)
   assert.match(mime, new RegExp(Buffer.from('%PDF-test').toString('base64')))
+})
+
+test('writing log puts the newest attempt and its corrections first', () => {
+  const text = buildWritingLogText([
+    {
+      id: 'older', title: 'Older', versionNumber: 1, body: 'older attempt', correctedBody: 'older correction',
+      findings: [], exerciseProgress: {}, reviewStatus: 'complete', updatedAt: '2026-10-03T20:00:00.000Z',
+    },
+    {
+      id: 'newer', title: 'Newer', versionNumber: 2, body: 'newer attempt', correctedBody: 'newer correction',
+      findings: [{ id: 'finding', practice: [{}, {}, {}] }], exerciseProgress: {}, reviewStatus: 'practice',
+      updatedAt: '2026-10-04T20:00:00.000Z',
+    },
+  ])
+  assert.ok(text.indexOf('Newer — Version 2') < text.indexOf('Older — Version 1'))
+  assert.ok(text.indexOf('newer attempt') < text.indexOf('newer correction'))
+  assert.match(text, /Correction status: 0 of 4 practice steps complete/)
+})
+
+test('writing log creates one managed newest-first range and replaces it on later syncs', async () => {
+  const store = createStore(':memory:', {
+    googleLiveConfiguration: { mode: 'live', clientConfigured: true, keychainAvailable: true },
+  })
+  let refreshToken = null
+  const keychain = {
+    available: true,
+    async setRefreshToken(value) { refreshToken = value },
+    async getRefreshToken() { return refreshToken },
+    async deleteRefreshToken() { refreshToken = null },
+  }
+  const batches = []
+  let documentRead = 0
+  const fakeFetch = async (input, init = {}) => {
+    const url = String(input)
+    if (url.includes('/token')) return Response.json({ access_token: 'access', refresh_token: 'refresh', expires_in: 3600 })
+    if (url.includes('/userinfo')) return Response.json({ email: 'parent@example.com' })
+    if (url.includes('/documents/log-doc?')) {
+      documentRead += 1
+      return Response.json({
+        documentId: 'log-doc',
+        revisionId: `revision-${documentRead}`,
+        tabs: [{
+          tabProperties: { tabId: 't.0' },
+          documentTab: {
+            namedRanges: documentRead === 1 ? {} : {
+              [WRITING_LOG_NAMED_RANGE]: { namedRanges: [{ namedRangeId: 'range-1', ranges: [{ startIndex: 1, endIndex: 20, tabId: 't.0' }] }] },
+            },
+          },
+        }],
+      })
+    }
+    if (url.includes('/documents/log-doc:batchUpdate')) {
+      batches.push(JSON.parse(init.body))
+      return Response.json({ writeControl: { requiredRevisionId: `revision-${documentRead + 1}` } })
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  try {
+    const integration = createGoogleLiveIntegration({
+      store,
+      keychain,
+      clientId: 'desktop-client-id',
+      redirectUri: 'http://127.0.0.1:4179',
+      outputDirectory: '/private/tmp/fionnbar-unused-writing-log-test',
+      mode: 'live',
+      writingLogDocumentId: 'log-doc',
+      writingLogTabId: 't.0',
+      fetch: fakeFetch,
+      now: () => new Date('2026-10-04T21:00:00.000Z'),
+    })
+    const authorization = await integration.beginAuthorization()
+    const state = new URL(authorization.authorizationUrl).searchParams.get('state')
+    await integration.completeAuthorization({ state, code: 'authorization-code' })
+    const drafts = [{
+      id: 'draft', title: 'Story', versionNumber: 1, body: 'attempt', correctedBody: 'correction',
+      findings: [], exerciseProgress: {}, reviewStatus: 'complete', updatedAt: '2026-10-04T20:00:00.000Z',
+    }]
+    await integration.syncWritingLog(drafts)
+
+    assert.equal(batches.length, 2)
+    assert.equal(batches[0].requests[0].insertText.location.tabId, 't.0')
+    assert.equal(batches[0].requests[1].createNamedRange.name, WRITING_LOG_NAMED_RANGE)
+    assert.equal(batches[1].requests[0].replaceNamedRangeContent.namedRangeName, WRITING_LOG_NAMED_RANGE)
+    assert.deepEqual(batches[1].requests[0].replaceNamedRangeContent.tabsCriteria, { tabIds: ['t.0'] })
+    assert.equal(batches[0].writeControl.requiredRevisionId, 'revision-1')
+    assert.equal(integration.getWritingLogState().status, 'synced')
+  } finally {
+    store.close()
+  }
 })
 
 test('Friday delivery gate follows the configured school time zone', () => {

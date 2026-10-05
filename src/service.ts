@@ -10,6 +10,7 @@ import type {
   GoogleProofState,
   ProofreadingMatch,
   WritingDictionary,
+  WritingReviewSuggestion,
 } from './domain'
 
 export type ServiceMeta = {
@@ -113,6 +114,32 @@ export type ProofreadingResponse = {
   available: boolean
   engine: string
   matches: ProofreadingMatch[]
+  ai: AiProofreadingResult
+  error?: string
+}
+
+export type AiProofreadingMode = 'off' | 'shadow' | 'review' | 'assist'
+
+export type AiProofreadingStatus = {
+  configured: boolean
+  mode: AiProofreadingMode
+  model: string | null
+  provider: string
+  sendsOnlyCurrentPassage: boolean
+  storesResponses: boolean
+}
+
+export type AiProofreadingResult = AiProofreadingStatus & {
+  available: boolean
+  analyzed: boolean
+  matches: ProofreadingMatch[]
+  reviewItems: WritingReviewSuggestion[]
+  counts: {
+    total: number
+    practice: number
+    review: number
+    ignored: number
+  }
   error?: string
 }
 
@@ -132,6 +159,22 @@ type GoogleLiveResponse = StateResponse & {
 type GoogleLiveDeliveryResponse = StateResponse & {
   delivery: GoogleLiveDelivery
   duplicate?: boolean
+}
+
+export type WritingLogState = {
+  configured: boolean
+  connected: boolean
+  documentId: string | null
+  documentUrl: string | null
+  tabId: string | null
+  status: 'not-configured' | 'safe-test' | 'authorization-required' | 'ready' | 'syncing' | 'synced' | 'failed'
+  draftCount: number
+  lastSyncedAt: string | null
+  lastError: string | null
+}
+
+type WritingLogResponse = {
+  writingLog: WritingLogState
 }
 
 export class ServiceRequestError extends Error {
@@ -207,6 +250,14 @@ export function saveStateToService(state: AppState) {
   })
 }
 
+export function getWritingLogStatus() {
+  return request<WritingLogResponse>('/api/writing-log/status')
+}
+
+export function syncWritingLog() {
+  return request<WritingLogResponse>('/api/writing-log/sync', { method: 'POST' })
+}
+
 export function startLearningSession() {
   return request<LearningSessionResponse>('/api/learning-session/start', { method: 'POST' })
 }
@@ -232,10 +283,25 @@ export function saveWritingDictionary(dictionary: WritingDictionary) {
   })
 }
 
-export function saveWritingReviewStatus(id: string, status: 'pending' | 'resolved') {
+export function saveWritingReviewStatus(
+  id: string,
+  status: 'pending' | 'resolved',
+  decision?: 'confirmed' | 'dismissed',
+) {
   return request<StateResponse>(`/api/parent/writing-reviews/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, decision }),
+  })
+}
+
+export function getAiProofreadingStatus() {
+  return request<AiProofreadingStatus>('/api/parent/ai-proofreading')
+}
+
+export function saveAiProofreadingMode(mode: AiProofreadingMode) {
+  return request<AiProofreadingStatus>('/api/parent/ai-proofreading', {
+    method: 'PUT',
+    body: JSON.stringify({ mode }),
   })
 }
 

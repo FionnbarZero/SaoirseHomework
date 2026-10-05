@@ -16,6 +16,12 @@ Open `http://127.0.0.1:4180`.
 
 Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API.
 
+### Optional AI proofreading
+
+The local checker remains the first pass. An optional, parent-controlled OpenAI second pass can run in four modes: **Off**, **Shadow** (measure findings without showing them), **Parent review** (non-blocking suggestions only), and **Guided practice** (high-confidence corrections become exercises while medium-confidence suggestions go to Parent review).
+
+To make those modes available, copy `.env.example` to the untracked `.env` file and set both `OPENAI_API_KEY` and `HOMEWORK_OPENAI_MODEL`, then restart `npm run dev`. The API key stays in the local Node service. Each request contains only the current passage—never its title, Fionnbar's name/profile, prior drafts, or the Google writing log—and uses the Responses API with `store: false`. The model must return a strict JSON schema; the service rejects findings whose quoted text cannot be mapped exactly back to the submitted passage. The parent must explicitly choose a mode in **Parent → Writing review tools**; the default remains Off. Parent-review findings can be confirmed or dismissed, creating audit evidence for measuring false positives before Guided practice is enabled.
+
 After `npm run build`, `npm start` serves the production build and API together from `http://127.0.0.1:4179`.
 
 ## Checks
@@ -34,6 +40,7 @@ npm run build
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
 - Local writing drafts with layered LanguageTool, reviewed contextual rules, and browser spelling assistance
+- Optional schema-constrained AI second pass with Off, Shadow, Parent review, and high-confidence Guided practice modes
 - One original-sentence correction plus three three-choice practice trials for every supported finding
 - Reviewed spelling mistakes use the same original correction plus three multiple-choice reviews as the other writing areas
 - A separate full-width correction-game frame followed by child revision and rechecking until no supported errors remain
@@ -70,6 +77,7 @@ npm run build
 - Participation-based completion with first-attempt scoring, required unscored corrections, immediate rule feedback, stored accuracy, and a cumulative line graph
 - Server-verified game evidence, clean-final-version completion, 24-hour sessions with safe expiry recovery, and replay rejection
 - Persistent safe-mode Google connection and weekly delivery records
+- Parent-authorized sync to one configured existing Google Doc, with writing attempts and corrections ordered newest first in an app-owned range
 - Duplicate-safe local document assembly, original/corrected writing sections, real PDF export, and no-writing skip behavior
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Safe-by-default live Google foundation with Desktop OAuth PKCE and macOS Keychain refresh-token storage

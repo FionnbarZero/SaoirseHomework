@@ -42,6 +42,30 @@ test('the local writing check finds supported capitalization and punctuation iss
   assert.equal(inspectDraft('Today I wrote a story.').length, 0)
 })
 
+test('the Huck paragraph exposes every supported error category in one pass', () => {
+  const body = 'huck lived with an old widow she triend to make him an honest boy. He really hated living withher becasue she made him pray. he servant ran away, adn he happened to be on the same island as Jim and so they ran away together they had a good time togther they build a raft went fishing and scared off criminils.'
+  const findings = inspectWritingFindings(body)
+  assert.deepEqual(
+    new Set(findings.map((finding) => finding.category)),
+    new Set(['Capitalization', 'Grammar', 'Punctuation', 'Spelling']),
+  )
+  assert.equal(findings.filter((finding) => finding.ruleId === 'fused-sentence-break').length, 3)
+  assert.equal(findings.filter((finding) => finding.ruleId === 'series-actions-commas').length, 2)
+  assert.ok(findings.some((finding) => finding.ruleId === 'past-tense-consistency'))
+
+  const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
+    correctionComplete: true,
+    practiceCompleted: finding.practice.length,
+    incorrectAttempts: 0,
+  }]))
+  const corrected = applyCompletedCorrections(body, findings, progress)
+  assert.match(corrected, /old widow\. She tried/)
+  assert.match(corrected, /ran away together\. They had a good time together\. They built a raft, went fishing, and scared off criminals\./)
+
+  const ambiguous = inspectAmbiguousDraft(body)
+  assert.ok(ambiguous.some((item) => item.ruleId === 'pronoun-before-noun'))
+})
+
 test('the deterministic writing rules cover high-confidence grammar cases', () => {
   const findings = inspectDraft('Yesterday I walk home. She play games with this books.')
   assert.deepEqual(

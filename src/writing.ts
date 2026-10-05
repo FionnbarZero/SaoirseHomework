@@ -336,6 +336,22 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['We studied math, science, and art.', 'We studied math science and art.', 'We studied, math science, and art.'],
     ],
   ),
+  'series-actions-commas': practiceSet(
+    'series-actions-commas',
+    'Choose the sentence that punctuates three actions correctly.',
+    'Use commas to separate three actions in a series, including a comma before the final “and.”',
+    [
+      ['They built a raft, went fishing, and cooked dinner.', 'They built a raft went fishing and cooked dinner.', 'They built a raft, went fishing and cooked dinner.'],
+      ['She opened the book, read a chapter, and wrote notes.', 'She opened the book read a chapter and wrote notes.', 'She opened the book, read a chapter and wrote notes.'],
+      ['We packed our bags, walked outside, and caught the bus.', 'We packed our bags walked outside and caught the bus.', 'We packed our bags, walked outside and caught the bus.'],
+      ['He found the key, opened the door, and entered the room.', 'He found the key opened the door and entered the room.', 'He found the key, opened the door and entered the room.'],
+      ['I washed the apple, cut it up, and ate it.', 'I washed the apple cut it up and ate it.', 'I washed the apple, cut it up and ate it.'],
+      ['They made a plan, gathered supplies, and started working.', 'They made a plan gathered supplies and started working.', 'They made a plan, gathered supplies and started working.'],
+      ['She grabbed her coat, closed the door, and ran outside.', 'She grabbed her coat closed the door and ran outside.', 'She grabbed her coat, closed the door and ran outside.'],
+      ['We visited the museum, ate lunch, and walked home.', 'We visited the museum ate lunch and walked home.', 'We visited the museum, ate lunch and walked home.'],
+      ['He carried the box, climbed the stairs, and set it down.', 'He carried the box climbed the stairs and set it down.', 'He carried the box, climbed the stairs and set it down.'],
+    ],
+  ),
   'appositive-name-commas': practiceSet(
     'appositive-name-commas',
     'Choose the sentence that sets off the character’s name correctly.',
@@ -829,7 +845,7 @@ function proofreadingFinding(
   match: ProofreadingMatch,
   sameRuleIndex: number,
 ): Finding | null {
-  if (match.verification !== 'verified' || !['ai', 'parent'].includes(match.source ?? '')) return null
+  if (match.verification !== 'verified' || !['local', 'ai', 'parent'].includes(match.source ?? '')) return null
   const original = body.slice(match.offset, match.offset + match.length)
   const replacement = match.replacements.length === 1 ? match.replacements[0] : undefined
   if (replacement === undefined || (match.length > 0 && replacement === original)) return null
@@ -922,6 +938,50 @@ export function inspectDraft(
   if (!body.trim()) return findings
 
   let match: RegExpExecArray | null
+
+  const fusedClauses = /\b([A-Za-z'’-]+)(\s+)(I|he|she|it|we|they)(?=\s+(?:am|is|are|was|were|has|have|had|do|does|did|walk|walks|walked|run|runs|ran|go|goes|went|build|builds|built|try|tries|tried|triend|make|makes|made|happen|happens|happened|live|lives|lived|hate|hates|hated|pray|prays|prayed)\b)/gi
+  const clauseJoiners = new Set(['adn', 'after', 'although', 'and', 'as', 'becasue', 'because', 'before', 'but', 'if', 'or', 'since', 'so', 'that', 'than', 'then', 'unless', 'when', 'where', 'which', 'while', 'who'])
+  while ((match = fusedClauses.exec(body)) !== null) {
+    const prefix = body.slice(0, match.index).trimEnd()
+    if (!prefix || /[.!?]$/.test(prefix) || clauseJoiners.has(match[1].toLowerCase())) continue
+    const start = match.index + match[1].length
+    addFinding(body, findings, {
+      ruleId: 'fused-sentence-break', category: 'Punctuation', start,
+      end: start + match[2].length + match[3].length,
+      replacement: `. ${match[3][0].toUpperCase()}${match[3].slice(1).toLowerCase()}`,
+      message: 'Two complete thoughts have been joined without an ending mark.',
+      suggestion: 'End the first thought with a period and capitalize the next sentence.',
+    })
+  }
+
+  const pastNarrativeShift = /\b(I|he|she|we|they)\s+(had|was|were|went|ran|made|lived|hated|happened|tried|played|walked|looked|visited)\b([^.!?\n]{0,80})\b\1\s+(build|go|make|run|write|eat|take)\b/gi
+  const narrativePast: Record<string, string> = {
+    build: 'built', go: 'went', make: 'made', run: 'ran', write: 'wrote', eat: 'ate', take: 'took',
+  }
+  while ((match = pastNarrativeShift.exec(body)) !== null) {
+    const verb = match[4]
+    const start = match.index + match[0].toLowerCase().lastIndexOf(verb.toLowerCase())
+    addFinding(body, findings, {
+      ruleId: 'past-tense-consistency', category: 'Grammar', start, end: start + verb.length,
+      replacement: capitalizeLike(verb, narrativePast[verb.toLowerCase()]),
+      message: `“${verb}” shifts to the present during a past-tense event.`,
+      suggestion: `Keep the connected events in the past tense with “${narrativePast[verb.toLowerCase()]}”.`,
+    })
+  }
+
+  const actionSeries = /\b((?:I|he|she|we|they)\s+(?:build|built|made|found|bought|carried|opened)\s+(?:a|an|the|my|your|his|her|our|their)\s+[A-Za-z'’-]+)(\s+)((?:went|walked|ran|played|looked|fished)\s+[A-Za-z'’-]+)(\s+)and\s+(?=(?:scared|found|saw|made|opened|closed|caught|helped|visited|cooked)\b)/gi
+  while ((match = actionSeries.exec(body)) !== null) {
+    const firstStart = match.index + match[1].length
+    const secondStart = firstStart + match[2].length + match[3].length
+    for (const [start, whitespace] of [[firstStart, match[2]], [secondStart, match[4]]] as const) {
+      addFinding(body, findings, {
+        ruleId: 'series-actions-commas', category: 'Punctuation', start,
+        end: start + whitespace.length, replacement: ', ',
+        message: 'Three actions in a series need separating commas.',
+        suggestion: 'Use commas between the three actions, including before the final “and.”',
+      })
+    }
+  }
 
   const dailyJourney = /\b(?:walk|walks|walked|go|goes|went)\s+(?:to\s+(?:school|work|the park)|home)\s+(everyday)(?=[.!?\n]|$)/gi
   while ((match = dailyJourney.exec(body)) !== null) {
@@ -1694,11 +1754,33 @@ export type AmbiguousWritingFinding = {
   message: string
   excerpt: string
   source: 'local'
+  start?: number
+  end?: number
+  alternatives?: string[]
+  ruleId?: string
 }
 
 export function inspectAmbiguousDraft(body: string): AmbiguousWritingFinding[] {
   const items: AmbiguousWritingFinding[] = []
   let match: RegExpExecArray | null
+
+  const pronounBeforeNoun = /(?:^|[.!?]\s+)(he|she)\s+(servant|teacher|friend|mother|father|brother|sister|dog|cat|book|house|school)\b/gi
+  while ((match = pronounBeforeNoun.exec(body)) !== null) {
+    const start = match.index + match[0].indexOf(match[1])
+    const bounds = sentenceBounds(body, start)
+    items.push({
+      id: `pronoun-before-noun-${start}`,
+      category: 'Grammar',
+      message: `“${match[1]} ${match[2]}” may need a possessive word or “the,” but the intended owner is unclear.`,
+      source: 'local',
+      excerpt: body.slice(bounds.start, bounds.end),
+      start,
+      end: start + match[1].length,
+      alternatives: ['Her', 'His', 'The'],
+      ruleId: 'pronoun-before-noun',
+    })
+  }
+
   const repeatedWord = /\b([a-z]{2,})\s+\1\b/gi
   while ((match = repeatedWord.exec(body)) !== null) {
     items.push({

@@ -14,7 +14,7 @@ Open `http://127.0.0.1:4180`.
 
 `npm run dev` starts both the Vite interface and the loopback data service. The service listens only on `127.0.0.1:4179` and stores its SQLite database in `data/homework.sqlite`.
 
-Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API. LanguageTool output is treated only as untrusted candidate evidence: it cannot create a child-facing correction until the contextual AI verifier or a parent approves the exact replacement.
+Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API. LanguageTool output is normally treated as untrusted candidate evidence. A small allowlist of audited, single-replacement grammar and punctuation rules can create child-facing corrections; every other candidate still requires the contextual AI verifier or a parent to approve the exact replacement.
 
 ### Optional AI proofreading
 
@@ -45,7 +45,7 @@ The browser deadline covers the local check, both AI passes, and optional meanin
 - Cumulative nine-session weekly music practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
-- Local writing drafts with reviewed deterministic rules, quarantined LanguageTool candidates, and browser spelling assistance
+- Local writing drafts with reviewed deterministic rules, audited LanguageTool grammar and punctuation rules, quarantined ambiguous candidates, and browser spelling assistance
 - Optional two-pass, schema-constrained AI detection and verification with Off, Shadow, Parent review, and Guided practice modes
 - A focused contextual correction for every verified finding; extra practice appears only when a matching reviewed rule exists
 - Reviewed spelling mistakes use the same original correction plus three multiple-choice reviews as the other writing areas

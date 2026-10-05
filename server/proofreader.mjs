@@ -33,7 +33,7 @@ export function normalizeProofreadingMatches(value, text) {
     )].slice(0, 8)
     if (!Number.isFinite(offset) || !Number.isFinite(matchLength) || offset < 0 || matchLength < 0) return []
     if (offset + matchLength > length || replacements.length === 0) return []
-    const source = ['languagetool', 'ai', 'parent'].includes(item?.source) ? item.source : undefined
+    const source = ['languagetool', 'local', 'ai', 'parent'].includes(item?.source) ? item.source : undefined
     const verification = ['candidate', 'verified'].includes(item?.verification) ? item.verification : undefined
     const confidence = ['high', 'medium', 'low'].includes(item?.confidence) ? item.confidence : undefined
     return [{

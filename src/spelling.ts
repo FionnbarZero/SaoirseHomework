@@ -21,6 +21,7 @@ const COMMON_MISSPELLINGS: Record<string, string> = {
   beleive: 'believe',
   begining: 'beginning',
   broomed: 'broom',
+  becasue: 'because',
   definately: 'definitely',
   diferent: 'different',
   embarass: 'embarrass',
@@ -42,6 +43,8 @@ const COMMON_MISSPELLINGS: Record<string, string> = {
   teh: 'the',
   thier: 'their',
   tommorow: 'tomorrow',
+  togther: 'together',
+  triend: 'tried',
   untill: 'until',
   wierd: 'weird',
   wich: 'which',
@@ -51,6 +54,8 @@ const COMMON_MISSPELLINGS: Record<string, string> = {
   cbouts: 'bought',
   hambester: 'hamster',
   whitch: 'witch',
+  withher: 'with her',
+  criminils: 'criminals',
 }
 
 const NORMALIZED_MISSPELLINGS = new Map(

@@ -116,6 +116,31 @@ test('provider failure remains a blocking review item even if local rules find n
   assert.equal(result.reviewItems[0].id, 'incomplete-proofreading')
 })
 
+test('reviewed LanguageTool grammar and punctuation rules enter child corrections without AI', async () => {
+  const text = 'He ran and she followed.'
+  const result = await checkWriting(text, {
+    mode: 'off',
+    proofreader: { check: async () => ({
+      available: true,
+      engine: 'LanguageTool',
+      matches: [{
+        offset: text.indexOf('and'),
+        length: 'and'.length,
+        replacements: [', and'],
+        ruleId: 'COMMA_COMPOUND_SENTENCE',
+        category: 'Punctuation',
+        message: 'Use a comma before a coordinating conjunction joining two clauses.',
+      }],
+    }) },
+    aiProofreader: createAiProofreader({ apiKey: '', model: '' }),
+  })
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0].source, 'local')
+  assert.equal(result.matches[0].verification, 'verified')
+  assert.equal(result.reviewItems.length, 0)
+  assert.ok(inspectWritingFindings(text, undefined, result.matches).some((finding) => finding.category === 'Punctuation'))
+})
+
 test('Shadow and Parent-review modes never expose child meaning choices', async () => {
   for (const mode of ['shadow', 'review']) {
     const ai = aiWith({ findings: [edit('walk', 'walks')] }, { findings: [edit('walk', 'walks')] })

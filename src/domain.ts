@@ -131,7 +131,7 @@ export type ProofreadingMatch = {
   ruleId: string
   category: string
   issueType: string
-  source?: 'languagetool' | 'ai' | 'parent'
+  source?: 'languagetool' | 'local' | 'ai' | 'parent'
   verification?: 'candidate' | 'verified'
   confidence?: 'high' | 'medium' | 'low'
   issueCode?: string

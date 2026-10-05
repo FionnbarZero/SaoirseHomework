@@ -1732,6 +1732,7 @@ export function inspectWritingFindings(
   body: string,
   dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
   proofreadingMatches: ProofreadingMatch[] = [],
+  options: { authoritative?: boolean } = {},
 ) {
   const localFindings = inspectDraft(body, dictionary)
   const spellingFindings = inspectSpellingFindings(body, dictionary).map((finding) => {
@@ -1771,7 +1772,7 @@ export function inspectWritingFindings(
     findings.push(finding)
     ruleCounts.set(match.ruleId, count + 1)
   }
-  for (const finding of deterministicFindings) {
+  for (const finding of options.authoritative ? [] : deterministicFindings) {
     const overlapsVerified = findings.some((verified) => (
       atomicFindingEdits(verified).some((verifiedEdit) => (
         atomicFindingEdits(finding).some((deterministicEdit) => editsOverlap(verifiedEdit, deterministicEdit))

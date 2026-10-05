@@ -19,7 +19,7 @@ import { normalizeProofreadingMatches, proofreadingReviewItems } from './proofre
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 28
+const SCHEMA_VERSION = 29
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -176,7 +176,7 @@ function normalizeWritingReviewQueue(value) {
 
 function normalizeWritingReviewSuggestions(value) {
   if (!Array.isArray(value)) return []
-  return value.slice(-100).flatMap((item) => {
+  return value.slice(-1000).flatMap((item) => {
     const id = String(item?.id ?? '').slice(0, 200)
     if (!id) return []
     const start = Number(item.start)
@@ -205,9 +205,9 @@ function normalizeWritingReviewSuggestions(value) {
   })
 }
 
-function reviewSuggestionsForDraft(body, value) {
+function reviewSuggestionsForDraft(body, value, authoritative = false) {
   const suggestions = [
-    ...inspectAmbiguousDraft(body),
+    ...(authoritative ? [] : inspectAmbiguousDraft(body)),
     ...normalizeWritingReviewSuggestions(value),
   ]
   return [...new Map(suggestions.map((item) => [item.id, item])).values()]
@@ -398,6 +398,12 @@ export function createStore(filename, options = {}) {
       spelling_progress_json TEXT NOT NULL DEFAULT '{}',
       review_status TEXT NOT NULL DEFAULT 'draft',
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS writing_check_result (
+      id TEXT PRIMARY KEY,
+      body TEXT NOT NULL,
+      result_json TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS active_timer (
@@ -598,6 +604,8 @@ export function createStore(filename, options = {}) {
   ensureColumn('writing_submission', 'pages_read', "TEXT NOT NULL DEFAULT ''")
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'proofreading_matches_json', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn('writing_submission', 'proofreading_authoritative', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn('writing_submission', 'proofreading_check_id', 'TEXT')
   ensureColumn('writing_submission', 'review_suggestions_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'sentence_reviews_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
@@ -633,8 +641,8 @@ export function createStore(filename, options = {}) {
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
       id, week_id, activity_key, revision_group_id, version_number, reading_date, title, author, pages_read, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, sentence_reviews_json,
-      exercise_progress_json, spelling_words_json, spelling_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      exercise_progress_json, spelling_words_json, spelling_progress_json, review_status, updated_at, proofreading_authoritative, proofreading_check_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -1461,7 +1469,7 @@ export function createStore(filename, options = {}) {
       .prepare(`
       SELECT id, week_id, activity_key, reading_date, title, author, pages_read, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, sentence_reviews_json, exercise_progress_json,
                revision_group_id, version_number, spelling_words_json, spelling_progress_json,
-               review_status, updated_at
+               review_status, updated_at, proofreading_authoritative, proofreading_check_id
         FROM writing_submission ORDER BY updated_at DESC
       `)
       .all()
@@ -1479,7 +1487,9 @@ export function createStore(filename, options = {}) {
         correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
         proofreadingMatches: safeJson(row.proofreading_matches_json, []),
-        reviewSuggestions: reviewSuggestionsForDraft(row.body, safeJson(row.review_suggestions_json, [])),
+        proofreadingAuthoritative: Boolean(row.proofreading_authoritative),
+        proofreadingCheckId: row.proofreading_check_id ?? undefined,
+        reviewSuggestions: reviewSuggestionsForDraft(row.body, safeJson(row.review_suggestions_json, []), Boolean(row.proofreading_authoritative)),
         sentenceReviews: safeJson(row.sentence_reviews_json, []),
         exerciseProgress: safeJson(row.exercise_progress_json, {}),
         spellingWords: safeJson(row.spelling_words_json, []),
@@ -1630,6 +1640,8 @@ export function createStore(filename, options = {}) {
   }
 
   function saveState(state) {
+    const previousDraftChecks = new Map(db.prepare('SELECT id, proofreading_check_id FROM writing_submission')
+      .all().map((draft) => [draft.id, draft.proofreading_check_id]))
     assertState(state)
     const now = asIso(wallNow())
     const weekContext = ensureCurrentWeek()
@@ -1703,10 +1715,23 @@ export function createStore(filename, options = {}) {
       const existingReviews = new Map(previousReviewQueue.map((item) => [item.id, item]))
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
-        const proofreadingMatches = normalizeProofreadingMatches(draft.proofreadingMatches, body)
-        const reviewSuggestions = reviewSuggestionsForDraft(body, draft.reviewSuggestions)
+        // Only a service-issued result for this exact text may disable offline
+        // checks. Never trust a browser flag or let a save drop verified errors.
+        const check = db.prepare('SELECT result_json FROM writing_check_result WHERE id = ? AND body = ?')
+          .get(String(draft.proofreadingCheckId ?? ''), body)
+        const checked = check ? safeJson(check.result_json, null) : null
+        const authoritative = checked?.authoritative === true
+        if (authoritative && previousDraftChecks.get(String(draft.id)) !== draft.proofreadingCheckId) {
+          for (const [id, review] of existingReviews) {
+            if (review.draftId === String(draft.id)) existingReviews.delete(id)
+          }
+        }
+        const proofreadingMatches = normalizeProofreadingMatches(authoritative
+          ? [...(draft.proofreadingMatches ?? []).filter((match) => match.source === 'parent' || String(match.ruleId).startsWith('AI_CONFIRMED_MEANING_')), ...checked.matches]
+          : draft.proofreadingMatches, body)
+        const reviewSuggestions = reviewSuggestionsForDraft(body, authoritative ? checked.reviewItems : draft.reviewSuggestions, authoritative)
         const sentenceReviews = Array.isArray(draft.sentenceReviews) ? draft.sentenceReviews : []
-        const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
+        const findings = inspectWritingFindings(body, dictionary, proofreadingMatches, { authoritative })
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
           : {}
@@ -1747,12 +1772,15 @@ export function createStore(filename, options = {}) {
           JSON.stringify(spellingProgress),
           reviewStatus,
           String(draft.updatedAt ?? now),
+          authoritative ? 1 : 0,
+          authoritative ? String(draft.proofreadingCheckId) : null,
         )
       }
 
-      const writingReviewQueue = state.drafts.flatMap((draft) => reviewSuggestionsForDraft(
+      const writingReviewQueue = db.prepare('SELECT id, body, review_suggestions_json, proofreading_authoritative, updated_at FROM writing_submission').all().flatMap((draft) => reviewSuggestionsForDraft(
         String(draft.body ?? ''),
-        draft.reviewSuggestions,
+        safeJson(draft.review_suggestions_json, []),
+        Boolean(draft.proofreading_authoritative),
       )
         .map((item) => {
           const id = `${String(draft.id)}:${item.id}`
@@ -1761,7 +1789,7 @@ export function createStore(filename, options = {}) {
             id,
             draftId: String(draft.id),
             status: 'pending',
-            createdAt: String(draft.updatedAt ?? now),
+            createdAt: String(draft.updated_at ?? now),
           }
         }))
       if (importingBrowserState) {
@@ -1857,7 +1885,7 @@ export function createStore(filename, options = {}) {
     }
     const reviewItem = current[index]
     const draft = db.prepare(`
-      SELECT body, proofreading_matches_json, exercise_progress_json, spelling_words_json, spelling_progress_json
+      SELECT body, proofreading_matches_json, exercise_progress_json, spelling_words_json, spelling_progress_json, proofreading_authoritative
       FROM writing_submission WHERE id = ?
     `).get(reviewItem.draftId)
     if (draft) {
@@ -1893,7 +1921,7 @@ export function createStore(filename, options = {}) {
         db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
         {},
       ))
-      const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
+      const findings = inspectWritingFindings(body, dictionary, proofreadingMatches, { authoritative: Boolean(draft.proofreading_authoritative) })
       const exerciseProgress = safeJson(draft.exercise_progress_json, {})
       const spellingWords = safeJson(draft.spelling_words_json, [])
       const spellingProgress = safeJson(draft.spelling_progress_json, {})
@@ -3224,6 +3252,13 @@ export function createStore(filename, options = {}) {
 
   return {
     db,
+    recordWritingCheck(body, result) {
+      if (!result.authoritative) return undefined
+      const id = makeId()
+      db.prepare('INSERT INTO writing_check_result (id, body, result_json) VALUES (?, ?, ?)')
+        .run(id, String(body), JSON.stringify({ authoritative: true, matches: result.matches, reviewItems: result.reviewItems }))
+      return id
+    },
     loadState,
     saveState,
     startLearningSession,

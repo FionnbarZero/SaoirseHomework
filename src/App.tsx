@@ -1352,12 +1352,13 @@ function WritingView({
         submittedBody,
         state.writingDictionary,
         proofreading.matches,
+        { authoritative: proofreading.authoritative },
       )
       const revisionSource = revisingFromDraftId
         ? state.drafts.find((draft) => draft.id === revisingFromDraftId)
         : undefined
-      const existingDraft = !revisionSource && workingDraft?.reviewStatus !== 'complete'
-        ? workingDraft
+      const existingDraft = !revisionSource
+        ? reviewDraft ?? (workingDraft?.reviewStatus !== 'complete' ? workingDraft : undefined)
         : undefined
       const draftId = existingDraft?.id ?? crypto.randomUUID()
       const revisionGroupId = revisionSource?.revisionGroupId ?? revisionSource?.id ??
@@ -1367,7 +1368,7 @@ function WritingView({
         : existingDraft?.versionNumber ?? 1
       const sentenceReviews = proofreading.sentenceReviews ?? []
       const reviewSuggestions = [
-        ...analysis.reviewItems,
+        ...(proofreading.authoritative ? [] : analysis.reviewItems),
         ...proofreading.reviewItems,
       ]
       const draft: Draft = {
@@ -1385,6 +1386,8 @@ function WritingView({
         updatedAt: new Date().toISOString(),
         findings: checkedFindings,
         proofreadingMatches: proofreading.matches,
+        proofreadingAuthoritative: proofreading.authoritative,
+        proofreadingCheckId: proofreading.checkId,
         reviewSuggestions,
         sentenceReviews,
         exerciseProgress: {},
@@ -1405,7 +1408,7 @@ function WritingView({
         const existing = new Map(current.writingReviewQueue.map((item) => [item.id, item]))
         const reviewItems = reviewSuggestions.map((item) => {
           const id = `${draft.id}:${item.id}`
-          return existing.get(id) ?? {
+          return (existingDraft?.proofreadingCheckId === draft.proofreadingCheckId ? existing.get(id) : undefined) ?? {
             ...item,
             id,
             draftId: draft.id,
@@ -1425,7 +1428,9 @@ function WritingView({
       const localMessage = proofreading.available
         ? `${proofreading.engine} checked this version.`
         : 'The professional proofreader was unavailable, so reviewed offline rules were used.'
-      const aiMessage = proofreading.ai.analyzed
+      const aiMessage = proofreading.incomplete
+        ? ' The full check is incomplete. Valid corrections were kept, but this version still needs another check or Parent review.'
+        : proofreading.ai.analyzed
         ? proofreading.ai.mode === 'shadow'
           ? ` AI shadow review checked ${proofreading.ai.counts.total} possible ${proofreading.ai.counts.total === 1 ? 'issue' : 'issues'} without showing or applying them.`
           : proofreading.ai.mode === 'review'
@@ -1462,6 +1467,20 @@ function WritingView({
     setFinishMessage('')
     setProofreadingMessage('')
     setShowReview(false)
+  }
+
+  const prepareRecheck = () => {
+    if (!reviewDraft || checkingWriting) return
+    setReadingDate(reviewDraft.readingDate ?? newDraftReadingDate)
+    setTitle(reviewDraft.title)
+    setAuthor(reviewDraft.author ?? '')
+    setPagesRead(reviewDraft.pagesRead ?? '')
+    setBody(reviewDraft.body)
+    setRevisingFromDraftId(null)
+    setShowReview(false)
+    setAnswerMessage('')
+    setAnswerState(null)
+    setProofreadingMessage('Your original writing is ready to recheck. Save & check to replace this version’s old corrections and restart its correction game.')
   }
 
   const startFreshDraft = () => {
@@ -1523,7 +1542,7 @@ function WritingView({
       ? [...intentMatches, ...baseMatches]
       : baseMatches
     const nextFindings = allMeaningsConfirmed
-      ? inspectWritingFindings(reviewDraft.body, state.writingDictionary, proofreadingMatches)
+      ? inspectWritingFindings(reviewDraft.body, state.writingDictionary, proofreadingMatches, { authoritative: reviewDraft.proofreadingAuthoritative })
       : reviewFindings
     setState((current) => ({
       ...current,
@@ -1790,6 +1809,7 @@ function WritingView({
             </dl>
           )}
           {proofreadingMessage && <p className="proofreading-status" role="status">{proofreadingMessage}</p>}
+          {showReview && <button className="text-button" type="button" disabled={checkingWriting || meaningReviewBusy} onClick={prepareRecheck}>Recheck this draft</button>}
           {!showReview ? (
             <div className="review-empty">
               {revisingFromDraftId && <div className="revision-callout"><strong>Revise version {state.drafts.find((draft) => draft.id === revisingFromDraftId)?.versionNumber ?? 1}</strong><span>Correct the errors you practiced, then check the new version.</span></div>}

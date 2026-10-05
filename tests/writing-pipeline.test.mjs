@@ -107,10 +107,98 @@ test('omitted detector and local candidates remain reviewable; explicit rejectio
   assert.deepEqual(JSON.parse(requests[1].input).known_places, [])
 })
 
-test('malformed anchors fail the check rather than becoming a false clean result', async () => {
+test('malformed anchors mark the check incomplete rather than becoming a false clean result', async () => {
   const result = await aiWith({ findings: [edit('invented', 'word')] }, { findings: [] }).check('She walk.', 'assist')
-  assert.equal(result.analyzed, false)
-  assert.match(result.error, /could not be located/)
+  assert.equal(result.analyzed, true)
+  assert.equal(result.incomplete, true)
+  assert.match(result.error, /could not be safely located/)
+})
+
+test('one invalid detection and verification anchor do not discard valid errors in the same sentence', async () => {
+  const text = 'she walk home'
+  const valid = [edit('she', 'She'), edit('walk', 'walks'), edit('home', '.', { operation: 'insert_after', category: 'punctuation' })]
+  const requests = []
+  const ai = aiWith({ findings: [...valid, edit('invented', 'word')] }, { findings: [...valid, edit('missing', 'word')] }, requests)
+  const result = await checkWriting(text, {
+    mode: 'assist', proofreader: { check: async () => ({ available: true, engine: 'Local', matches: [] }) }, aiProofreader: ai,
+  })
+  assert.equal(result.incomplete, true)
+  assert.equal(result.authoritative, true)
+  assert.equal(result.matches.length, 3)
+  assert.ok(result.reviewItems.some(item => item.id === 'incomplete-proofreading'))
+  const findings = inspectWritingFindings(text, undefined, result.matches, { authoritative: result.authoritative })
+  assert.equal(findings.length, 3)
+  assert.equal(corrected(text, findings), 'She walks home.')
+  assert.ok(findings.every(finding => finding.correction.correctAnswer === 'She walks home.'))
+  assert.equal(JSON.parse(requests[1].input).unlocated_detector_findings.length, 1)
+})
+
+test('a failed verifier retains detected evidence for review but never calls it verified', async () => {
+  let calls = 0
+  const ai = createAiProofreader({ apiKey: 'test', model: 'test', fetchImpl: async () => {
+    if (calls++) throw new Error('Verification timed out')
+    return { ok: true, json: async () => ({ output_text: JSON.stringify({ findings: [edit('walk', 'walks')] }) }) }
+  } })
+  const result = await checkWriting('She walk.', {
+    mode: 'assist', proofreader: { check: async () => ({ available: true, engine: 'Local', matches: [] }) }, aiProofreader: ai,
+  })
+  assert.equal(result.incomplete, true)
+  assert.equal(result.ai.analyzed, false)
+  assert.equal(result.ai.matches.length, 0)
+  assert.ok(result.reviewItems.some(item => item.source === 'ai' && item.replacement === 'walks'))
+  assert.ok(result.reviewItems.some(item => item.id === 'incomplete-proofreading'))
+})
+
+test('local and offline candidates are reviewed before the game and explicit rejections stay rejected', async () => {
+  const text = 'she walk home'
+  let reviewedCandidates = []
+  const ai = createAiProofreader({ apiKey: 'test', model: 'test', fetchImpl: async (_url, options) => {
+    const request = JSON.parse(options.body)
+    const input = JSON.parse(request.input)
+    reviewedCandidates = input.local_candidates
+    return { ok: true, json: async () => ({ output_text: JSON.stringify({ findings: [], rejected_candidate_ids: input.local_candidates.map(item => item.id) }) }) }
+  } })
+  const result = await checkWriting(text, {
+    mode: 'assist', aiProofreader: ai,
+    proofreader: { check: async () => ({ available: true, engine: 'Local', matches: [{
+      offset: 4, length: 4, replacements: ['walks'], ruleId: 'HAVE_PART_AGREEMENT', category: 'Grammar', message: 'Match the verb.',
+    }] }) },
+  })
+  assert.ok(reviewedCandidates.some(item => item.rule_id.startsWith('OFFLINE_')))
+  assert.ok(inspectWritingFindings(text).length > 0)
+  assert.deepEqual(result.matches, [])
+  assert.deepEqual(result.reviewItems, [])
+  assert.deepEqual(inspectWritingFindings(text, undefined, result.matches, { authoritative: result.authoritative }), [])
+})
+
+test('meaning review is scoped to uncertain sentences, not routine corrections elsewhere', async () => {
+  let input
+  const ai = createAiProofreader({ apiKey: 'test', model: 'test', fetchImpl: async (_url, options) => {
+    input = JSON.parse(JSON.parse(options.body).input)
+    return { ok: true, json: async () => ({ output_text: JSON.stringify({ reviews: [] }) }) }
+  } })
+  await ai.interpret('She walk home. He servant ran.', 'assist', { reviewIssues: [{ start: 15, end: 17 }] })
+  assert.deepEqual(input.sentences, [{ id: 2, text: 'He servant ran.' }])
+})
+
+test('the latest Tsunami passage retains all ten verified corrections in its quizzes', async () => {
+  const text = 'Tsunami was exciting to meet her mother. but her mother coral was a bit of a crazy queen. she tied her little sister anemony to her with a harness kept trying to put one on tsunami and was makign her spend time with an oily dragain named whirlpool.'
+  // This is a transport regression from the live check, not evidence that a
+  // model always finds these errors. The uncertain name spelling is preserved.
+  const edits = [edit('exciting', 'excited'), ...[['but', 'But'], ['coral', 'Coral'], ['she', 'She'], ['anemony', 'Anemony'], ['tsunami', 'Tsunami'], ['whirlpool', 'Whirlpool']].map(([before, after]) => edit(before, after, { category: 'capitalization' })),
+    edit('harness', ',', { operation: 'insert_after', category: 'punctuation' }),
+    edit('makign', 'making', { category: 'spelling' }), edit('dragain', 'dragon', { category: 'spelling' })]
+  const result = await aiWith({ findings: edits }, { findings: edits }).check(text, 'assist')
+  const findings = inspectWritingFindings(text, undefined, result.matches, { authoritative: true })
+  assert.equal(findings.length, 10)
+  assert.equal(result.reviewItems.length, 0)
+  assert.equal(corrected(text, findings), 'Tsunami was excited to meet her mother. But her mother Coral was a bit of a crazy queen. She tied her little sister Anemony to her with a harness, kept trying to put one on Tsunami and was making her spend time with an oily dragon named Whirlpool.')
+})
+
+test('more than a hundred corrections survive persistence normalization', () => {
+  const text = 'x '.repeat(120)
+  const matches = Array.from({ length: 120 }, (_, index) => ({ offset: index * 2, length: 1, replacements: ['X'], source: 'ai', verification: 'verified', ruleId: `AI_CAPITAL_${index}`, category: 'Capitalization' }))
+  assert.equal(normalizeProofreadingMatches(matches, text).length, 120)
 })
 
 test('more than sixty valid errors are retained', () => {

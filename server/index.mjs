@@ -505,6 +505,7 @@ const server = createServer(async (request, response) => {
         proofreader, aiProofreader, mode, dictionary: store.loadState().writingDictionary,
       })
       const aiResult = result.ai
+      result.checkId = store.recordWritingCheck(String(body.text ?? ''), result)
       if (aiResult.analyzed) {
         store.addAudit('ai_proofreading_completed', {
           mode: aiResult.mode,

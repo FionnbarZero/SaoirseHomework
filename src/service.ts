@@ -113,6 +113,9 @@ type WritingGameCompletionResponse = GameSessionResponse & {
 }
 
 export type ProofreadingResponse = {
+  incomplete: boolean
+  authoritative: boolean
+  checkId?: string
   available: boolean
   engine: string
   matches: ProofreadingMatch[]
@@ -135,6 +138,7 @@ export type AiProofreadingStatus = {
 }
 
 export type AiProofreadingResult = AiProofreadingStatus & {
+  incomplete?: boolean
   available: boolean
   analyzed: boolean
   matches: ProofreadingMatch[]

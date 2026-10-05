@@ -177,6 +177,8 @@ export type Draft = {
   updatedAt: string
   findings: Finding[]
   proofreadingMatches?: ProofreadingMatch[]
+  proofreadingAuthoritative?: boolean
+  proofreadingCheckId?: string
   reviewSuggestions?: WritingReviewSuggestion[]
   sentenceReviews?: SentenceMeaningReview[]
   exerciseProgress?: Record<string, FindingProgress>

@@ -95,7 +95,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 28)
+    assert.equal(reopened.info().schemaVersion, 29)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -183,6 +183,64 @@ test('AI parent-review suggestions remain attached to their draft across saves',
   assert.equal(savedAgain.writingReviewQueue.some((item) => item.source === 'ai'), true)
   assert.equal(savedAgain.writingReviewQueue.find((item) => item.id === aiItem.id)?.decision, 'confirmed')
   store.close()
+})
+
+test('authoritative corrections survive saves and reopening without resurrecting offline rules', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-authoritative-'))
+  const filename = join(directory, 'homework.sqlite')
+  let store = createStore(filename)
+  try {
+    const state = sampleState()
+    state.activeTimer = null
+    const draft = state.drafts[0]
+    draft.body = 'After dinner she walk home.'
+    const match = { offset: draft.body.indexOf('walk'), length: 4, replacements: ['walks'], ruleId: 'AI_AGREEMENT', source: 'ai', verification: 'verified', category: 'Grammar', message: 'Match the verb.' }
+    const review = { id: 'needs-parent', source: 'ai', category: 'Grammar', message: 'Check the meaning.', excerpt: draft.body }
+    draft.proofreadingCheckId = store.recordWritingCheck(draft.body, { authoritative: true, matches: [match], reviewItems: [review] })
+    // The service restores its verified matches and unresolved reviews even
+    // when a stale/browser save omits them.
+    draft.proofreadingMatches = []
+    draft.reviewSuggestions = []
+    const saved = store.saveState(state)
+    assert.equal(saved.drafts[0].proofreadingAuthoritative, true)
+    assert.equal(saved.drafts[0].findings.length, 1)
+    assert.equal(saved.drafts[0].findings[0].replacement, 'walks')
+    assert.equal(saved.drafts[0].reviewSuggestions.length, 1)
+    const resolved = store.setWritingReviewStatus(saved.writingReviewQueue.find(item => item.id.endsWith(':needs-parent')).id, 'resolved', 'dismissed')
+    assert.equal(resolved.drafts[0].findings.length, 1)
+    store.saveState(resolved)
+    store.close()
+    store = createStore(filename)
+    const reopened = store.loadState()
+    assert.equal(reopened.drafts[0].findings.length, 1)
+    assert.equal(reopened.drafts[0].proofreadingAuthoritative, true)
+    assert.equal(store.saveState(reopened).drafts[0].findings.length, 1)
+    reopened.drafts[0].proofreadingCheckId = store.recordWritingCheck(draft.body, { authoritative: true, matches: [match], reviewItems: [review] })
+    const rechecked = store.saveState(reopened)
+    assert.equal(rechecked.writingReviewQueue.find(item => item.id.endsWith(':needs-parent')).status, 'pending')
+    reopened.drafts[0].body = 'she walk'
+    const changed = store.saveState(reopened).drafts[0]
+    assert.equal(changed.proofreadingAuthoritative, false)
+    assert.ok(changed.findings.length > 1)
+  } finally {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('a browser authoritative flag alone cannot bypass local checks', () => {
+  const store = createStore(':memory:')
+  try {
+    const state = sampleState()
+    state.activeTimer = null
+    state.drafts[0].body = 'she walk'
+    state.drafts[0].proofreadingAuthoritative = true
+    state.drafts[0].proofreadingCheckId = 'invented'
+    const draft = store.saveState(state).drafts[0]
+    assert.equal(draft.proofreadingAuthoritative, false)
+    assert.ok(draft.findings.length > 1)
+    assert.notEqual(draft.reviewStatus, 'complete')
+  } finally { store.close() }
 })
 
 test('a parent-approved deletion survives saving and reopening the draft', () => {

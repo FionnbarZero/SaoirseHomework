@@ -1,5 +1,6 @@
 import { createAiProofreader } from '../server/ai-proofreader.mjs'
 import { createProofreader } from '../server/proofreader.mjs'
+import { checkWriting } from '../server/writing-check.mjs'
 import { writingEvalCases } from '../tests/fixtures/writing-eval.mjs'
 import { atomicEdits } from '../src/writing-edits.ts'
 import { inspectWritingFindings } from '../src/writing.ts'
@@ -45,10 +46,9 @@ function editKey(edit, text) {
 }
 
 for (const [index, item] of selected.entries()) {
-  const localResult = await local.check(item.text)
-  const result = await ai.check(item.text, 'assist', localResult.matches)
-  if (!result.analyzed) throw new Error(`AI evaluation failed for ${item.id}: ${result.error ?? 'unknown error'}`)
-  const findings = inspectWritingFindings(item.text, undefined, result.matches)
+  const result = await checkWriting(item.text, { proofreader: local, aiProofreader: ai, mode: 'assist' })
+  if (!result.ai.analyzed || result.incomplete) throw new Error(`AI evaluation failed for ${item.id}: ${result.ai.error ?? 'incomplete check'}`)
+  const findings = inspectWritingFindings(item.text, undefined, result.matches, { authoritative: result.authoritative })
   const predicted = findings.flatMap((finding) => [finding, ...(finding.additionalEdits ?? [])])
     .flatMap((edit) => atomicEdits(item.text.slice(edit.start, edit.end), edit.replacement, edit.start))
   const expected = item.edits.flatMap((edit) => atomicEdits(item.text.slice(edit.start, edit.end), edit.replacement, edit.start))

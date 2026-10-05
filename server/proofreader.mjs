@@ -2,7 +2,7 @@ import { LOCAL_CHECK_TIMEOUT_MS } from '../src/proofreading-limits.ts'
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:8081/v2/check'
 const MAX_TEXT_LENGTH = 20_000
-const MAX_MATCHES = 100
+const MAX_MATCHES = 1000
 
 function localEndpoint(value) {
   const parsed = new URL(String(value || DEFAULT_ENDPOINT))
@@ -13,7 +13,7 @@ function localEndpoint(value) {
 }
 
 function cleanReplacement(value) {
-  const replacement = String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 160)
+  const replacement = String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, 400)
   return replacement
 }
 

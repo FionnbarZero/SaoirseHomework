@@ -185,6 +185,44 @@ test('AI parent-review suggestions remain attached to their draft across saves',
   store.close()
 })
 
+test('a parent-approved deletion survives saving and reopening the draft', () => {
+  const store = createStore(':memory:')
+  try {
+    const state = sampleState()
+    state.activeTimer = null
+    state.drafts[0].body = 'She saw the the bird.'
+    state.drafts[0].reviewSuggestions = [{
+      id: 'delete-duplicate', category: 'Grammar', source: 'ai', message: 'Remove the extra word.',
+      excerpt: state.drafts[0].body, start: 12, end: 16, replacement: '',
+    }]
+    const saved = store.saveState(state)
+    const review = saved.writingReviewQueue.find((item) => item.id.endsWith('delete-duplicate'))
+    assert.equal(review.replacement, '')
+    const confirmed = store.setWritingReviewStatus(review.id, 'resolved', 'confirmed', '')
+    const finding = confirmed.drafts[0].findings.find((item) => item.replacement === '')
+    assert.ok(finding)
+    confirmed.drafts[0].exerciseProgress[finding.id] = { correctionComplete: true, practiceCompleted: finding.practice.length, incorrectAttempts: 0 }
+    store.saveState(confirmed)
+    assert.equal(store.loadState().drafts[0].correctedBody, 'She saw the bird.')
+  } finally {
+    store.close()
+  }
+})
+
+test('an incomplete proofreading review prevents a clean-looking draft from being completed', () => {
+  const store = createStore(':memory:')
+  try {
+    const state = sampleState()
+    state.activeTimer = null
+    state.drafts[0].body = 'The dog ran home.'
+    state.drafts[0].reviewSuggestions = [{ id: 'incomplete-proofreading', source: 'local', category: 'Grammar', message: 'Recheck this version.', excerpt: state.drafts[0].body }]
+    assert.equal(store.saveState(state).drafts[0].reviewStatus, 'awaiting-review')
+    assert.equal(store.loadState().drafts[0].reviewStatus, 'awaiting-review')
+  } finally {
+    store.close()
+  }
+})
+
 test('a persisted blank writing workspace remains a draft and preserves earlier versions', () => {
   const store = createStore(':memory:')
   const state = sampleState()

@@ -161,7 +161,7 @@ function normalizeWritingReviewQueue(value) {
         ? { confidence: item.confidence }
         : {}),
       ...(hasEdit ? { start, end } : {}),
-      ...(item.replacement ? { replacement: String(item.replacement).slice(0, 400) } : {}),
+      ...(typeof item.replacement === 'string' ? { replacement: item.replacement.slice(0, 400) } : {}),
       ...(alternatives.length ? { alternatives } : {}),
       ...(item.ruleId ? { ruleId: String(item.ruleId).slice(0, 120) } : {}),
       status: item.status === 'resolved' ? 'resolved' : 'pending',
@@ -198,7 +198,7 @@ function normalizeWritingReviewSuggestions(value) {
         ? { confidence: item.confidence }
         : {}),
       ...(hasEdit ? { start, end } : {}),
-      ...(item.replacement ? { replacement: String(item.replacement).slice(0, 400) } : {}),
+      ...(typeof item.replacement === 'string' ? { replacement: item.replacement.slice(0, 400) } : {}),
       ...(alternatives.length ? { alternatives } : {}),
       ...(item.ruleId ? { ruleId: String(item.ruleId).slice(0, 120) } : {}),
     }]
@@ -1842,14 +1842,14 @@ export function createStore(filename, options = {}) {
     const selectedReplacement = decision === 'confirmed'
       ? String(replacementInput ?? current[index].replacement ?? '').slice(0, 400)
       : undefined
-    if (decision === 'confirmed' && !selectedReplacement) {
-      throw serviceError('Enter the exact parent-approved replacement before confirming')
+    if (decision === 'confirmed' && !selectedReplacement && !(current[index].end > current[index].start)) {
+      throw serviceError('An insertion needs replacement text; only existing text can be deleted')
     }
     current[index] = {
       ...current[index],
       status,
       ...(resolvedAt ? { resolvedAt, decision } : {}),
-      ...(selectedReplacement ? { replacement: selectedReplacement } : {}),
+      ...(selectedReplacement !== undefined ? { replacement: selectedReplacement } : {}),
     }
     if (!resolvedAt) {
       delete current[index].resolvedAt

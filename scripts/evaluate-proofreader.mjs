@@ -1,6 +1,8 @@
 import { createAiProofreader } from '../server/ai-proofreader.mjs'
 import { createProofreader } from '../server/proofreader.mjs'
 import { writingEvalCases } from '../tests/fixtures/writing-eval.mjs'
+import { atomicEdits } from '../src/writing-edits.ts'
+import { inspectWritingFindings } from '../src/writing.ts'
 
 try {
   process.loadEnvFile?.(new URL('../.env', import.meta.url))
@@ -25,23 +27,34 @@ let proposedEdits = 0
 let exactPassages = 0
 let cleanPassages = 0
 let cleanFalsePositives = 0
+let multiErrorPassages = 0
+let exactMultiErrorPassages = 0
+let unresolvedPassages = 0
 
-function editKey(edit) {
-  return `${edit.start}:${edit.end}:${edit.replacement}`
+function editKey(edit, text) {
+  let { start, end, replacement } = edit
+  while (start < end && replacement && text[start] === replacement[0]) {
+    start += 1
+    replacement = replacement.slice(1)
+  }
+  while (start < end && replacement && text[end - 1] === replacement.at(-1)) {
+    end -= 1
+    replacement = replacement.slice(0, -1)
+  }
+  return `${start}:${end}:${replacement}`
 }
 
 for (const [index, item] of selected.entries()) {
   const localResult = await local.check(item.text)
   const result = await ai.check(item.text, 'assist', localResult.matches)
   if (!result.analyzed) throw new Error(`AI evaluation failed for ${item.id}: ${result.error ?? 'unknown error'}`)
-  const predicted = result.matches.map((match) => ({
-    start: match.offset,
-    end: match.offset + match.length,
-    replacement: match.replacements[0],
-  }))
-  const expectedKeys = new Set(item.edits.map(editKey))
-  matchedEdits += predicted.filter((edit) => expectedKeys.has(editKey(edit))).length
-  expectedEdits += item.edits.length
+  const findings = inspectWritingFindings(item.text, undefined, result.matches)
+  const predicted = findings.flatMap((finding) => [finding, ...(finding.additionalEdits ?? [])])
+    .flatMap((edit) => atomicEdits(item.text.slice(edit.start, edit.end), edit.replacement, edit.start))
+  const expected = item.edits.flatMap((edit) => atomicEdits(item.text.slice(edit.start, edit.end), edit.replacement, edit.start))
+  const expectedKeys = new Set(expected.map((edit) => editKey(edit, item.text)))
+  matchedEdits += predicted.filter((edit) => expectedKeys.has(editKey(edit, item.text))).length
+  expectedEdits += expected.length
   proposedEdits += predicted.length
   if (item.edits.length === 0) {
     cleanPassages += 1
@@ -52,7 +65,13 @@ for (const [index, item] of selected.entries()) {
     .reduce((text, edit) => (
       `${text.slice(0, edit.start)}${edit.replacement}${text.slice(edit.end)}`
     ), item.text)
-  if (corrected === item.expectedText) exactPassages += 1
+  const resolved = result.reviewItems.length === 0
+  if (!resolved) unresolvedPassages += 1
+  if (corrected === item.expectedText && resolved) exactPassages += 1
+  if (item.edits.length > 1) {
+    multiErrorPassages += 1
+    if (corrected === item.expectedText && resolved && inspectWritingFindings(corrected).length === 0) exactMultiErrorPassages += 1
+  }
   process.stdout.write(`\rEvaluated ${index + 1}/${selected.length}`)
 }
 
@@ -60,6 +79,8 @@ const precision = proposedEdits ? matchedEdits / proposedEdits : 1
 const recall = expectedEdits ? matchedEdits / expectedEdits : 1
 const exactPassageRate = exactPassages / selected.length
 const cleanFalsePositiveRate = cleanPassages ? cleanFalsePositives / cleanPassages : 0
+const multiErrorPassageRate = multiErrorPassages ? exactMultiErrorPassages / multiErrorPassages : null
+const fullCorpus = selected.length === writingEvalCases.length
 process.stdout.write('\n')
 console.log(JSON.stringify({
   cases: selected.length,
@@ -70,8 +91,15 @@ console.log(JSON.stringify({
   recall,
   exactPassageRate,
   cleanFalsePositiveRate,
+  multiErrorPassages,
+  multiErrorPassageRate,
+  unresolvedPassages,
+  fullCorpus,
+  releaseGateEvaluated: fullCorpus,
 }, null, 2))
 
-if (precision < 0.98 || recall < 0.90 || cleanFalsePositiveRate > 0.02) {
+if (precision < 0.98 || recall < 0.90 || cleanFalsePositiveRate > 0.02 ||
+    (multiErrorPassageRate !== null && multiErrorPassageRate < 0.90) ||
+    (fullCorpus && multiErrorPassages === 0)) {
   process.exitCode = 1
 }

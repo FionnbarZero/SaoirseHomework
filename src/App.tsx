@@ -1347,37 +1347,7 @@ function WritingView({
     setCheckingWriting(true)
     setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation…')
     try {
-      const proofreading = await proofreadWriting(submittedBody).catch(() => ({
-        available: false,
-        engine: 'reviewed offline rules',
-        matches: [],
-        reviewItems: [],
-        sentenceReviews: [],
-        intentAi: {
-          configured: false,
-          mode: 'off' as const,
-          model: null,
-          provider: 'OpenAI Responses API',
-          sendsOnlyCurrentPassage: true,
-          storesResponses: false,
-          available: false,
-          analyzed: false,
-          reviews: [],
-        },
-        ai: {
-          configured: false,
-          mode: 'off' as const,
-          model: null,
-          provider: 'OpenAI Responses API',
-          sendsOnlyCurrentPassage: true,
-          storesResponses: false,
-          available: false,
-          analyzed: false,
-          matches: [],
-          reviewItems: [],
-          counts: { total: 0, practice: 0, review: 0, ignored: 0 },
-        },
-      }))
+      const proofreading = await proofreadWriting(submittedBody)
       const checkedFindings = inspectWritingFindings(
         submittedBody,
         state.writingDictionary,
@@ -1398,10 +1368,7 @@ function WritingView({
       const sentenceReviews = proofreading.sentenceReviews ?? []
       const reviewSuggestions = [
         ...analysis.reviewItems,
-        ...proofreading.reviewItems.filter((item) => !sentenceReviews.some((review) => (
-          typeof item.start === 'number' && typeof item.end === 'number' &&
-          item.start >= review.start && item.end <= review.end
-        ))),
+        ...proofreading.reviewItems,
       ]
       const draft: Draft = {
         id: draftId,
@@ -1466,7 +1433,7 @@ function WritingView({
             : ` AI added ${proofreading.ai.counts.practice} high-confidence ${proofreading.ai.counts.practice === 1 ? 'correction' : 'corrections'} and sent ${proofreading.ai.counts.review} to Parent review.`
         : proofreading.ai.mode !== 'off' && proofreading.ai.error
           ? ' AI review was unavailable; the local checks still completed.'
-          : ''
+          : ' AI proofreading is off. Only supported local rules and parent-reviewed suggestions are available.'
       const meaningMessage = sentenceReviews.length > 0
         ? ` Start with ${sentenceReviews.length} sentence meaning ${sentenceReviews.length === 1 ? 'check' : 'checks'} before the correction game.`
         : proofreading.intentAi?.mode !== 'off' && proofreading.intentAi?.error
@@ -1477,7 +1444,7 @@ function WritingView({
       setRevisingFromDraftId(null)
       setShowReview(true)
     } catch (error) {
-      setProofreadingMessage(error instanceof Error ? error.message : 'The writing could not be checked.')
+      setProofreadingMessage(`The writing check did not finish. Your text is still in the editor; please check it again. ${error instanceof Error ? error.message : ''}`)
     } finally {
       setCheckingWriting(false)
     }
@@ -2742,9 +2709,9 @@ function ParentView({
                     {typeof item.start === 'number' && typeof item.end === 'number' && (
                       <button
                         className="row-button"
-                        disabled={!(reviewReplacements[item.id] ?? item.replacement ?? '').trim()}
+                        disabled={!(reviewReplacements[item.id] ?? item.replacement ?? '') && !(item.end! > item.start!)}
                         onClick={() => reviewWritingSuggestion(item.id, 'confirmed')}
-                      >Confirm correction</button>
+                      >{(reviewReplacements[item.id] ?? item.replacement ?? '') ? 'Confirm correction' : 'Confirm deletion'}</button>
                     )}
                     <button className="row-button" onClick={() => reviewWritingSuggestion(item.id, 'dismissed')}>Dismiss</button>
                   </span>

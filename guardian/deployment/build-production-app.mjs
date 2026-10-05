@@ -48,6 +48,9 @@ const serviceDependencies = [
 ]
 const serviceSourceFiles = [
   'server/activity-config.mjs',
+  'server/ai-proofreader.mjs',
+  'server/proofreader.mjs',
+  'server/writing-check.mjs',
   'server/database.mjs',
   'server/google-live.mjs',
   'server/google-proof.mjs',
@@ -60,6 +63,8 @@ const serviceSourceFiles = [
   'src/domain.ts',
   'src/spelling.ts',
   'src/writing.ts',
+  'src/writing-edits.ts',
+  'src/proofreading-limits.ts',
   'dist/index.html',
 ]
 
@@ -154,7 +159,7 @@ function copyServiceResources(destination, preparedRoot = '') {
   }
   cpSync(join(projectRoot, 'server'), serverDestination, { recursive: true })
   cpSync(join(projectRoot, 'dist'), join(destination, 'dist'), { recursive: true })
-  for (const filename of ['domain.ts', 'spelling.ts', 'writing.ts']) {
+  for (const filename of ['domain.ts', 'spelling.ts', 'writing.ts', 'writing-edits.ts', 'proofreading-limits.ts']) {
     cpSync(join(projectRoot, 'src', filename), join(sourceDestination, filename))
   }
   for (const dependency of serviceDependencies) {

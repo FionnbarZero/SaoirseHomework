@@ -84,10 +84,8 @@ test('sentence-start contractions and articles keep their capitalization', () =>
 test('high-confidence agreement and simple-list rules produce exact replacements', () => {
   const findings = inspectDraft('She helped themselves. I packed socks shoes and books.')
   assert.equal(findings.find((finding) => finding.ruleId === 'pronoun-agreement')?.replacement, 'herself')
-  assert.equal(
-    findings.find((finding) => finding.ruleId === 'simple-list-commas')?.replacement,
-    'I packed socks, shoes, and books',
-  )
+  assert.deepEqual(findings.filter((finding) => finding.ruleId === 'simple-list-commas')
+    .map((finding) => finding.replacement), [',', ','])
   assert.equal(inspectDraft('An book fell.')[0].replacement, 'A')
 })
 
@@ -285,7 +283,7 @@ test('the checker repairs the reported goldfish passage without trusting the fir
   }
   assert.equal(findings.filter((finding) => finding.ruleId === 'comma-splice').length, 2)
   assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.replacement, 'guy')
-  assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.practice.length, 0)
+  assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.practice.length, 3)
   assert.equal(findings.every((finding) => finding.correction.choices.includes(finding.correction.correctAnswer)), true)
 
   const progress = Object.fromEntries(findings.map((finding) => [finding.id, {

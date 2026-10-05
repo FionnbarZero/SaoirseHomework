@@ -1,5 +1,6 @@
 import type { Draft, Finding, FindingProgress, ProofreadingMatch, SentenceMeaningReview, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
 import { inspectSpellingFindings, spellingPracticeComplete } from './spelling.ts'
+import { atomicEdits, editsConflict, sameEdit } from './writing-edits.ts'
 
 export function writingActivityKey(weekId: string, day: string) {
   return `${weekId}:${day}`
@@ -79,6 +80,22 @@ function practiceSet(id: string, prompt: string, explanation: string, rows: Prac
 }
 
 const RULE_PRACTICE: Record<string, WritingTrial[]> = {
+  'every-day-frequency': practiceSet(
+    'every-day-frequency',
+    'Choose the sentence that correctly means “each day.”',
+    '“Every day” is two words when it means each day. “Everyday” describes something ordinary, such as everyday clothes.',
+    [
+      ['I walk home every day.', 'I walk home everyday.', 'I walk home every days.'],
+      ['She goes to school every day.', 'She goes to school everyday.', 'She goes to school every days.'],
+      ['We read every day.', 'We read everyday.', 'We read every days.'],
+      ['He practices every day.', 'He practices everyday.', 'He practices every days.'],
+      ['They play outside every day.', 'They play outside everyday.', 'They play outside every days.'],
+      ['I feed the cat every day.', 'I feed the cat everyday.', 'I feed the cat every days.'],
+      ['We go to the park every day.', 'We go to the park everyday.', 'We go to the park every days.'],
+      ['She writes every day.', 'She writes everyday.', 'She writes every days.'],
+      ['He walks to work every day.', 'He walks to work everyday.', 'He walks to work every days.'],
+    ],
+  ),
   'tense-yesterday': practiceSet(
     'tense-yesterday',
     'Choose the sentence that stays in the past tense.',
@@ -655,9 +672,7 @@ function applyTextEdits(body: string, edits: WritingEdit[], base = 0) {
 }
 
 function editsOverlap(left: WritingEdit, right: WritingEdit) {
-  if (left.start === left.end) return left.start >= right.start && left.start <= right.end
-  if (right.start === right.end) return right.start >= left.start && right.start <= left.end
-  return left.start < right.end && left.end > right.start
+  return editsConflict(left, right)
 }
 
 function inputEdits(input: FindingInput | Finding): WritingEdit[] {
@@ -694,7 +709,7 @@ export function isolateWritingCorrectionTrials(body: string, findings: Finding[]
       ...finding,
       correction: {
         ...finding.correction,
-        prompt: 'Fix the highlighted part. Everything else in this sentence is already correct.',
+        prompt: 'Fix the highlighted part. Other detected errors have been corrected for this question.',
         choices: rotateChoices([scaffolded, corrected], finding.start),
         correctAnswer: corrected,
         focus: {
@@ -834,10 +849,12 @@ function proofreadingFinding(
   const mappedRule = proofreadingPracticeRule(match, replacement)
   const reviewedPractice = mappedRule ? RULE_PRACTICE[mappedRule] : null
   const practice = reviewedPractice
-    ? Array.from({ length: Math.min(2, reviewedPractice.length) }, (_, index) => (
-      reviewedPractice[((sameRuleIndex * 2) + index) % reviewedPractice.length]
+    ? Array.from({ length: Math.min(3, reviewedPractice.length) }, (_, index) => (
+      reviewedPractice[((sameRuleIndex * 3) + index) % reviewedPractice.length]
     ))
-    : []
+    : category === 'Spelling' && /^[A-Za-z]+$/.test(original) && /^[A-Za-z]+$/.test(replacement)
+      ? dynamicSpellingPractice(match, original, replacement)
+      : []
   return {
     ...input,
     id: `${ruleId}-${match.offset}`,
@@ -905,6 +922,16 @@ export function inspectDraft(
   if (!body.trim()) return findings
 
   let match: RegExpExecArray | null
+
+  const dailyJourney = /\b(?:walk|walks|walked|go|goes|went)\s+(?:to\s+(?:school|work|the park)|home)\s+(everyday)(?=[.!?\n]|$)/gi
+  while ((match = dailyJourney.exec(body)) !== null) {
+    const start = match.index + match[0].length - match[1].length
+    addFinding(body, findings, {
+      ruleId: 'every-day-frequency', category: 'Grammar', start, end: start + match[1].length,
+      replacement: 'every day', message: 'Use two words when you mean “each day.”',
+      suggestion: '“Every day” means each day; “everyday” describes something ordinary.',
+    })
+  }
 
   const unexpectedCapitalizedVerb = /\b(I|you|we|they|he|she|it)\s+(Walked|Went|Bought|Played|Jumped|Looked|Saw|Got|Was|Were|Said|Asked|Made|Found|Read|Wrote|Felt|Ran|Cried|Laughed|Wanted|Visited|Opened|Closed|Finished|Started|Had|Did)\b/g
   while ((match = unexpectedCapitalizedVerb.exec(body)) !== null) {
@@ -1401,14 +1428,30 @@ export function inspectDraft(
 
   const listPattern = /\b(I (?:packed|brought|saw|like)) ([a-z]+) ([a-z]+) and ([a-z]+)\b/gi
   while ((match = listPattern.exec(body)) !== null) {
-    const start = match.index
-    const replacement = `${match[1]} ${match[2]}, ${match[3]}, and ${match[4]}`
-    addFinding(body, findings, {
-      ruleId: 'simple-list-commas', category: 'Punctuation', start, end: start + match[0].length,
-      replacement, message: 'A simple list of three items needs commas.',
-      suggestion: 'Separate the three listed items with commas.',
-      wrongReplacement: `${match[1]}, ${match[2]} ${match[3]} and ${match[4]}`,
-    })
+    const firstEnd = match.index + match[1].length + 1 + match[2].length
+    for (const start of [firstEnd, firstEnd + 1 + match[3].length]) {
+      addFinding(body, findings, {
+        ruleId: 'simple-list-commas', category: 'Punctuation', start, end: start,
+        replacement: ',', message: 'A simple list of three items needs commas.',
+        suggestion: 'Separate the three listed items with commas.',
+      })
+    }
+  }
+
+  const listNames = [...new Set([...REVIEWED_STORY_NAMES, ...dictionary.knownNames])]
+    .filter((name) => /^[A-Za-z]+$/.test(name)).map(escapeRegex).join('|')
+  if (listNames) {
+    const companions = new RegExp(`\\bwith (${listNames}) (${listNames}) and (${listNames})\\b`, 'gi')
+    while ((match = companions.exec(body)) !== null) {
+      const firstEnd = match.index + 'with '.length + match[1].length
+      for (const start of [firstEnd, firstEnd + 1 + match[2].length]) {
+        addFinding(body, findings, {
+          ruleId: 'simple-list-commas', category: 'Punctuation', start, end: start, replacement: ',',
+          message: 'Separate the three names in this list with commas.',
+          suggestion: 'Use a comma between each name in a list of three people.',
+        })
+      }
+    }
   }
 
   const fusedSentence = /\b(?:a|an|the)\s+[A-Za-z]+(\s+)(it)(?=\s+(?:is|was|has|had|dies|died|runs|ran|gets|got|becomes|became|sleeps|slept|looks|looked)\b)/gi
@@ -1601,16 +1644,33 @@ export function inspectWritingFindings(
   dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
   proofreadingMatches: ProofreadingMatch[] = [],
 ) {
-  const deterministicFindings = [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
+  const localFindings = inspectDraft(body, dictionary)
+  const spellingFindings = inspectSpellingFindings(body, dictionary).map((finding) => {
+    const capital = localFindings.find((other) => other.category === 'Capitalization' &&
+      other.start === finding.start && other.end === finding.start + 1)
+    if (!capital) return finding
+    localFindings.splice(localFindings.indexOf(capital), 1)
+    return { ...finding, replacement: finding.replacement[0].toUpperCase() + finding.replacement.slice(1),
+      message: `${finding.message} Begin the sentence with a capital letter.` }
+  })
+  const deterministicFindings = [...localFindings, ...spellingFindings]
   const findings: Finding[] = []
   const ruleCounts = new Map<string, number>()
-  for (const match of proofreadingMatches) {
+  const atomicMatches = proofreadingMatches.flatMap((match) => {
+    if (match.offset < 0 || match.length < 0 || match.offset + match.length > body.length) return []
+    if (match.replacements.length !== 1) return [match]
+    return atomicEdits(body.slice(match.offset, match.offset + match.length), match.replacements[0], match.offset)
+      .map((edit) => ({ ...match, offset: edit.start, length: edit.end - edit.start, replacements: [edit.replacement] }))
+  })
+  for (const match of atomicMatches) {
     if (match.verification !== 'verified') continue
     if (findings.some((finding) => findingOverlapsMatch(finding, match))) continue
     if (match.offset < 0 || match.length < 0 || match.offset + match.length > body.length) continue
     const count = ruleCounts.get(match.ruleId) ?? 0
     const finding = proofreadingFinding(body, match, count)
     if (!finding || findings.some((item) => finding.start < item.end && finding.end > item.start)) continue
+    const reviewed = deterministicFindings.find((local) => sameEdit(local, finding))
+    if (reviewed) finding.practice = reviewed.practice
     findings.push(finding)
     ruleCounts.set(match.ruleId, count + 1)
   }

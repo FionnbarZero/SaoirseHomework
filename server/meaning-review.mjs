@@ -1,4 +1,5 @@
 import { sentenceWriting } from './ai-proofreader.mjs'
+import { editsConflict } from '../src/writing-edits.ts'
 
 function categoryForCandidate(match) {
   const rule = String(match.ruleId ?? '').toUpperCase()
@@ -10,9 +11,10 @@ function categoryForCandidate(match) {
 }
 
 function overlaps(left, right) {
-  if (left.offset === left.offset + left.length) return left.offset >= right.offset && left.offset <= right.offset + right.length
-  if (right.offset === right.offset + right.length) return right.offset >= left.offset && right.offset <= left.offset + left.length
-  return left.offset < right.offset + right.length && left.offset + left.length > right.offset
+  return editsConflict(
+    { start: left.offset, end: left.offset + left.length },
+    { start: right.offset, end: right.offset + right.length },
+  )
 }
 
 function applyEdits(sentence, edits) {

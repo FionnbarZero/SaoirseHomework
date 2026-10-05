@@ -159,14 +159,12 @@ export function inspectSpellingFindings(
       .map(normalizeWord),
   )
   const findings: Finding[] = []
-  const reviewed = new Set<string>()
   for (const match of body.matchAll(/[A-Za-z]+(?:['’][A-Za-z]+)?/g)) {
     const actual = match[0]
     const word = normalizeWord(actual)
     const rawCorrection = NORMALIZED_MISSPELLINGS.get(word)
     const start = match.index ?? 0
-    if (!rawCorrection || protectedWords.has(word) || reviewed.has(word)) continue
-    reviewed.add(word)
+    if (!rawCorrection || protectedWords.has(word)) continue
     const replacement = preserveCase(actual, rawCorrection)
     const bounds = sentenceBounds(body, start)
     const original = body.slice(bounds.start, bounds.end)

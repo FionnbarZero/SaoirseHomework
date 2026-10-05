@@ -1,3 +1,5 @@
+import { LOCAL_CHECK_TIMEOUT_MS } from '../src/proofreading-limits.ts'
+
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:8081/v2/check'
 const MAX_TEXT_LENGTH = 20_000
 const MAX_MATCHES = 100
@@ -12,7 +14,7 @@ function localEndpoint(value) {
 
 function cleanReplacement(value) {
   const replacement = String(value ?? '').replace(/[\r\n\t]/g, ' ').slice(0, 160)
-  return replacement.trim() ? replacement : ''
+  return replacement
 }
 
 export function normalizeProofreadingMatches(value, text) {
@@ -23,10 +25,11 @@ export function normalizeProofreadingMatches(value, text) {
     const matchLength = Math.floor(Number(item?.length))
     const replacements = [...new Set(
       (Array.isArray(item?.replacements) ? item.replacements : [])
+        .filter((replacement) => typeof replacement === 'string' || typeof replacement?.value === 'string')
         .map((replacement) => cleanReplacement(
           typeof replacement === 'string' ? replacement : replacement?.value,
         ))
-        .filter(Boolean),
+        .filter((replacement) => replacement !== '' || Number(item?.length) > 0),
     )].slice(0, 8)
     if (!Number.isFinite(offset) || !Number.isFinite(matchLength) || offset < 0 || matchLength < 0) return []
     if (offset + matchLength > length || replacements.length === 0) return []
@@ -102,7 +105,7 @@ export function proofreadingReviewItems(text, matches) {
 export function createProofreader(options = {}) {
   const endpoint = localEndpoint(options.endpoint ?? process.env.HOMEWORK_LANGUAGETOOL_URL)
   const fetchImpl = options.fetchImpl ?? fetch
-  const timeoutMs = Math.max(500, Number(options.timeoutMs) || 8_000)
+  const timeoutMs = Math.max(500, Number(options.timeoutMs) || LOCAL_CHECK_TIMEOUT_MS)
 
   return {
     endpoint,

@@ -1,3 +1,4 @@
+import { WRITING_CHECK_TIMEOUT_MS, MEANING_CHECK_TIMEOUT_MS } from './proofreading-limits.ts'
 import type {
   ActivityConfiguration,
   ActiveTimer,
@@ -394,7 +395,7 @@ export function proofreadWriting(text: string) {
   return request<ProofreadingResponse>('/api/proofread', {
     method: 'POST',
     body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(WRITING_CHECK_TIMEOUT_MS),
   })
 }
 
@@ -411,7 +412,7 @@ export function retrySentenceMeaning(
       attempt: review.attempt + 1,
       rejectedOptions: review.rejectedOptions,
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(MEANING_CHECK_TIMEOUT_MS),
   })
 }
 

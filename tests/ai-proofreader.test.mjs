@@ -56,8 +56,8 @@ test('AI findings must quote an exact occurrence from the submitted passage', ()
   ], text, segments)
 
   assert.equal(findings.length, 1)
-  assert.equal(text.slice(findings[0].start, findings[0].end), 'She walk')
-  assert.equal(findings[0].start, text.lastIndexOf('She walk'))
+  assert.equal(text.slice(findings[0].start, findings[0].end), 'walk')
+  assert.equal(findings[0].start, text.lastIndexOf('walk'))
   assert.equal(findings[0].issueCode, 'subject-verb')
 })
 
@@ -113,9 +113,10 @@ test('guided practice uses independent detection and verification before exposin
     'child_writing_verification',
   ])
   assert.equal(requests.every((request) => request.body.text.format.strict === true), true)
-  assert.deepEqual(result.counts, { total: 2, practice: 1, review: 1, ignored: 0 })
+  assert.deepEqual(result.counts, { total: 3, practice: 2, review: 1, ignored: 0 })
   assert.equal(result.matches[0].offset, 0)
-  assert.equal(result.matches[0].replacements[0], 'She walks')
+  assert.equal(result.matches[0].replacements[0], 'She')
+  assert.equal(result.matches[1].replacements[0], 'walks')
   assert.equal(result.matches[0].verification, 'verified')
   assert.equal(result.reviewItems[0].source, 'ai')
   assert.equal(result.reviewItems[0].confidence, 'medium')

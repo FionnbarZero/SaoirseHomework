@@ -11,10 +11,11 @@ function nthIndexOf(text, search, occurrence = 1) {
 
 function example(id, text, corrections = []) {
   const edits = corrections.map((correction) => {
-    const start = nthIndexOf(text, correction.original, correction.occurrence)
+    const anchor = nthIndexOf(text, correction.original, correction.occurrence)
+    const start = correction.operation === 'insert_after' ? anchor + correction.original.length : anchor
     return {
       start,
-      end: start + correction.original.length,
+      end: correction.operation === 'insert_after' ? start : start + correction.original.length,
       replacement: correction.replacement,
     }
   })
@@ -146,4 +147,51 @@ const cleanControls = [
 ]
 for (const [index, text] of cleanControls.entries()) cases.push(example(`clean-${index + 1}`, text))
 
-export const writingEvalCases = cases
+export const multiErrorWritingCases = []
+for (const [subject, verb, correctVerb] of [['she', 'walk', 'walks'], ['he', 'play', 'plays'], ['they', 'plays', 'play']]) {
+  for (const [wrong, right] of [['freind', 'friend'], ['thier', 'their'], ['teh', 'the'], ['wierd', 'weird']]) {
+    const tail = wrong === 'freind' ? 'my freind' : wrong === 'wierd' ? 'my wierd friend' : `${wrong} friend`
+    const text = `${subject} ${verb} with ${tail}`
+    multiErrorWritingCases.push(example(`multi-${subject}-${wrong}`, text, [
+      { original: subject[0], replacement: subject[0].toUpperCase() },
+      { original: verb, replacement: correctVerb },
+      { original: wrong, replacement: right },
+      { original: text, operation: 'insert_after', replacement: '.' },
+    ]))
+  }
+}
+multiErrorWritingCases.push(
+  example('multi-repeated-spelling', 'she walk with a freind and another freind', [
+    { original: 's', replacement: 'S' }, { original: 'walk', replacement: 'walks' },
+    { original: 'freind', replacement: 'friend' }, { original: 'freind', occurrence: 2, replacement: 'friend' },
+    { original: 'freind', occurrence: 2, operation: 'insert_after', replacement: '.' },
+  ]),
+  example('multi-adjacent-capital-period', 'she walk home with mike', [
+    { original: 's', replacement: 'S' }, { original: 'walk', replacement: 'walks' },
+    { original: 'mike', replacement: 'Mike' }, { original: 'mike', operation: 'insert_after', replacement: '.' },
+  ]),
+  example('multi-lowercase-list', 'i packed socks shoes and books', [
+    { original: 'i', replacement: 'I' },
+    { original: 'socks', operation: 'insert_after', replacement: ',' },
+    { original: 'shoes', operation: 'insert_after', replacement: ',' },
+    { original: 'books', operation: 'insert_after', replacement: '.' },
+  ]),
+  example('multi-frequency', 'she walk to school everyday', [
+    { original: 's', replacement: 'S' }, { original: 'walk', replacement: 'walks' },
+    { original: 'everyday', replacement: 'every day' }, { original: 'everyday', operation: 'insert_after', replacement: '.' },
+  ]),
+  example('multi-capital-spelling', 'freind saw a freind', [
+    { original: 'freind', replacement: 'Friend' }, { original: 'freind', occurrence: 2, replacement: 'friend' },
+    { original: 'freind', occurrence: 2, operation: 'insert_after', replacement: '.' },
+  ]),
+  example('multi-reading-response', 'harry and ron walks to qidch practise with ann billy and mike', [
+    { original: 'harry', replacement: 'Harry' }, { original: 'ron', replacement: 'Ron' },
+    { original: 'walks', replacement: 'walk' }, { original: 'qidch', replacement: 'Quidditch' },
+    { original: 'practise', replacement: 'practice' }, { original: 'ann', replacement: 'Ann' },
+    { original: 'ann', operation: 'insert_after', replacement: ',' },
+    { original: 'billy', replacement: 'Billy' }, { original: 'billy', operation: 'insert_after', replacement: ',' },
+    { original: 'mike', replacement: 'Mike' }, { original: 'mike', operation: 'insert_after', replacement: '.' },
+  ]),
+)
+
+export const writingEvalCases = [...cases, ...multiErrorWritingCases]

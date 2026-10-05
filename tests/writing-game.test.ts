@@ -189,7 +189,7 @@ test('a multi-error sentence isolates one yellow error while every other part is
   }))
   const findings = inspectWritingFindings(body, undefined, matches)
   const first = findings.find((finding) => finding.replacement === 'Harry')
-  const list = findings.find((finding) => finding.replacement === 'Ann, Billy, and Mike.')
+  const list = findings.find((finding) => finding.replacement === 'Ann')
 
   assert.ok(first?.correction.focus)
   assert.equal(first.correction.focus.text, 'harry and Ron walk to Quidditch practice with Ann, Billy, and Mike.')
@@ -198,10 +198,10 @@ test('a multi-error sentence isolates one yellow error while every other part is
     'harry',
   )
   assert.ok(list?.correction.focus)
-  assert.equal(list.correction.focus.text, 'Harry and Ron walk to Quidditch practice with ann billy and mike')
+  assert.equal(list.correction.focus.text, 'Harry and Ron walk to Quidditch practice with ann, Billy, and Mike.')
   assert.equal(
     list.correction.focus.text.slice(list.correction.focus.start, list.correction.focus.end),
-    'ann billy and mike',
+    'ann',
   )
 })
 

@@ -14,6 +14,7 @@ const serviceDependencies = [
   'png-js', 'restructure', 'tiny-inflate', 'tslib', 'unicode-properties', 'unicode-trie',
 ]
 const serviceFiles = [
+  'ai-proofreader.mjs', 'proofreader.mjs', 'writing-check.mjs',
   'activity-config.mjs', 'database.mjs', 'google-live.mjs', 'google-proof.mjs',
   'index.mjs', 'keychain.mjs', 'lifecycle-auth.mjs', 'parent-auth.mjs',
   'runtime-security.mjs', 'user-session-broker.mjs',
@@ -37,7 +38,7 @@ test('production builder assembles an unsigned, non-production SMAppService enfo
     }
     writeFileSync(join(serviceResources, 'dist', 'index.html'), '<!doctype html><title>test</title>\n')
     mkdirSync(join(serviceResources, 'src'), { recursive: true })
-    for (const filename of ['domain.ts', 'spelling.ts', 'writing.ts']) {
+    for (const filename of ['domain.ts', 'spelling.ts', 'writing.ts', 'writing-edits.ts', 'proofreading-limits.ts']) {
       writeFileSync(join(serviceResources, 'src', filename), 'export {}\n')
     }
     for (const dependency of serviceDependencies) {

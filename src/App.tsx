@@ -2094,6 +2094,7 @@ function SessionView({
   const percent = displayTotal > 0 ? Math.min(100, (elapsed / displayTotal) * 100) : 0
   const done = timer.status === 'completed'
   const managed = timer.managedChromeRequired === true
+  const inApp = timer.inAppBrowserRequired === true
   const selectingReward = timer.kind === 'reward' && !timer.rewardPlaybackStarted && !done
   const statusLabel = done
     ? 'SESSION COMPLETE'
@@ -2103,6 +2104,8 @@ function SessionView({
         ? 'PLAYBACK TIME IS COUNTING'
         : timer.kind === 'reward'
           ? 'PLAYBACK PAUSED'
+    : inApp && timer.running
+      ? 'AUTHENTICATED IN-APP SESSION'
     : timer.waitingForVerification
       ? 'WAITING FOR CLEVER LOGIN'
       : timer.running
@@ -2116,6 +2119,8 @@ function SessionView({
       ? 'Managed Chrome opened a separate YouTube window. Start a video before the selection window ends to use this credit.'
       : timer.kind === 'reward'
         ? 'Only visible video playback counts. Pauses, buffering, ads, and time outside the YouTube window do not use your credit.'
+    : inApp
+      ? 'Ninja Dojo is authenticated to this local homework session. Time counts only while this homework tab is visible and focused.'
     : timer.waitingForVerification
       ? 'Sign in through Clever. The timer begins only after managed Chrome verifies Level Learning.'
       : managed
@@ -2123,7 +2128,7 @@ function SessionView({
         : 'Keep this approved activity in front. Time pauses whenever you leave.'
   return (
     <section className="session-page">
-      <div className="session-card">
+      <div className={`session-card ${inApp ? 'in-app-session-card' : ''}`}>
         <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {statusLabel}</div>
         <div className="timer-ring" style={{ '--progress': `${percent * 3.6}deg` } as React.CSSProperties}>
           <div><strong>{timer.waitingForVerification ? '—:—' : formatTimer(selectingReward ? selectionRemaining : displayRemaining)}</strong><small>{timer.waitingForVerification ? 'login gate' : selectingReward ? 'to choose' : displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
@@ -2132,7 +2137,19 @@ function SessionView({
         <h2>{timer.label}</h2>
         {timer.phaseCount && timer.phaseCount > 1 && <div className="phase-pill">STEP {(timer.phaseIndex ?? 0) + 1} OF {timer.phaseCount} · {timer.phaseLabel}</div>}
         <p className="session-copy">{sessionCopy}</p>
-        {!done && timer.launchUrl && timer.kind !== 'reward' && (
+        {!done && inApp && timer.launchUrl && (
+          <div className="in-app-activity-frame">
+            <div><ShieldCheck size={16} /><span>Authenticated local session</span></div>
+            <iframe
+              title={`${timer.phaseLabel ?? timer.label} activity`}
+              src={timer.launchUrl}
+              allow="microphone"
+              referrerPolicy="strict-origin-when-cross-origin"
+              sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+            />
+          </div>
+        )}
+        {!done && !inApp && timer.launchUrl && timer.kind !== 'reward' && (
           <a className="row-button session-launch" href={timer.launchUrl} target="_blank" rel="noreferrer">
             <Play size={16} fill="currentColor" /> Open {timer.phaseLabel ?? timer.label}
           </a>
@@ -2145,7 +2162,7 @@ function SessionView({
         ) : (
           <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> {timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : 'Server verified · checks focus every five seconds'}</div>
+        <div className="focus-note"><ShieldCheck size={17} /> {timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'HttpOnly session capability · checks app focus every five seconds' : 'Server verified · checks focus every five seconds'}</div>
       </div>
     </section>
   )

@@ -754,6 +754,55 @@ test('paused and hidden intervals earn no session credit', () => {
   store.close()
 })
 
+test('in-app browser sessions require their one-session authentication capability', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const session = store.startSession({
+    kind: 'required',
+    activityId: 'ninja-dojo',
+    sessionKey: 'Monday',
+    label: 'Ninja Dojo',
+    targetSeconds: 10,
+    plan: {
+      phases: [{
+        id: 'learning-hub',
+        label: '5th Grade Learning Hub',
+        targetSeconds: 10,
+        launchUrl: 'https://ninja.example/learn',
+        allowedOrigins: ['https://ninja.example'],
+        creditOrigins: ['https://ninja.example'],
+        verification: 'in-app-browser',
+      }],
+    },
+  })
+
+  assert.equal(session.status, 'paused')
+  assert.equal(session.inAppBrowserRequired, true)
+  assert.equal(session.managedChromeRequired, false)
+  assert.equal(typeof session.inAppAuthenticationToken, 'string')
+  assert.equal(store.loadState().activeTimer.inAppAuthenticationToken, undefined)
+  assert.throws(
+    () => store.heartbeatSession(session.id, true),
+    (error) => error.code === 'in_app_session_authentication_required',
+  )
+  assert.throws(
+    () => store.heartbeatSession(session.id, true, {
+      source: 'in-app-browser',
+      sessionToken: 'wrong-token',
+    }),
+    (error) => error.code === 'in_app_session_authentication_required',
+  )
+
+  const context = {
+    source: 'in-app-browser',
+    sessionToken: session.inAppAuthenticationToken,
+  }
+  assert.equal(store.heartbeatSession(session.id, true, context).status, 'active')
+  clock.advance(5_000)
+  assert.equal(store.heartbeatSession(session.id, true, context).creditedSeconds, 5)
+  store.close()
+})
+
 test('repeated completion heartbeats cannot duplicate optional credit or rewards', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', clock.options())

@@ -46,6 +46,7 @@ const parentAuthorization = createParentAuthorization()
 const proofreader = createProofreader()
 const aiProofreader = createAiProofreader()
 const parentSessionCookie = 'fionnbar_parent_session'
+const inAppSessionCookie = 'fionnbar_in_app_session'
 if (requireRootOwnership) {
   enforceRootOwnedRuntime({ dataDirectory, keyFile: lifecycleKeyFile, serviceRoot: projectRoot })
 }
@@ -185,6 +186,22 @@ function expiredParentSessionHeader() {
   return `${parentSessionCookie}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0${privateAccess.enabled ? '; Secure' : ''}`
 }
 
+function inAppSessionHeader(sessionId, token) {
+  const value = `${String(sessionId)}.${String(token)}`
+  return `${inAppSessionCookie}=${encodeURIComponent(value)}; HttpOnly; SameSite=Strict; Path=/api/sessions; Max-Age=7200${privateAccess.enabled ? '; Secure' : ''}`
+}
+
+function expiredInAppSessionHeader() {
+  return `${inAppSessionCookie}=; HttpOnly; SameSite=Strict; Path=/api/sessions; Max-Age=0${privateAccess.enabled ? '; Secure' : ''}`
+}
+
+function inAppSessionToken(request, sessionId) {
+  const value = requestCookie(request, inAppSessionCookie)
+  const separator = value.indexOf('.')
+  if (separator < 0 || value.slice(0, separator) !== String(sessionId)) return ''
+  return value.slice(separator + 1)
+}
+
 function bearerToken(request) {
   const value = String(request.headers.authorization ?? '')
   return value.startsWith('Bearer ') ? value.slice(7) : ''
@@ -301,8 +318,18 @@ function resolveSessionRequest(body) {
     if (!activity || !days.has(body.sessionKey)) {
       throw new Error('Unsupported required activity session')
     }
-    const plan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
-    if (!store.getChromeExtensionStatus().connected) {
+    const configuredPlan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
+    const inAppNinjaPreview = securityMode === 'preview' && body.activityId === 'ninja-dojo'
+    const plan = inAppNinjaPreview
+      ? {
+          ...configuredPlan,
+          phases: configuredPlan.phases.map((phase) => ({
+            ...phase,
+            verification: 'in-app-browser',
+          })),
+        }
+      : configuredPlan
+    if (!inAppNinjaPreview && !store.getChromeExtensionStatus().connected) {
       const error = new Error(`Managed Chrome must be connected before ${activity.label} can start`)
       error.status = 409
       error.code = 'managed_chrome_required'
@@ -981,9 +1008,12 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === '/api/sessions' && request.method === 'POST') {
       const body = await readJson(request)
-      const session = store.startSession(resolveSessionRequest(body))
+      const started = store.startSession(resolveSessionRequest(body))
+      const { inAppAuthenticationToken, ...session } = started
       const state = store.loadState()
-      return sendJson(response, 201, { session, state, meta: store.info() })
+      return sendJson(response, 201, { session, state, meta: store.info() }, inAppAuthenticationToken
+        ? { 'Set-Cookie': inAppSessionHeader(session.id, inAppAuthenticationToken) }
+        : {})
     }
 
     if (url.pathname === '/api/game-sessions' && request.method === 'POST') {
@@ -1059,20 +1089,24 @@ const server = createServer(async (request, response) => {
     const heartbeatMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/heartbeat$/)
     if (heartbeatMatch && request.method === 'POST') {
       const body = await readJson(request)
-      store.heartbeatSession(decodeURIComponent(heartbeatMatch[1]), body.active === true)
+      const sessionId = decodeURIComponent(heartbeatMatch[1])
+      const sessionToken = inAppSessionToken(request, sessionId)
+      store.heartbeatSession(sessionId, body.active === true, sessionToken
+        ? { source: 'in-app-browser', sessionToken }
+        : {})
       return sendJson(response, 200, sessionResponse())
     }
 
     const cancelMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/cancel$/)
     if (cancelMatch && request.method === 'POST') {
       store.cancelSession(decodeURIComponent(cancelMatch[1]))
-      return sendJson(response, 200, sessionResponse())
+      return sendJson(response, 200, sessionResponse(), { 'Set-Cookie': expiredInAppSessionHeader() })
     }
 
     const acknowledgeMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/acknowledge$/)
     if (acknowledgeMatch && request.method === 'POST') {
       store.acknowledgeSession(decodeURIComponent(acknowledgeMatch[1]))
-      return sendJson(response, 200, sessionResponse())
+      return sendJson(response, 200, sessionResponse(), { 'Set-Cookie': expiredInAppSessionHeader() })
     }
 
     if (url.pathname === '/api/completions' && request.method === 'POST') {

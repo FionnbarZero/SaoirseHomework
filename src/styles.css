@@ -423,6 +423,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .session-error span { flex: 1; }
 .session-error button { border: 0; padding: 3px; display: grid; place-items: center; color: inherit; background: transparent; cursor: pointer; }
 .session-card { width: min(570px, 100%); border-radius: 26px; padding: 35px; background: var(--paper); text-align: center; box-shadow: var(--shadow); }
+.session-card.in-app-session-card { width: min(1120px, 100%); }
 .session-status { display: inline-flex; align-items: center; gap: 7px; color: #75807c; font-size: 9px; font-weight: 900; letter-spacing: .13em; }
 .session-status > span { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); }
 .session-status > span.pulse { background: #56a086; box-shadow: 0 0 0 0 rgba(86,160,134,.45); animation: pulse 1.7s infinite; }
@@ -435,6 +436,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .session-copy { max-width: 430px; margin: 0 auto; color: #7f8682; font-size: 12px; line-height: 1.6; }
 .phase-pill { width: fit-content; margin: 12px auto; padding: 6px 10px; border-radius: 999px; color: #336d64; background: #e1eeea; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
 .session-launch { width: fit-content; margin: 21px auto 0; text-decoration: none; }
+.in-app-activity-frame { margin-top: 24px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #fff; text-align: left; }
+.in-app-activity-frame > div { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #edf5f1; color: #34736a; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.in-app-activity-frame iframe { display: block; width: 100%; height: min(650px, 64vh); border: 0; background: #fff; }
 .session-actions { margin-top: 23px; display: flex; justify-content: center; align-items: center; gap: 18px; }
 .session-card > .primary-button { margin-top: 22px; }
 .focus-note { margin-top: 26px; padding-top: 17px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 7px; color: #929793; font-size: 9px; }

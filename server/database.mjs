@@ -1237,15 +1237,15 @@ export function createStore(filename, options = {}) {
     const phases = input.phases.map((phase, index) => {
       const phaseSeconds = Math.floor(Number(phase.targetSeconds))
       if (!Number.isFinite(phaseSeconds) || phaseSeconds < 0) throw new Error('Session phase duration is invalid')
-      const verification = ['managed-chrome', 'youtube-playback'].includes(phase.verification)
+      const verification = ['managed-chrome', 'youtube-playback', 'in-app-browser'].includes(phase.verification)
         ? phase.verification
         : 'browser-focus'
       const allowedOrigins = [...new Set(Array.isArray(phase.allowedOrigins) ? phase.allowedOrigins.map(String) : [])]
       const creditOrigins = [...new Set(Array.isArray(phase.creditOrigins) ? phase.creditOrigins.map(String) : [])]
       const advanceOrigins = [...new Set(Array.isArray(phase.advanceOrigins) ? phase.advanceOrigins.map(String) : [])]
       for (const origin of [...allowedOrigins, ...creditOrigins, ...advanceOrigins]) normalizeOrigin(origin)
-      if (['managed-chrome', 'youtube-playback'].includes(verification) && !allowedOrigins.length) {
-        throw new Error('Managed Chrome phases need at least one approved origin')
+      if (['managed-chrome', 'youtube-playback', 'in-app-browser'].includes(verification) && !allowedOrigins.length) {
+        throw new Error('Verified browser phases need at least one approved origin')
       }
       if (creditOrigins.some((origin) => !allowedOrigins.includes(origin)) ||
           advanceOrigins.some((origin) => !allowedOrigins.includes(origin))) {
@@ -1313,6 +1313,7 @@ export function createStore(filename, options = {}) {
       launchUrl: phase.launchUrl || undefined,
       allowedOrigins: phase.allowedOrigins,
       managedChromeRequired: ['managed-chrome', 'youtube-playback'].includes(phase.verification),
+      inAppBrowserRequired: phase.verification === 'in-app-browser',
       waitingForVerification: Number(phase.targetSeconds) === 0,
       navigateOnPhaseStart: phase.navigateOnStart === true,
       rewardSelectionDeadlineAt: row.selection_deadline_at ?? undefined,
@@ -2265,6 +2266,8 @@ export function createStore(filename, options = {}) {
     const weekId = ensureCurrentWeek().weekId
     const plan = normalizeSessionPlan(input.plan, targetSeconds, String(input.label))
     const managedChrome = ['managed-chrome', 'youtube-playback'].includes(plan.phases[0].verification)
+    const inAppBrowser = plan.phases[0].verification === 'in-app-browser'
+    const externallyVerified = managedChrome || inAppBrowser
     const selectionSeconds = input.kind === 'reward'
       ? Math.floor(Number(input.selectionSeconds ?? 120))
       : null
@@ -2275,8 +2278,8 @@ export function createStore(filename, options = {}) {
     insertSession.run(
       id, makeId(), input.kind, String(input.activityId), input.sessionKey ? String(input.sessionKey) : null,
       weekId, String(input.label), JSON.stringify(plan), 0, 0, targetSeconds * 1000, 0,
-      managedChrome ? 'paused' : 'active', managedChrome ? null : runtimeId,
-      managedChrome ? null : monotonicNow(), now, now, now,
+      externallyVerified ? 'paused' : 'active', externallyVerified ? null : runtimeId,
+      externallyVerified ? null : monotonicNow(), now, now, now,
     )
     if (selectionSeconds !== null) {
       const selectionDeadlineAt = asIso(new Date(new Date(now).getTime() + selectionSeconds * 1000))
@@ -2293,7 +2296,11 @@ export function createStore(filename, options = {}) {
       phases: plan.phases.map((phase) => phase.id),
       verification: plan.phases[0].verification,
     })
-    return sessionFromRow(getSessionRow(id))
+    const row = getSessionRow(id)
+    return {
+      ...sessionFromRow(row),
+      ...(inAppBrowser ? { inAppAuthenticationToken: row.nonce } : {}),
+    }
   }
 
   function applySessionCompletion(row, completedAt) {
@@ -2354,7 +2361,17 @@ export function createStore(filename, options = {}) {
     let phaseIndex = Math.min(plan.phases.length - 1, Math.max(0, Number(row.phase_index) || 0))
     let phase = plan.phases[phaseIndex]
     const managedChrome = ['managed-chrome', 'youtube-playback'].includes(phase.verification)
+    const inAppBrowser = phase.verification === 'in-app-browser'
     if (managedChrome && context.source !== 'managed-chrome') return sessionFromRow(row)
+    if (inAppBrowser) {
+      const expectedToken = Buffer.from(String(row.nonce))
+      const suppliedToken = Buffer.from(String(context.sessionToken ?? ''))
+      if (context.source !== 'in-app-browser' ||
+          expectedToken.length !== suppliedToken.length ||
+          !timingSafeEqual(expectedToken, suppliedToken)) {
+        throw serviceError('This in-app session is not authenticated', 401, 'in_app_session_authentication_required')
+      }
+    }
 
     const activeOrigin = context.activeOrigin ? String(context.activeOrigin) : ''
     let requestedActive = active === true

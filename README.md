@@ -14,6 +14,8 @@ Open `http://127.0.0.1:4180`.
 
 `npm run dev` starts both the Vite interface and the loopback data service. The service listens only on `127.0.0.1:4179` and stores its SQLite database in `data/homework.sqlite`.
 
+In the default preview security mode, Ninja Dojo runs inside the homework interface. The service issues an HttpOnly capability for that single session and counts time only while the homework tab is visible and focused. This is a local testing path, not a replacement for browser enforcement: `HOMEWORK_SECURITY_MODE=enforcing` still requires the managed Chrome extension and policy heartbeat before Ninja Dojo can start.
+
 Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API. LanguageTool output is normally treated as untrusted candidate evidence. A small allowlist of audited, single-replacement grammar and punctuation rules can create child-facing corrections; every other candidate still requires the contextual AI verifier or a parent to approve the exact replacement.
 
 ### Optional AI proofreading

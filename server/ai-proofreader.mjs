@@ -152,8 +152,8 @@ Known names and places supply parent-reviewed capitalization for names already p
 
 For each finding:
 - segment identifies the supplied segment.
-- original is a short, exact, case-sensitive anchor copied from that segment.
-- occurrence identifies the anchor occurrence within that segment, counting from 1.
+- original is a short, exact, case-sensitive anchor copied from that segment. Include whole words; never anchor a word fragment.
+- occurrence counts whole-word anchor matches within that segment, starting from 1. For example, "an" does not match inside "and" or "amazing".
 - For replace, replacement replaces original.
 - For insert_before or insert_after, original is the existing anchor and replacement contains only the inserted text.
 - Prefer one atomic edit per finding.
@@ -175,8 +175,8 @@ Return every remaining objective error exactly once. Do not return rejected cand
 
 For each finding:
 - segment identifies the supplied segment.
-- original is a short, exact, case-sensitive anchor copied from that segment.
-- occurrence identifies the anchor occurrence within that segment, counting from 1.
+- original is a short, exact, case-sensitive anchor copied from that segment. Include whole words; never anchor a word fragment.
+- occurrence counts whole-word anchor matches within that segment, starting from 1. For example, "an" does not match inside "and" or "amazing".
 - For replace, replacement replaces original.
 - For insert_before or insert_after, original is the existing anchor and replacement contains only the inserted text.
 - based_on_candidate_ids lists relevant supplied candidate ids, or an empty array for an omitted error you found independently.
@@ -194,7 +194,7 @@ Review each supplied sentence independently. Return a review only when the sente
 
 The three options must differ meaningfully wherever the original is ambiguous. Preserve the child's facts, vocabulary, and voice everywhere else. Do not invent decorative details. Proper names and story-specific words may be uncertain; present plausible alternatives instead of silently choosing one. Excluded options were rejected by the child and must not be repeated or trivially reworded.
 
-For every option, provide the complete corrected sentence plus exact edits that transform the original segment into that option. Each edit must use an exact, case-sensitive anchor from the original segment and its occurrence number. Use one atomic edit per error when possible; a larger replacement is allowed when words are fused, transposed, or too damaged to separate safely. The declared option text must exactly equal the result of applying its edits. Messages and explanations should be short, concrete, and suitable for a Grade 5 learner.`
+For every option, provide the complete corrected sentence plus exact edits that transform the original segment into that option. Each edit must use an exact, case-sensitive, whole-word anchor from the original segment and its occurrence number, counting only whole-word matches ("an" never matches inside "and"). Use one atomic edit per error when possible; a larger replacement is allowed when words are fused, transposed, or too damaged to separate safely. The declared option text must exactly equal the result of applying its edits. Messages and explanations should be short, concrete, and suitable for a Grade 5 learner.`
 
 export function normalizeAiMode(value) {
   const mode = String(value ?? '').trim().toLowerCase()
@@ -247,10 +247,17 @@ export function sentenceWriting(input) {
 function nthIndexOf(text, search, occurrence) {
   let offset = -1
   let from = 0
-  for (let index = 0; index < occurrence; index += 1) {
+  let matched = 0
+  const wordCharacter = /[\p{L}\p{N}_'’]/u
+  while (matched < occurrence) {
     offset = text.indexOf(search, from)
     if (offset < 0) return -1
     from = offset + Math.max(1, search.length)
+    const before = Array.from(text.slice(0, offset)).at(-1) ?? ''
+    const after = Array.from(text.slice(offset + search.length))[0] ?? ''
+    if (wordCharacter.test(search[0]) && wordCharacter.test(before)) continue
+    if (wordCharacter.test(search.at(-1)) && wordCharacter.test(after)) continue
+    matched += 1
   }
   return offset
 }

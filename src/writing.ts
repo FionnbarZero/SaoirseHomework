@@ -1743,6 +1743,11 @@ export function inspectWritingFindings(
       message: `${finding.message} Begin the sentence with a capital letter.` }
   })
   const deterministicFindings = [...localFindings, ...spellingFindings]
+  // Compare the actual changes rather than their contextual ranges. Replacing
+  // a space with comma-space and inserting a comma before it are the same edit.
+  const atomicFindingEdits = (finding: Finding) => inputEdits(finding).flatMap((edit) => (
+    atomicEdits(body.slice(edit.start, edit.end), edit.replacement, edit.start)
+  ))
   const findings: Finding[] = []
   const ruleCounts = new Map<string, number>()
   const atomicMatches = proofreadingMatches.flatMap((match) => {
@@ -1758,15 +1763,18 @@ export function inspectWritingFindings(
     const count = ruleCounts.get(match.ruleId) ?? 0
     const finding = proofreadingFinding(body, match, count)
     if (!finding || findings.some((item) => finding.start < item.end && finding.end > item.start)) continue
-    const reviewed = deterministicFindings.find((local) => sameEdit(local, finding))
+    const reviewed = deterministicFindings.find((local) => {
+      const edits = atomicFindingEdits(local)
+      return edits.length === 1 && sameEdit(edits[0], finding)
+    })
     if (reviewed) finding.practice = reviewed.practice
     findings.push(finding)
     ruleCounts.set(match.ruleId, count + 1)
   }
   for (const finding of deterministicFindings) {
     const overlapsVerified = findings.some((verified) => (
-      inputEdits(verified).some((verifiedEdit) => (
-        inputEdits(finding).some((deterministicEdit) => editsOverlap(verifiedEdit, deterministicEdit))
+      atomicFindingEdits(verified).some((verifiedEdit) => (
+        atomicFindingEdits(finding).some((deterministicEdit) => editsOverlap(verifiedEdit, deterministicEdit))
       ))
     ))
     if (!overlapsVerified) findings.push(finding)

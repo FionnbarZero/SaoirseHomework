@@ -52,6 +52,39 @@ test('deletion edits survive AI normalization, persistence normalization, and qu
   assert.equal(corrected(text, inspectWritingFindings(text, undefined, matches)), 'She saw the bird.')
 })
 
+test('AI comma insertions and local whitespace replacements produce one correction', () => {
+  const text = 'They built a raft went fishing and scared off criminals.'
+  const matches = [{
+    offset: text.indexOf(' went'), length: 0, replacements: [','],
+    ruleId: 'AI_SERIES_COMMA', category: 'Punctuation', source: 'ai', verification: 'verified',
+    message: 'Separate the actions with a comma.',
+  }]
+  const findings = inspectWritingFindings(text, undefined, matches)
+  assert.equal(corrected(text, findings), 'They built a raft, went fishing, and scared off criminals.')
+  assert.equal(findings.length, 2)
+  assert.equal(findings[0].practice.length, 3)
+  assert.ok(findings.every((finding) => !finding.correction.correctAnswer.includes(',,')))
+})
+
+test('AI semicolons suppress alternative local periods at the same clause boundary', () => {
+  const text = "The guards let them come out they wouldn't give her the key."
+  const findings = inspectWritingFindings(text, undefined, [{
+    offset: text.indexOf(' they'), length: 0, replacements: [';'],
+    ruleId: 'AI_RUN_ON', category: 'Punctuation', source: 'ai', verification: 'verified',
+    message: 'Separate the clauses.',
+  }])
+  assert.equal(corrected(text, findings), "The guards let them come out; they wouldn't give her the key.")
+})
+
+test('AI word anchors never replace an inside and or he inside she', () => {
+  const text = "She and he said, isn't an amazing that we won?"
+  const normalized = normalizeAiFindings([edit('an', 'it'), edit('he', 'she')], text)
+  assert.equal(normalized.find(f => f.original === 'an').anchorStart, text.indexOf('an amazing'))
+  assert.equal(normalized.find(f => f.original === 'he').anchorStart, text.indexOf('he said'))
+  assert.equal(normalizeAiFindings([edit('an', 'it')], 'She and he ran.').length, 0)
+  assert.equal(normalizeAiFindings([edit('isn', 'is')], "It isn't ready.").length, 0)
+})
+
 test('contradictory corrections are both sent to review instead of selecting one silently', async () => {
   const candidates = [edit('walk', 'walks'), edit('walk', 'walked')]
   const result = await aiWith({ findings: candidates }, { findings: candidates }).check('She walk.', 'assist')

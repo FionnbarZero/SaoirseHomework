@@ -1777,7 +1777,7 @@ function WritingView({
             autoCapitalize="sentences"
             aria-label="Writing draft"
           />
-          <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Local spelling help is on · Your work stays on this Mac</span></div>
+          <div className="editor-footer"><span>{body.trim() ? body.trim().split(/\s+/).length : 0} words</span><span>Drafts are saved on this Mac · Enabled AI review sends the passage to OpenAI</span></div>
         </div>
         <aside className="review-card" role={showReview ? 'dialog' : undefined} aria-modal={showReview || undefined} aria-label={showReview ? 'Correction game' : undefined}>
           <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div>{showReview && <button className="text-button review-reset-button" type="button" onClick={startFreshDraft}>Start new draft</button>}</div>

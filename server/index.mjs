@@ -14,6 +14,7 @@ import { checkWriting } from './writing-check.mjs'
 import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
+import { createPrivateAccess } from './private-access.mjs'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -23,6 +24,7 @@ try {
   if (error?.code !== 'ENOENT') throw error
 }
 const port = Number(process.env.HOMEWORK_PORT || 4179)
+const privateAccess = createPrivateAccess()
 const host = '127.0.0.1'
 const serviceOrigin = `http://${host}:${port}`
 const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
@@ -176,11 +178,11 @@ function parentSessionToken(request) {
 }
 
 function parentSessionHeader(token) {
-  return `${parentSessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=600`
+  return `${parentSessionCookie}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=600${privateAccess.enabled ? '; Secure' : ''}`
 }
 
 function expiredParentSessionHeader() {
-  return `${parentSessionCookie}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0`
+  return `${parentSessionCookie}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0${privateAccess.enabled ? '; Secure' : ''}`
 }
 
 function bearerToken(request) {
@@ -490,6 +492,14 @@ function chromeResponse() {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', serviceOrigin)
   try {
+    // Apply to HTML, static files, data, and AI endpoints alike. No health or
+    // loopback exception may accidentally become a public route through a tunnel.
+    request.privateIdentity = await privateAccess.authenticate(request)
+    if (privateAccess.enabled) {
+      response.setHeader('X-Content-Type-Options', 'nosniff')
+      response.setHeader('Referrer-Policy', 'same-origin')
+      response.setHeader('Content-Security-Policy', "frame-ancestors 'none'")
+    }
     if (url.pathname === '/api/health' && request.method === 'GET') {
       return sendJson(response, 200, { ok: true, service: 'fionnbar-homework', ...store.info() })
     }

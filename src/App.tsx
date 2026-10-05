@@ -46,6 +46,7 @@ import {
   type AppState,
   type DayName,
   type Draft,
+  type SentenceMeaningReview,
 } from './domain'
 import {
   advanceFindingProgress,
@@ -55,6 +56,7 @@ import {
   inspectWritingFindings,
   resolveWritingChoice,
   scoreWritingResponses,
+  selectedMeaningMatches,
   skipRemainingWritingTrials,
   type WritingAnswerState,
   writingActivityKey,
@@ -86,6 +88,7 @@ import {
   lockParentSession,
   pollParentAuthorization,
   proofreadWriting,
+  retrySentenceMeaning,
   resetParentPreviewData,
   retryLiveGoogleDelivery,
   runLiveGoogleDelivery,
@@ -1093,6 +1096,37 @@ function WritingAccuracyGraph({ points }: { points: number[] }) {
   )
 }
 
+function HighlightedSentence({
+  text,
+  ranges,
+}: {
+  text: string
+  ranges: Array<{ start: number; end: number }>
+}) {
+  const pieces: React.ReactNode[] = []
+  let cursor = 0
+  for (const [index, range] of ranges.entries()) {
+    const start = Math.max(cursor, Math.min(text.length, range.start))
+    const end = Math.max(start, Math.min(text.length, range.end))
+    if (start > cursor) pieces.push(text.slice(cursor, start))
+    if (end > start) pieces.push(<mark key={`${start}-${end}-${index}`}>{text.slice(start, end)}</mark>)
+    cursor = end
+  }
+  if (cursor < text.length) pieces.push(text.slice(cursor))
+  return <>{pieces}</>
+}
+
+function dateInputValueForTimeZone(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
 function WritingView({
   state,
   setState,
@@ -1105,16 +1139,23 @@ function WritingView({
   finishWritingGame: (draftId: string) => Promise<void>
 }) {
   const dailyWritingActive = state.activeGameSession?.status === 'pending'
+  const writingDay = state.activeGameSession?.status === 'pending'
+    ? state.activeGameSession.day
+    : state.weekContext.localDay
   const currentWritingKey = writingActivityKey(
     state.weekContext.weekId,
-    state.weekContext.localDay,
+    writingDay,
   )
   const workingDraft = state.drafts.find((draft) =>
     (!draft.weekId || draft.weekId === state.weekContext.weekId) &&
     draftBelongsToWritingActivity(draft, currentWritingKey),
   )
   const automaticBlankDraftId = useRef(crypto.randomUUID())
+  const newDraftReadingDate = dateInputValueForTimeZone(new Date(), state.weekContext.timeZone)
+  const [readingDate, setReadingDate] = useState(workingDraft?.readingDate ?? newDraftReadingDate)
   const [title, setTitle] = useState(workingDraft?.title ?? '')
+  const [author, setAuthor] = useState(workingDraft?.author ?? '')
+  const [pagesRead, setPagesRead] = useState(workingDraft?.pagesRead ?? '')
   const [body, setBody] = useState(workingDraft?.body ?? '')
   const [showReview, setShowReview] = useState(Boolean(
     workingDraft?.body.trim() && (
@@ -1135,6 +1176,8 @@ function WritingView({
   const [finishMessage, setFinishMessage] = useState('')
   const [checkingWriting, setCheckingWriting] = useState(false)
   const [proofreadingMessage, setProofreadingMessage] = useState('')
+  const [meaningReviewBusy, setMeaningReviewBusy] = useState(false)
+  const [meaningReviewMessage, setMeaningReviewMessage] = useState('')
   const [writingLog, setWritingLog] = useState<WritingLogState | null>(null)
   const [writingLogMessage, setWritingLogMessage] = useState('')
   const [writingLogBusy, setWritingLogBusy] = useState(false)
@@ -1146,6 +1189,8 @@ function WritingView({
   }), [body, state.writingDictionary])
   const findings = analysis.findings
   const reviewDraft = state.drafts.find((draft) => draft.id === reviewDraftId)
+  const sentenceReviews = reviewDraft?.sentenceReviews ?? []
+  const pendingSentenceReview = sentenceReviews.find((review) => !review.selectedOptionId)
   const reviewFindings = reviewDraft?.findings ?? findings
   const reviewProgress = reviewDraft?.exerciseProgress ?? {}
   const legacySpellingNeedsAnalysis = reviewDraft?.reviewStatus === 'spelling-pending' &&
@@ -1202,13 +1247,17 @@ function WritingView({
       activityKey: currentWritingKey,
       revisionGroupId: id,
       versionNumber: 1,
+      readingDate: newDraftReadingDate,
       title: '',
+      author: '',
+      pagesRead: '',
       body: '',
       correctedBody: '',
       updatedAt: new Date().toISOString(),
       findings: [],
       proofreadingMatches: [],
       reviewSuggestions: [],
+      sentenceReviews: [],
       exerciseProgress: {},
       spellingWords: [],
       spellingProgress: {},
@@ -1223,7 +1272,7 @@ function WritingView({
         : [blankDraft, ...current.drafts.filter((draft) => draft.body.trim())],
     }))
     setReviewDraftId(id)
-  }, [currentWritingKey, setState, state.weekContext.weekId, workingDraft])
+  }, [currentWritingKey, newDraftReadingDate, setState, state.weekContext.weekId, workingDraft])
 
   useEffect(() => {
     if (serviceStatus !== 'online') return
@@ -1303,6 +1352,18 @@ function WritingView({
         engine: 'reviewed offline rules',
         matches: [],
         reviewItems: [],
+        sentenceReviews: [],
+        intentAi: {
+          configured: false,
+          mode: 'off' as const,
+          model: null,
+          provider: 'OpenAI Responses API',
+          sendsOnlyCurrentPassage: true,
+          storesResponses: false,
+          available: false,
+          analyzed: false,
+          reviews: [],
+        },
         ai: {
           configured: false,
           mode: 'off' as const,
@@ -1334,9 +1395,13 @@ function WritingView({
       const versionNumber = revisionSource
         ? (revisionSource.versionNumber ?? 1) + 1
         : existingDraft?.versionNumber ?? 1
+      const sentenceReviews = proofreading.sentenceReviews ?? []
       const reviewSuggestions = [
         ...analysis.reviewItems,
-        ...proofreading.reviewItems,
+        ...proofreading.reviewItems.filter((item) => !sentenceReviews.some((review) => (
+          typeof item.start === 'number' && typeof item.end === 'number' &&
+          item.start >= review.start && item.end <= review.end
+        ))),
       ]
       const draft: Draft = {
         id: draftId,
@@ -1344,23 +1409,29 @@ function WritingView({
         activityKey: currentWritingKey,
         revisionGroupId,
         versionNumber,
+        readingDate,
         title: title.trim() || 'Untitled writing',
+        author: author.trim(),
+        pagesRead: pagesRead.trim(),
         body: submittedBody,
         correctedBody: submittedBody,
         updatedAt: new Date().toISOString(),
         findings: checkedFindings,
         proofreadingMatches: proofreading.matches,
         reviewSuggestions,
+        sentenceReviews,
         exerciseProgress: {},
         spellingWords: analysis.spellingWords,
         spellingProgress: {},
-        reviewStatus: writingReviewStatus(
-          checkedFindings,
-          {},
-          analysis.spellingWords,
-          {},
-          reviewSuggestions.length,
-        ),
+        reviewStatus: sentenceReviews.length > 0
+          ? 'intent-review'
+          : writingReviewStatus(
+              checkedFindings,
+              {},
+              analysis.spellingWords,
+              {},
+              reviewSuggestions.length,
+            ),
       }
       const createdAt = new Date().toISOString()
       setState((current) => {
@@ -1396,7 +1467,12 @@ function WritingView({
         : proofreading.ai.mode !== 'off' && proofreading.ai.error
           ? ' AI review was unavailable; the local checks still completed.'
           : ''
-      setProofreadingMessage(`${localMessage}${aiMessage}`)
+      const meaningMessage = sentenceReviews.length > 0
+        ? ` Start with ${sentenceReviews.length} sentence meaning ${sentenceReviews.length === 1 ? 'check' : 'checks'} before the correction game.`
+        : proofreading.intentAi?.mode !== 'off' && proofreading.intentAi?.error
+          ? ' AI meaning review was unavailable, so only verified corrections are shown.'
+          : ''
+      setProofreadingMessage(`${localMessage}${aiMessage}${meaningMessage}`)
       setReviewDraftId(draft.id)
       setRevisingFromDraftId(null)
       setShowReview(true)
@@ -1409,7 +1485,10 @@ function WritingView({
 
   const beginRevision = () => {
     if (!reviewDraft) return
+    setReadingDate(reviewDraft.readingDate ?? newDraftReadingDate)
     setTitle(reviewDraft.title)
+    setAuthor(reviewDraft.author ?? '')
+    setPagesRead(reviewDraft.pagesRead ?? '')
     setBody(reviewDraft.body)
     setRevisingFromDraftId(reviewDraft.id)
     setReviewDraftId(null)
@@ -1426,13 +1505,17 @@ function WritingView({
       activityKey: currentWritingKey,
       revisionGroupId: id,
       versionNumber: 1,
+      readingDate: newDraftReadingDate,
       title: '',
+      author: '',
+      pagesRead: '',
       body: '',
       correctedBody: '',
       updatedAt: new Date().toISOString(),
       findings: [],
       proofreadingMatches: [],
       reviewSuggestions: [],
+      sentenceReviews: [],
       exerciseProgress: {},
       spellingWords: [],
       spellingProgress: {},
@@ -1442,7 +1525,10 @@ function WritingView({
       ...current,
       drafts: [blankDraft, ...current.drafts.filter((draft) => draft.body.trim())],
     }))
+    setReadingDate(newDraftReadingDate)
     setTitle('')
+    setAuthor('')
+    setPagesRead('')
     setBody('')
     setReviewDraftId(id)
     setRevisingFromDraftId(null)
@@ -1452,6 +1538,83 @@ function WritingView({
     setFinishMessage('')
     setProofreadingMessage('')
     setShowReview(false)
+  }
+
+  const chooseSentenceMeaning = (review: SentenceMeaningReview, optionId: string) => {
+    if (!reviewDraft || meaningReviewBusy) return
+    const option = review.options.find((candidate) => candidate.id === optionId)
+    if (!option) return
+    const nextReviews = sentenceReviews.map((item) => item.id === review.id
+      ? { ...item, selectedOptionId: option.id, selectedText: option.text }
+      : item)
+    const allMeaningsConfirmed = nextReviews.every((item) => item.selectedOptionId)
+    const intentMatches = selectedMeaningMatches(nextReviews)
+    const baseMatches = (reviewDraft.proofreadingMatches ?? []).filter(
+      (match) => !match.ruleId.startsWith('AI_CONFIRMED_MEANING_'),
+    )
+    const proofreadingMatches = allMeaningsConfirmed
+      ? [...intentMatches, ...baseMatches]
+      : baseMatches
+    const nextFindings = allMeaningsConfirmed
+      ? inspectWritingFindings(reviewDraft.body, state.writingDictionary, proofreadingMatches)
+      : reviewFindings
+    setState((current) => ({
+      ...current,
+      drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+        ? {
+            ...draft,
+            sentenceReviews: nextReviews,
+            findings: nextFindings,
+            proofreadingMatches,
+            exerciseProgress: allMeaningsConfirmed ? {} : draft.exerciseProgress,
+            correctedBody: draft.body,
+            reviewStatus: allMeaningsConfirmed
+              ? writingReviewStatus(
+                  nextFindings,
+                  {},
+                  reviewSpellingWords,
+                  {},
+                  pendingReviewCount,
+                )
+              : 'intent-review',
+            updatedAt: new Date().toISOString(),
+          }
+        : draft),
+    }))
+    setMeaningReviewMessage(allMeaningsConfirmed
+      ? 'Meaning confirmed. Now fix one highlighted error at a time.'
+      : 'Got it. Check the next sentence.')
+  }
+
+  const tryDifferentMeanings = async (review: SentenceMeaningReview) => {
+    if (!reviewDraft || meaningReviewBusy) return
+    const rejectedOptions = [
+      ...(review.rejectedOptions ?? []),
+      ...review.options.map((option) => option.text),
+    ]
+    setMeaningReviewBusy(true)
+    setMeaningReviewMessage('Thinking of three different possibilities…')
+    try {
+      const response = await retrySentenceMeaning(reviewDraft.body, { ...review, rejectedOptions })
+      if (!response.review) throw new Error(response.intentAi.error || 'No different meanings were returned. Ask a parent to help with this sentence.')
+      setState((current) => ({
+        ...current,
+        drafts: current.drafts.map((draft) => draft.id === reviewDraft.id
+          ? {
+              ...draft,
+              sentenceReviews: (draft.sentenceReviews ?? []).map((item) => item.id === review.id
+                ? { ...response.review!, rejectedOptions }
+                : item),
+              updatedAt: new Date().toISOString(),
+            }
+          : draft),
+      }))
+      setMeaningReviewMessage('Here are three different possibilities.')
+    } catch (error) {
+      setMeaningReviewMessage(error instanceof Error ? error.message : 'Different meaning choices could not be generated.')
+    } finally {
+      setMeaningReviewBusy(false)
+    }
   }
 
   const chooseAnswer = (choice: string) => {
@@ -1593,7 +1756,50 @@ function WritingView({
       </div>
       <div className={`writing-grid${showReview ? ' game-open' : ''}`}>
         <div className="editor-card">
-          <input className="title-input" value={title} disabled={showReview || checkingWriting} onChange={(event) => setTitle(event.target.value)} placeholder={dailyWritingActive ? 'Name the passage you read…' : 'Give your writing a title…'} spellCheck />
+          <div className="reading-details" aria-label="Reading details">
+            <label className="reading-detail book-title-field">
+              <span>Book title</span>
+              <input
+                className="title-input"
+                value={title}
+                disabled={showReview || checkingWriting}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="What book did you read?"
+                maxLength={200}
+                spellCheck
+              />
+            </label>
+            <label className="reading-detail">
+              <span>Author</span>
+              <input
+                value={author}
+                disabled={showReview || checkingWriting}
+                onChange={(event) => setAuthor(event.target.value)}
+                placeholder="Author's name"
+                maxLength={160}
+                spellCheck
+              />
+            </label>
+            <label className="reading-detail">
+              <span>Date</span>
+              <input
+                type="date"
+                value={readingDate}
+                disabled={showReview || checkingWriting}
+                onChange={(event) => setReadingDate(event.target.value)}
+              />
+            </label>
+            <label className="reading-detail">
+              <span>Pages read</span>
+              <input
+                value={pagesRead}
+                disabled={showReview || checkingWriting}
+                onChange={(event) => setPagesRead(event.target.value)}
+                placeholder="e.g. 34–52"
+                maxLength={80}
+              />
+            </label>
+          </div>
           <textarea
             value={body}
             disabled={showReview || checkingWriting}
@@ -1608,6 +1814,14 @@ function WritingView({
         </div>
         <aside className="review-card" role={showReview ? 'dialog' : undefined} aria-modal={showReview || undefined} aria-label={showReview ? 'Correction game' : undefined}>
           <div className="review-heading"><span className="review-icon"><Sparkles size={20} /></span><div><h3>{showReview ? 'Correction game' : 'Ready to review?'}</h3><p>{showReview ? `Version ${reviewDraft?.versionNumber ?? 1} · complete the game, then revise` : 'We’ll look for rules we know well.'}</p></div>{showReview && <button className="text-button review-reset-button" type="button" onClick={startFreshDraft}>Start new draft</button>}</div>
+          {showReview && reviewDraft && (
+            <dl className="reading-details-summary">
+              <div><dt>Book</dt><dd>{reviewDraft.title || 'Untitled writing'}</dd></div>
+              {reviewDraft.author && <div><dt>Author</dt><dd>{reviewDraft.author}</dd></div>}
+              {reviewDraft.readingDate && <div><dt>Date</dt><dd>{reviewDraft.readingDate}</dd></div>}
+              {reviewDraft.pagesRead && <div><dt>Pages</dt><dd>{reviewDraft.pagesRead}</dd></div>}
+            </dl>
+          )}
           {proofreadingMessage && <p className="proofreading-status" role="status">{proofreadingMessage}</p>}
           {!showReview ? (
             <div className="review-empty">
@@ -1618,6 +1832,40 @@ function WritingView({
               <div className="review-category"><span>ABC</span><p><strong>Spelling</strong><small>Local professional dictionary and reviewed context</small></p></div>
               <button className="primary-button full-button" disabled={!body.trim() || checkingWriting} onClick={save}>{checkingWriting ? 'Checking writing…' : revisingFromDraftId ? 'Save revision & check again' : dailyWritingActive ? 'Save & open correction game' : 'Save & check my writing'}</button>
             </div>
+          ) : pendingSentenceReview ? (
+            <div className="meaning-review">
+              <div className="exercise-progress">
+                <span>Meaning check {sentenceReviews.filter((review) => review.selectedOptionId).length + 1} of {sentenceReviews.length}</span>
+                <div><i style={{ width: `${sentenceReviews.length ? (sentenceReviews.filter((review) => review.selectedOptionId).length / sentenceReviews.length) * 100 : 0}%` }} /></div>
+              </div>
+              <small className="exercise-category">SELF REVIEW · YELLOW PARTS MAY NEED HELP</small>
+              <h4>What were you trying to say?</h4>
+              <p className="meaning-review-help">Read the whole sentence. The app highlighted every part it is unsure about.</p>
+              <blockquote className="highlighted-sentence">
+                <HighlightedSentence text={pendingSentenceReview.original} ranges={pendingSentenceReview.highlights} />
+              </blockquote>
+              <div className="meaning-choices" role="radiogroup" aria-label="Choose what you meant">
+                {pendingSentenceReview.options.map((option, index) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    disabled={meaningReviewBusy}
+                    onClick={() => chooseSentenceMeaning(pendingSentenceReview, option.id)}
+                  >
+                    <b>{index + 1}</b><span>{option.text}</span>
+                  </button>
+                ))}
+                <button
+                  className="none-choice"
+                  type="button"
+                  disabled={meaningReviewBusy}
+                  onClick={() => { void tryDifferentMeanings(pendingSentenceReview) }}
+                >
+                  <b>4</b><span>None of these — try different ideas</span>
+                </button>
+              </div>
+              {meaningReviewMessage && <p className="meaning-review-message" role="status">{meaningReviewMessage}</p>}
+            </div>
           ) : activeFinding && activeTrial ? (
             <div className="writing-exercise">
               <div className="exercise-progress">
@@ -1625,6 +1873,13 @@ function WritingView({
                 <div><i style={{ width: `${totalExerciseSteps ? (completedExerciseSteps / totalExerciseSteps) * 100 : 100}%` }} /></div>
               </div>
               {import.meta.env.DEV && <button className="skip-game-button" type="button" onClick={skipCorrectionGame}>Skip game for testing</button>}
+              {!activeProgress?.correctionComplete && activeTrial.focus && (
+                <div className="isolated-error">
+                  <small>Error {reviewFindings.indexOf(activeFinding) + 1} of {reviewFindings.length}</small>
+                  <p><HighlightedSentence text={activeTrial.focus.text} ranges={[{ start: activeTrial.focus.start, end: activeTrial.focus.end }]} /></p>
+                  <span>Only the yellow part needs attention. The rest of this sentence is already correct.</span>
+                </div>
+              )}
               <div className="exercise-area-summary" aria-label="Writing review areas">
                 {reviewAreas.map((area) => {
                   const count = reviewFindings.filter((finding) => finding.category === area.name).length

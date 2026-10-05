@@ -1,4 +1,4 @@
-import type { Draft, Finding, FindingProgress, ProofreadingMatch, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
+import type { Draft, Finding, FindingProgress, ProofreadingMatch, SentenceMeaningReview, SpellingProgress, SpellingWord, WritingDictionary, WritingEdit, WritingTrial } from './domain'
 import { inspectSpellingFindings, spellingPracticeComplete } from './spelling.ts'
 
 export function writingActivityKey(weekId: string, day: string) {
@@ -10,6 +10,28 @@ export function draftBelongsToWritingActivity(
   activityKey: string,
 ) {
   return draft.activityKey === activityKey
+}
+
+export function selectedMeaningMatches(reviews: SentenceMeaningReview[]): ProofreadingMatch[] {
+  return reviews.flatMap((review) => {
+    const selected = review.options.find((option) => option.id === review.selectedOptionId)
+    if (!selected) return []
+    return selected.edits.map((edit, index) => ({
+      offset: edit.offset,
+      length: edit.length,
+      message: edit.explanation,
+      shortMessage: edit.message,
+      replacements: [edit.replacement],
+      ruleId: `AI_CONFIRMED_MEANING_${review.start}_${index}`,
+      category: edit.category,
+      issueType: `confirmed-${edit.category.toLowerCase()}`,
+      source: 'ai' as const,
+      verification: 'verified' as const,
+      confidence: 'high' as const,
+      issueCode: `confirmed-meaning-${review.start}-${index}`,
+      explanation: edit.explanation,
+    }))
+  })
 }
 
 type Category = Finding['category']
@@ -645,6 +667,46 @@ function inputEdits(input: FindingInput | Finding): WritingEdit[] {
   ]
 }
 
+function editDeltaBefore(position: number, edits: WritingEdit[]) {
+  return edits.reduce((delta, edit) => (
+    edit.end <= position ? delta + edit.replacement.length - (edit.end - edit.start) : delta
+  ), 0)
+}
+
+export function isolateWritingCorrectionTrials(body: string, findings: Finding[]) {
+  return findings.map((finding) => {
+    const bounds = sentenceBounds(body, finding.start)
+    const sentence = body.slice(bounds.start, bounds.end)
+    const otherEdits = findings
+      .filter((candidate) => candidate.id !== finding.id)
+      .flatMap(inputEdits)
+      .filter((edit) => edit.start >= bounds.start && edit.end <= bounds.end)
+    const allEdits = [...otherEdits, ...inputEdits(finding)]
+    const scaffolded = applyTextEdits(sentence, otherEdits, bounds.start)
+    const corrected = applyTextEdits(sentence, allEdits, bounds.start)
+    const adjustedStart = finding.start - bounds.start + editDeltaBefore(finding.start, otherEdits)
+    const originalLength = finding.end - finding.start
+    const focusStart = originalLength > 0 ? adjustedStart : Math.max(0, adjustedStart - 1)
+    const focusEnd = originalLength > 0
+      ? Math.min(scaffolded.length, adjustedStart + originalLength)
+      : Math.min(scaffolded.length, Math.max(adjustedStart + 1, focusStart + 1))
+    return {
+      ...finding,
+      correction: {
+        ...finding.correction,
+        prompt: 'Fix the highlighted part. Everything else in this sentence is already correct.',
+        choices: rotateChoices([scaffolded, corrected], finding.start),
+        correctAnswer: corrected,
+        focus: {
+          text: scaffolded,
+          start: focusStart,
+          end: focusEnd,
+        },
+      },
+    }
+  })
+}
+
 function correctionTrial(body: string, input: FindingInput): WritingTrial {
   const automaticBounds = sentenceBounds(body, input.start)
   const bounds = {
@@ -705,7 +767,7 @@ function proofreadingCategory(match: ProofreadingMatch): Category {
   if (rule.includes('COMMA') || rule.includes('PUNCT') || rule.includes('APOSTROPHE') || description.includes('punctuation')) {
     return 'Punctuation'
   }
-  if (rule.includes('MORFOLOGIK') || rule.includes('SPELLING') || description.includes('typo') || description.includes('misspelling')) {
+  if (rule.includes('MORFOLOGIK') || rule.includes('SPELLING') || description.includes('spelling') || description.includes('typo') || description.includes('misspelling')) {
     return 'Spelling'
   }
   return 'Grammar'
@@ -802,6 +864,8 @@ function capitalizeProperName(value: string) {
     .toLowerCase()
     .replace(/(^|[-'’])([a-z])/g, (_, separator: string, letter: string) => `${separator}${letter.toUpperCase()}`)
 }
+
+const REVIEWED_STORY_NAMES = ['Harry', 'Ron', 'Ann', 'Billy', 'Mike']
 
 function inferredProperNames(body: string) {
   const names = new Map<string, string>()
@@ -961,6 +1025,19 @@ export function inspectDraft(
     })
   }
 
+  const compoundPluralSubject = /\b([A-Za-z][A-Za-z'’-]*)\s+(?:and|adn)\s+([A-Za-z][A-Za-z'’-]*)\s+(walks|runs|jumps|plays|writes|reads|eats|makes|does|has|goes|studies)\b/gi
+  while ((match = compoundPluralSubject.exec(body)) !== null) {
+    const verb = match[3]
+    const start = match.index + match[0].toLowerCase().lastIndexOf(verb.toLowerCase())
+    const replacement = capitalizeLike(verb, baseForms[verb.toLowerCase()])
+    addFinding(body, findings, {
+      ruleId: 'subject-verb-plural', category: 'Grammar', start, end: start + verb.length, replacement,
+      message: `“${match[1]} and ${match[2]}” name more than one person, so “${verb}” does not agree.`,
+      suggestion: `Use the base-form verb “${replacement}” with a compound subject.`,
+      wrongReplacement: `${replacement}ing`,
+    })
+  }
+
   const perfectParticiples: Record<string, string> = {
     go: 'gone', see: 'seen', eat: 'eaten', write: 'written', take: 'taken', make: 'made', do: 'done',
     walk: 'walked', play: 'played', jump: 'jumped', cook: 'cooked', look: 'looked', visit: 'visited', finish: 'finished',
@@ -1106,7 +1183,7 @@ export function inspectDraft(
   }
 
   for (const [kind, entries] of [
-    ['name', [...dictionary.knownNames, ...inferredProperNames(body)]],
+    ['name', [...dictionary.knownNames, ...REVIEWED_STORY_NAMES, ...inferredProperNames(body)]],
     ['place', dictionary.knownPlaces],
   ] as const) {
     for (const entry of [...new Set(entries)]) {
@@ -1513,7 +1590,10 @@ export function inspectDraft(
     })
   }
 
-  return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
+  return isolateWritingCorrectionTrials(
+    body,
+    findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId)),
+  )
 }
 
 export function inspectWritingFindings(
@@ -1542,7 +1622,10 @@ export function inspectWritingFindings(
     ))
     if (!overlapsVerified) findings.push(finding)
   }
-  return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
+  return isolateWritingCorrectionTrials(
+    body,
+    findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId)),
+  )
 }
 
 export type AmbiguousWritingFinding = {

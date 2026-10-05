@@ -3,10 +3,13 @@ import test from 'node:test'
 import {
   createAiProofreader,
   normalizeAiFindings,
+  normalizeIntentReviews,
   normalizeAiMode,
   segmentWriting,
+  sentenceWriting,
 } from '../server/ai-proofreader.mjs'
 import { inspectWritingFindings } from '../src/writing.ts'
+import { buildLocalMeaningReviews } from '../server/meaning-review.mjs'
 
 function responseWith(findings) {
   return {
@@ -163,6 +166,101 @@ test('unconfigured AI and invalid modes fail closed without a network request', 
   assert.equal(result.analyzed, false)
   assert.equal(called, false)
   assert.match(result.error, /API key and model/)
+})
+
+test('meaning review returns three exact sentence interpretations and highlighted uncertainty', () => {
+  const text = 'harry and ron walks.'
+  const edit = (original, replacement, category = 'capitalization') => ({
+    operation: 'replace', original, occurrence: 1, replacement, category,
+    message: `Correct ${original}.`, explanation: 'Use the form that matches the intended sentence.',
+  })
+  const reviews = normalizeIntentReviews([{
+    segment: 1,
+    uncertain_parts: [
+      { original: 'harry', occurrence: 1 },
+      { original: 'ron', occurrence: 1 },
+      { original: 'walks', occurrence: 1 },
+    ],
+    options: [
+      { text: 'Harry and Ron walk.', edits: [edit('harry', 'Harry'), edit('ron', 'Ron'), edit('walks', 'walk', 'grammar')] },
+      { text: 'Harry and Ron walked.', edits: [edit('harry', 'Harry'), edit('ron', 'Ron'), edit('walks', 'walked', 'grammar')] },
+      { text: 'Harry and Ron are walking.', edits: [edit('harry', 'Harry'), edit('ron', 'Ron'), edit('walks', 'are walking', 'grammar')] },
+    ],
+  }], text, sentenceWriting(text))
+
+  assert.equal(reviews.length, 1)
+  assert.deepEqual(reviews[0].options.map((option) => option.text), [
+    'Harry and Ron walk.',
+    'Harry and Ron walked.',
+    'Harry and Ron are walking.',
+  ])
+  assert.deepEqual(reviews[0].highlights, [
+    { start: 0, end: 5 },
+    { start: 10, end: 13 },
+    { start: 14, end: 19 },
+  ])
+})
+
+test('local meaning review offers three candidate interpretations when AI is unavailable', () => {
+  const text = 'harry and ron walks to qidch.'
+  const findings = [
+    { start: 0, end: 5, replacement: 'Harry', category: 'Capitalization', message: 'Capitalize Harry.', suggestion: 'Names begin with capitals.' },
+    { start: 10, end: 13, replacement: 'Ron', category: 'Capitalization', message: 'Capitalize Ron.', suggestion: 'Names begin with capitals.' },
+    { start: 14, end: 19, replacement: 'walk', category: 'Grammar', message: 'Use walk.', suggestion: 'A plural subject uses walk.' },
+  ]
+  const candidateStart = text.indexOf('qidch')
+  const reviews = buildLocalMeaningReviews(text, findings, [{
+    offset: candidateStart,
+    length: 5,
+    replacements: ['Quidditch', 'ditch', 'witch'],
+    ruleId: 'MORFOLOGIK_RULE_EN_US',
+    category: 'Possible Typo',
+    issueType: 'misspelling',
+    message: 'Possible spelling mistake.',
+  }])
+
+  assert.equal(reviews.length, 1)
+  assert.deepEqual(reviews[0].options.map((option) => option.text), [
+    'Harry and Ron walk to Quidditch.',
+    'Harry and Ron walk to ditch.',
+    'Harry and Ron walk to witch.',
+  ])
+  assert.equal(reviews[0].highlights.length, 4)
+})
+
+test('local meaning review highlights an uncertain companion list as one readable chunk', () => {
+  const text = 'harry adn ron walks to qidch practise with ann billy and tiloAnn said I want the new broomed"'
+  const uncertainName = text.indexOf('tiloAnn')
+  const reviews = buildLocalMeaningReviews(text, inspectWritingFindings(text), [{
+    offset: uncertainName,
+    length: 'tiloAnn'.length,
+    replacements: ['Mike', 'Tilo Ann', 'Tilo'],
+    ruleId: 'MORFOLOGIK_RULE_EN_US',
+    category: 'Possible Typo',
+    issueType: 'misspelling',
+    message: 'Possible spelling mistake.',
+  }])
+  const phraseStart = text.indexOf('ann billy')
+  const phraseEnd = uncertainName + 'tiloAnn'.length
+
+  assert.equal(reviews.length, 1)
+  assert.equal(reviews[0].highlights.some((range) => range.start <= phraseStart && range.end >= phraseEnd), true)
+  assert.equal(reviews[0].options.every((option) => option.text.includes('Harry and Ron walk to Quidditch practice')), true)
+
+  const retry = buildLocalMeaningReviews(text, inspectWritingFindings(text), [{
+    offset: uncertainName,
+    length: 'tiloAnn'.length,
+    replacements: ['Mike', 'Tilo Ann', 'Tilo'],
+    ruleId: 'MORFOLOGIK_RULE_EN_US',
+    category: 'Possible Typo',
+    issueType: 'misspelling',
+    message: 'Possible spelling mistake.',
+  }], {
+    attempt: 2,
+    rejectedOptions: reviews[0].options.map((option) => option.text),
+  })
+  assert.equal(retry.length, 1)
+  assert.equal(retry[0].options.every((option) => !reviews[0].options.some((first) => first.text === option.text)), true)
 })
 
 test('the verified workflow repairs the Harry passage without corrupting contextual words or names', async () => {

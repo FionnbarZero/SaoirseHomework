@@ -61,6 +61,39 @@ export type WritingTrial = {
   choices: string[]
   correctAnswer: string
   explanation: string
+  focus?: {
+    text: string
+    start: number
+    end: number
+  }
+}
+
+export type SentenceMeaningEdit = {
+  offset: number
+  length: number
+  replacement: string
+  category: Finding['category']
+  message: string
+  explanation: string
+}
+
+export type SentenceMeaningOption = {
+  id: string
+  text: string
+  edits: SentenceMeaningEdit[]
+}
+
+export type SentenceMeaningReview = {
+  id: string
+  start: number
+  end: number
+  original: string
+  highlights: Array<{ start: number; end: number }>
+  options: SentenceMeaningOption[]
+  attempt: number
+  rejectedOptions?: string[]
+  selectedOptionId?: string
+  selectedText?: string
 }
 
 export type FindingProgress = {
@@ -135,17 +168,21 @@ export type Draft = {
   activityKey?: string
   revisionGroupId?: string
   versionNumber?: number
+  readingDate?: string
   title: string
+  author?: string
+  pagesRead?: string
   body: string
   correctedBody?: string
   updatedAt: string
   findings: Finding[]
   proofreadingMatches?: ProofreadingMatch[]
   reviewSuggestions?: WritingReviewSuggestion[]
+  sentenceReviews?: SentenceMeaningReview[]
   exerciseProgress?: Record<string, FindingProgress>
   spellingWords?: SpellingWord[]
   spellingProgress?: Record<string, SpellingProgress>
-  reviewStatus?: 'draft' | 'practice' | 'spelling-pending' | 'awaiting-review' | 'complete'
+  reviewStatus?: 'draft' | 'intent-review' | 'practice' | 'spelling-pending' | 'awaiting-review' | 'complete'
 }
 
 export type RewardCredit = {

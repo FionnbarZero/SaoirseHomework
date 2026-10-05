@@ -13,12 +13,14 @@ export type SpellingStep = {
 }
 
 const COMMON_MISSPELLINGS: Record<string, string> = {
+  adn: 'and',
   accomodate: 'accommodate',
   adress: 'address',
   alot: 'a lot',
   becuase: 'because',
   beleive: 'believe',
   begining: 'beginning',
+  broomed: 'broom',
   definately: 'definitely',
   diferent: 'different',
   embarass: 'embarrass',
@@ -31,6 +33,8 @@ const COMMON_MISSPELLINGS: Record<string, string> = {
   knowlege: 'knowledge',
   neccessary: 'necessary',
   occured: 'occurred',
+  practise: 'practice',
+  qidch: 'Quidditch',
   recieve: 'receive',
   recieved: 'received',
   seperate: 'separate',

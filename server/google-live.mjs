@@ -80,6 +80,29 @@ export function schoolYearForWeek(weekId) {
   return `${start}-${start + 1}`
 }
 
+function formatReadingDate(value) {
+  const candidate = String(value ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return ''
+  const date = new Date(`${candidate}T12:00:00.000Z`)
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== candidate) return ''
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  })
+}
+
+function readingDetailLines(draft) {
+  const date = formatReadingDate(draft.readingDate)
+  return [
+    `Book title: ${draft.title || 'Untitled writing'}`,
+    draft.author ? `Author: ${draft.author}` : '',
+    date ? `Reading date: ${date}` : '',
+    draft.pagesRead ? `Pages read: ${draft.pagesRead}` : '',
+  ].filter(Boolean)
+}
+
 export function buildWeeklyDocumentText(delivery, drafts) {
   const sections = [
     delivery.documentName,
@@ -120,6 +143,7 @@ export function buildWeeklyDocumentText(delivery, drafts) {
     sections.push(
       `${draft.title || 'Untitled writing'} — ${versionLabel}`,
       `Completed ${new Date(draft.updatedAt).toLocaleDateString('en-US', { timeZone: 'UTC' })}`,
+      ...readingDetailLines(draft),
       '',
       'Original',
       draft.body,
@@ -180,6 +204,7 @@ export function buildWritingLogText(drafts) {
     sections.push(
       `${draft.title || 'Untitled writing'} — Version ${Math.max(1, Number(draft.versionNumber) || 1)}`,
       `Saved ${safeDate(draft.updatedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}`,
+      ...readingDetailLines(draft),
       writingLogProgress(draft),
       '',
       'Writing attempt',

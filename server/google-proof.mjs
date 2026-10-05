@@ -33,6 +33,29 @@ function formatDate(value) {
   }).format(new Date(value))
 }
 
+function formatReadingDate(value) {
+  const candidate = String(value ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return ''
+  const date = new Date(`${candidate}T12:00:00.000Z`)
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== candidate) return ''
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
+}
+
+function readingDetails(draft) {
+  const date = formatReadingDate(draft.readingDate)
+  return [
+    ['Book title', draft.title || 'Untitled writing'],
+    ['Author', draft.author],
+    ['Reading date', date],
+    ['Pages read', draft.pagesRead],
+  ].filter(([, value]) => String(value ?? '').trim())
+}
+
 function practiceSummary(draft) {
   const progress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
     ? draft.exerciseProgress
@@ -96,11 +119,15 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
   const draftSections = drafts.map((draft, index) => {
     const summary = practiceSummary(draft)
     const versionLabel = `Version ${Math.max(1, Number(draft.versionNumber) || 1)}`
+    const metadata = readingDetails(draft)
+      .map(([label, value]) => `<span><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</span>`)
+      .join('')
     return `
     <section class="draft">
       <p class="draft-number">WRITING ${index + 1}</p>
       <h2>${escapeHtml(draft.title || 'Untitled writing')} — ${escapeHtml(versionLabel)}</h2>
       <p class="date">Saved ${escapeHtml(formatDate(draft.updatedAt))}</p>
+      <p class="reading-details">${metadata}</p>
       <h3>Original draft</h3>
       <div class="body">${escapeHtml(draft.body).replaceAll('\n', '<br />')}</div>
       <h3>Corrected copy</h3>
@@ -130,6 +157,8 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
     .draft-number { margin: 0; color: #a45e3f; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
     h2 { margin: 6px 0; font-size: 28px; }
     .date { margin: 0 0 24px; color: #71807a; font-size: 11px; }
+    .reading-details { margin: -14px 0 24px; display: flex; flex-wrap: wrap; gap: 6px 18px; color: #586761; font-size: 11px; }
+    .reading-details span { white-space: nowrap; }
     h3 { margin: 18px 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
     .body { padding: 18px; border-left: 4px solid #d6a566; border-radius: 0 12px 12px 0; background: #f5f0e5; font-family: Georgia, serif; font-size: 16px; line-height: 1.65; }
     .body.corrected { border-left-color: #4f887d; background: #edf3f0; }
@@ -213,6 +242,9 @@ async function writePdf(path, details) {
       pdf.moveDown(0.25)
       pdf.font('Helvetica').fontSize(8).fillColor(COLORS.muted)
         .text(`Saved ${formatDate(draft.updatedAt)}`)
+      for (const [label, value] of readingDetails(draft)) {
+        pdf.text(`${label}: ${value}`)
+      }
       pdf.moveDown(1.2)
       pdf.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.ink).text('ORIGINAL DRAFT')
       pdf.moveDown(0.5)

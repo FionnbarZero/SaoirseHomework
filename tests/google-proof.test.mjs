@@ -19,7 +19,10 @@ test('safe Google proof creates a real PDF and an escaped local document', async
       },
       drafts: [{
         id: 'draft-1',
+        readingDate: '2026-10-03',
         title: 'The <Great> Adventure',
+        author: 'Writer & Reader',
+        pagesRead: '101–119',
         versionNumber: 2,
         body: 'Today I wrote a story.\nIt has two paragraphs.',
         correctedBody: 'Today I wrote a great story.\nIt has two paragraphs.',
@@ -47,6 +50,10 @@ test('safe Google proof creates a real PDF and an escaped local document', async
     assert.ok(statSync(artifacts.pdfPath).size > 1_000)
     assert.match(document, /LOCAL GOOGLE DELIVERY PROOF/)
     assert.match(document, /The &lt;Great&gt; Adventure/)
+    assert.match(document, /Book title:<\/strong> The &lt;Great&gt; Adventure/)
+    assert.match(document, /Author:<\/strong> Writer &amp; Reader/)
+    assert.match(document, /Reading date:<\/strong> October 3, 2026/)
+    assert.match(document, /Pages read:<\/strong> 101–119/)
     assert.match(document, /Version 2/)
     assert.match(document, /Corrected copy/)
     assert.match(document, /Today I wrote a great story/)

@@ -40,7 +40,10 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
     documentName: 'Fionnbar Writing — Week of 2026-09-28',
   }
   const drafts = [{
+    readingDate: '2026-10-02',
     title: 'The Adventure',
+    author: 'Fionnbar Writer',
+    pagesRead: '18–31',
     versionNumber: 2,
     body: 'the original',
     correctedBody: 'The original.',
@@ -56,6 +59,10 @@ test('weekly document and Gmail MIME preserve the writing and PDF attachment', (
   }]
   const text = buildWeeklyDocumentText(delivery, drafts)
   assert.match(text, /The Adventure — Version 2/)
+  assert.match(text, /Book title: The Adventure/)
+  assert.match(text, /Author: Fionnbar Writer/)
+  assert.match(text, /Reading date: October 2, 2026/)
+  assert.match(text, /Pages read: 18–31/)
   assert.match(text, /Original\nthe original/)
   assert.match(text, /Corrected copy\nThe original\./)
   assert.match(text, /4 of 4 writing correction and review steps completed/)
@@ -87,13 +94,17 @@ test('writing log puts the newest attempt and its corrections first', () => {
       findings: [], exerciseProgress: {}, reviewStatus: 'complete', updatedAt: '2026-10-03T20:00:00.000Z',
     },
     {
-      id: 'newer', title: 'Newer', versionNumber: 2, body: 'newer attempt', correctedBody: 'newer correction',
+      id: 'newer', readingDate: '2026-10-04', title: 'Newer', author: 'A. Reader', pagesRead: '44–57', versionNumber: 2, body: 'newer attempt', correctedBody: 'newer correction',
       findings: [{ id: 'finding', practice: [{}, {}, {}] }], exerciseProgress: {}, reviewStatus: 'practice',
       updatedAt: '2026-10-04T20:00:00.000Z',
     },
   ])
   assert.ok(text.indexOf('Newer — Version 2') < text.indexOf('Older — Version 1'))
   assert.ok(text.indexOf('newer attempt') < text.indexOf('newer correction'))
+  assert.match(text, /Book title: Newer/)
+  assert.match(text, /Author: A\. Reader/)
+  assert.match(text, /Reading date: October 4, 2026/)
+  assert.match(text, /Pages read: 44–57/)
   assert.match(text, /Correction status: 0 of 4 practice steps complete/)
 })
 

@@ -10,9 +10,11 @@ import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
 import { createProofreader, proofreadingReviewItems } from './proofreader.mjs'
 import { createAiProofreader } from './ai-proofreader.mjs'
+import { buildLocalMeaningReviews } from './meaning-review.mjs'
 import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
+import { inspectWritingFindings } from '../src/writing.ts'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -512,6 +514,36 @@ const server = createServer(async (request, response) => {
       const reviewItems = aiResult.analyzed
         ? aiResult.reviewItems
         : proofreadingReviewItems(String(body.text ?? ''), localResult.matches)
+      const intentResult = await aiProofreader.interpret(body.text, mode, {
+        knownIssues: [
+          ...localResult.matches.map((match) => ({
+            start: match.offset,
+            end: match.offset + match.length,
+            original: String(body.text ?? '').slice(match.offset, match.offset + match.length),
+            replacements: match.replacements,
+            message: match.message,
+          })),
+          ...aiResult.matches,
+          ...reviewItems,
+        ],
+      })
+      if (intentResult.analyzed) {
+        store.addAudit('ai_meaning_review_completed', {
+          mode: intentResult.mode,
+          model: intentResult.model,
+          sentenceCount: intentResult.reviews.length,
+        })
+      }
+      const localMeaningReviews = intentResult.reviews.length > 0
+        ? []
+        : buildLocalMeaningReviews(
+            String(body.text ?? ''),
+            inspectWritingFindings(String(body.text ?? ''), store.loadState().writingDictionary),
+            localResult.matches,
+          )
+      const sentenceReviews = intentResult.reviews.length > 0
+        ? intentResult.reviews
+        : localMeaningReviews
       return sendJson(response, 200, {
         available: localResult.available || aiResult.analyzed,
         engine: [
@@ -520,9 +552,52 @@ const server = createServer(async (request, response) => {
         ].filter(Boolean).join(' + '),
         matches: aiResult.matches,
         reviewItems,
+        sentenceReviews,
+        intentAi: intentResult,
         ...(localResult.error ? { error: localResult.error } : {}),
         ai: aiResult,
       })
+    }
+
+    if (url.pathname === '/api/interpret-sentence' && request.method === 'POST') {
+      const body = await readJson(request)
+      const text = String(body.text ?? '')
+      const sourceStart = Math.max(0, Math.floor(Number(body.start) || 0))
+      const sourceEnd = Math.min(text.length, Math.floor(Number(body.end) || text.length))
+      if (!text.trim() || sourceEnd <= sourceStart) {
+        const error = new Error('A valid sentence is required for meaning review')
+        error.status = 400
+        error.code = 'invalid_sentence'
+        throw error
+      }
+      const sentence = text.slice(sourceStart, sourceEnd)
+      const result = await aiProofreader.interpret(sentence, store.getAiProofreadingMode(), {
+        attempt: body.attempt,
+        rejectedOptions: body.rejectedOptions,
+      })
+      const localResult = result.reviews.length > 0 ? null : await proofreader.check(sentence)
+      const localReviews = result.reviews.length > 0
+        ? []
+        : buildLocalMeaningReviews(
+            sentence,
+            inspectWritingFindings(sentence, store.loadState().writingDictionary),
+            localResult?.matches ?? [],
+            { attempt: body.attempt, rejectedOptions: body.rejectedOptions },
+          )
+      const review = result.reviews[0] ?? localReviews[0]
+      const shifted = review
+        ? {
+            ...review,
+            id: `sentence-${sourceStart}-${sourceEnd}`,
+            start: review.start + sourceStart,
+            end: review.end + sourceStart,
+            options: review.options.map((option) => ({
+              ...option,
+              edits: option.edits.map((edit) => ({ ...edit, offset: edit.offset + sourceStart })),
+            })),
+          }
+        : null
+      return sendJson(response, 200, { review: shifted, intentAi: result })
     }
 
     if (url.pathname === '/api/guardian/lifecycle' && request.method === 'GET') {

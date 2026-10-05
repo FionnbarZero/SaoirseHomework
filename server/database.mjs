@@ -19,7 +19,7 @@ import { normalizeProofreadingMatches, proofreadingReviewItems } from './proofre
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 26
+const SCHEMA_VERSION = 28
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -97,6 +97,15 @@ function safeJson(value, fallback) {
   } catch {
     return fallback
   }
+}
+
+function normalizeReadingDate(value) {
+  const candidate = String(value ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return ''
+  const parsed = new Date(`${candidate}T12:00:00.000Z`)
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== candidate
+    ? ''
+    : candidate
 }
 
 function assertState(state) {
@@ -374,12 +383,16 @@ export function createStore(filename, options = {}) {
       activity_key TEXT,
       revision_group_id TEXT,
       version_number INTEGER NOT NULL DEFAULT 1,
+      reading_date TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
+      author TEXT NOT NULL DEFAULT '',
+      pages_read TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL,
       corrected_body TEXT,
       findings_json TEXT NOT NULL,
       proofreading_matches_json TEXT NOT NULL DEFAULT '[]',
       review_suggestions_json TEXT NOT NULL DEFAULT '[]',
+      sentence_reviews_json TEXT NOT NULL DEFAULT '[]',
       exercise_progress_json TEXT NOT NULL DEFAULT '{}',
       spelling_words_json TEXT NOT NULL DEFAULT '[]',
       spelling_progress_json TEXT NOT NULL DEFAULT '{}',
@@ -580,9 +593,13 @@ export function createStore(filename, options = {}) {
   ensureColumn('writing_submission', 'activity_key', 'TEXT')
   ensureColumn('writing_submission', 'revision_group_id', 'TEXT')
   ensureColumn('writing_submission', 'version_number', 'INTEGER NOT NULL DEFAULT 1')
+  ensureColumn('writing_submission', 'reading_date', "TEXT NOT NULL DEFAULT ''")
+  ensureColumn('writing_submission', 'author', "TEXT NOT NULL DEFAULT ''")
+  ensureColumn('writing_submission', 'pages_read', "TEXT NOT NULL DEFAULT ''")
   ensureColumn('writing_submission', 'exercise_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'proofreading_matches_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'review_suggestions_json', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn('writing_submission', 'sentence_reviews_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_words_json', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn('writing_submission', 'spelling_progress_json', "TEXT NOT NULL DEFAULT '{}'")
   ensureColumn('writing_submission', 'review_status', "TEXT NOT NULL DEFAULT 'draft'")
@@ -615,9 +632,9 @@ export function createStore(filename, options = {}) {
   `)
   const insertDraft = db.prepare(`
     INSERT INTO writing_submission (
-      id, week_id, activity_key, revision_group_id, version_number, title, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json,
+      id, week_id, activity_key, revision_group_id, version_number, reading_date, title, author, pages_read, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, sentence_reviews_json,
       exercise_progress_json, spelling_words_json, spelling_progress_json, review_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertAudit = db.prepare(`
     INSERT INTO audit_log (event_type, details_json, created_at) VALUES (?, ?, ?)
@@ -1442,7 +1459,7 @@ export function createStore(filename, options = {}) {
 
     state.drafts = db
       .prepare(`
-      SELECT id, week_id, activity_key, title, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, exercise_progress_json,
+      SELECT id, week_id, activity_key, reading_date, title, author, pages_read, body, corrected_body, findings_json, proofreading_matches_json, review_suggestions_json, sentence_reviews_json, exercise_progress_json,
                revision_group_id, version_number, spelling_words_json, spelling_progress_json,
                review_status, updated_at
         FROM writing_submission ORDER BY updated_at DESC
@@ -1454,12 +1471,16 @@ export function createStore(filename, options = {}) {
         activityKey: row.activity_key ?? undefined,
         revisionGroupId: row.revision_group_id ?? row.id,
         versionNumber: Math.max(1, Number(row.version_number) || 1),
+        readingDate: row.reading_date ?? '',
         title: row.title,
+        author: row.author ?? '',
+        pagesRead: row.pages_read ?? '',
         body: row.body,
         correctedBody: row.corrected_body ?? row.body,
         findings: safeJson(row.findings_json, []),
         proofreadingMatches: safeJson(row.proofreading_matches_json, []),
         reviewSuggestions: reviewSuggestionsForDraft(row.body, safeJson(row.review_suggestions_json, [])),
+        sentenceReviews: safeJson(row.sentence_reviews_json, []),
         exerciseProgress: safeJson(row.exercise_progress_json, {}),
         spellingWords: safeJson(row.spelling_words_json, []),
         spellingProgress: safeJson(row.spelling_progress_json, {}),
@@ -1684,6 +1705,7 @@ export function createStore(filename, options = {}) {
         const body = String(draft.body ?? '')
         const proofreadingMatches = normalizeProofreadingMatches(draft.proofreadingMatches, body)
         const reviewSuggestions = reviewSuggestionsForDraft(body, draft.reviewSuggestions)
+        const sentenceReviews = Array.isArray(draft.sentenceReviews) ? draft.sentenceReviews : []
         const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
         const exerciseProgress = draft.exerciseProgress && typeof draft.exerciseProgress === 'object'
           ? draft.exerciseProgress
@@ -1699,19 +1721,27 @@ export function createStore(filename, options = {}) {
           const existing = existingReviews.get(`${String(draft.id)}:${item.id}`)
           return !existing || existing.status !== 'resolved'
         }).length
+        const meaningReviewPending = sentenceReviews.some((review) => !review?.selectedOptionId)
         const reviewStatus = body.trim()
-          ? grammarComplete ? pendingReviewCount > 0 ? 'awaiting-review' : 'complete' : 'practice'
+          ? meaningReviewPending
+            ? 'intent-review'
+            : grammarComplete ? pendingReviewCount > 0 ? 'awaiting-review' : 'complete' : 'practice'
           : 'draft'
         const correctedBody = applyCompletedCorrections(body, findings, exerciseProgress)
         insertDraft.run(
           String(draft.id), String(draft.weekId ?? weekId), draft.activityKey ? String(draft.activityKey) : null,
           String(draft.revisionGroupId ?? draft.id),
           Math.max(1, Math.floor(Number(draft.versionNumber) || 1)),
-          String(draft.title ?? 'Untitled writing'), body,
+          normalizeReadingDate(draft.readingDate),
+          String(draft.title ?? 'Untitled writing').trim().slice(0, 200),
+          String(draft.author ?? '').trim().slice(0, 160),
+          String(draft.pagesRead ?? '').trim().slice(0, 80),
+          body,
           correctedBody,
           JSON.stringify(findings),
           JSON.stringify(proofreadingMatches),
           JSON.stringify(reviewSuggestions),
+          JSON.stringify(sentenceReviews),
           JSON.stringify(exerciseProgress),
           JSON.stringify(spellingWords),
           JSON.stringify(spellingProgress),
@@ -2066,7 +2096,7 @@ export function createStore(filename, options = {}) {
       if (row.status !== 'pending') throw serviceError('Writing session is no longer active', 409, 'session_inactive')
 
       const draft = db.prepare(`
-        SELECT id, week_id, revision_group_id, version_number, body, corrected_body, findings_json, exercise_progress_json,
+        SELECT id, week_id, revision_group_id, version_number, body, corrected_body, findings_json, sentence_reviews_json, exercise_progress_json,
                spelling_words_json, spelling_progress_json, updated_at
         FROM writing_submission WHERE id = ?
       `).get(draftId)
@@ -2078,6 +2108,14 @@ export function createStore(filename, options = {}) {
       }
 
       const findings = safeJson(draft.findings_json, [])
+      const sentenceReviews = safeJson(draft.sentence_reviews_json, [])
+      if (sentenceReviews.some((review) => !review?.selectedOptionId)) {
+        throw serviceError(
+          'Confirm what each highlighted sentence means before starting the correction quiz',
+          409,
+          'writing_intent_review_incomplete',
+        )
+      }
       const progress = safeJson(draft.exercise_progress_json, {})
       const spellingWords = safeJson(draft.spelling_words_json, [])
       const spellingProgress = safeJson(draft.spelling_progress_json, {})
@@ -2664,7 +2702,7 @@ export function createStore(filename, options = {}) {
     const idempotencyKey = `${weekId}:${documentId}`
     const existing = db.prepare('SELECT * FROM google_delivery WHERE idempotency_key = ?').get(idempotencyKey)
     const draftRows = db.prepare(`
-      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+      SELECT id, week_id, reading_date, title, author, pages_read, body, corrected_body, findings_json, exercise_progress_json,
              revision_group_id, version_number, spelling_words_json, spelling_progress_json,
              review_status, updated_at
       FROM writing_submission
@@ -2676,7 +2714,10 @@ export function createStore(filename, options = {}) {
       weekId: row.week_id ?? weekId,
       revisionGroupId: row.revision_group_id ?? row.id,
       versionNumber: Math.max(1, Number(row.version_number) || 1),
+      readingDate: row.reading_date ?? '',
       title: row.title,
+      author: row.author ?? '',
+      pagesRead: row.pages_read ?? '',
       body: row.body,
       correctedBody: row.corrected_body ?? row.body,
       findings: safeJson(row.findings_json, []),
@@ -2923,7 +2964,7 @@ export function createStore(filename, options = {}) {
 
   function completedWritingSnapshots(weekId) {
     const drafts = db.prepare(`
-      SELECT id, week_id, title, body, corrected_body, findings_json, exercise_progress_json,
+      SELECT id, week_id, reading_date, title, author, pages_read, body, corrected_body, findings_json, exercise_progress_json,
              revision_group_id, version_number, spelling_words_json, spelling_progress_json,
              review_status, updated_at
       FROM writing_submission
@@ -2934,7 +2975,10 @@ export function createStore(filename, options = {}) {
       weekId: row.week_id ?? weekId,
       revisionGroupId: row.revision_group_id ?? row.id,
       versionNumber: Math.max(1, Number(row.version_number) || 1),
+      readingDate: row.reading_date ?? '',
       title: row.title,
+      author: row.author ?? '',
+      pagesRead: row.pages_read ?? '',
       body: row.body,
       correctedBody: row.corrected_body ?? row.body,
       findings: safeJson(row.findings_json, []),

@@ -9,6 +9,7 @@ import type {
   GoogleLiveState,
   GoogleProofState,
   ProofreadingMatch,
+  SentenceMeaningReview,
   WritingDictionary,
   WritingReviewSuggestion,
 } from './domain'
@@ -115,7 +116,9 @@ export type ProofreadingResponse = {
   engine: string
   matches: ProofreadingMatch[]
   reviewItems: WritingReviewSuggestion[]
+  sentenceReviews: SentenceMeaningReview[]
   ai: AiProofreadingResult
+  intentAi: AiMeaningReviewResult
   error?: string
 }
 
@@ -141,6 +144,13 @@ export type AiProofreadingResult = AiProofreadingStatus & {
     review: number
     ignored: number
   }
+  error?: string
+}
+
+export type AiMeaningReviewResult = AiProofreadingStatus & {
+  available: boolean
+  analyzed: boolean
+  reviews: SentenceMeaningReview[]
   error?: string
 }
 
@@ -384,6 +394,24 @@ export function proofreadWriting(text: string) {
   return request<ProofreadingResponse>('/api/proofread', {
     method: 'POST',
     body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(30_000),
+  })
+}
+
+export function retrySentenceMeaning(
+  text: string,
+  review: Pick<SentenceMeaningReview, 'start' | 'end' | 'attempt' | 'rejectedOptions'>,
+) {
+  return request<{ review: SentenceMeaningReview | null; intentAi: AiMeaningReviewResult }>('/api/interpret-sentence', {
+    method: 'POST',
+    body: JSON.stringify({
+      text,
+      start: review.start,
+      end: review.end,
+      attempt: review.attempt + 1,
+      rejectedOptions: review.rejectedOptions,
+    }),
+    signal: AbortSignal.timeout(30_000),
   })
 }
 

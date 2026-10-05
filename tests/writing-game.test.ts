@@ -8,6 +8,7 @@ import {
   inspectWritingFindings,
   resolveWritingChoice,
   scoreWritingResponses,
+  selectedMeaningMatches,
   skipRemainingWritingTrials,
   writingActivityKey,
   writingReviewStatus,
@@ -161,4 +162,109 @@ test('repeated errors of the same rule receive new reviewed practice sets', () =
     ],
   )
   assert.equal(new Set(repeated.flatMap((finding) => finding.practice.map((trial) => trial.correctAnswer))).size, 9)
+})
+
+test('a multi-error sentence isolates one yellow error while every other part is corrected', () => {
+  const body = 'harry and ron walks to qidch practise with ann billy and mike'
+  const replacements = [
+    ['harry', 'Harry', 'Capitalization'],
+    ['ron', 'Ron', 'Capitalization'],
+    ['walks', 'walk', 'Grammar'],
+    ['qidch', 'Quidditch', 'Spelling'],
+    ['practise', 'practice', 'Spelling'],
+    ['ann billy and mike', 'Ann, Billy, and Mike.', 'Punctuation'],
+  ] as const
+  const matches = replacements.map(([original, replacement, category], index) => ({
+    offset: body.indexOf(original),
+    length: original.length,
+    message: `Correct ${original}.`,
+    shortMessage: `Correct ${original}.`,
+    replacements: [replacement],
+    ruleId: `AI_EXAMPLE_${index}`,
+    category,
+    issueType: category.toLowerCase(),
+    source: 'ai' as const,
+    verification: 'verified' as const,
+    confidence: 'high' as const,
+  }))
+  const findings = inspectWritingFindings(body, undefined, matches)
+  const first = findings.find((finding) => finding.replacement === 'Harry')
+  const list = findings.find((finding) => finding.replacement === 'Ann, Billy, and Mike.')
+
+  assert.ok(first?.correction.focus)
+  assert.equal(first.correction.focus.text, 'harry and Ron walk to Quidditch practice with Ann, Billy, and Mike.')
+  assert.equal(
+    first.correction.focus.text.slice(first.correction.focus.start, first.correction.focus.end),
+    'harry',
+  )
+  assert.ok(list?.correction.focus)
+  assert.equal(list.correction.focus.text, 'Harry and Ron walk to Quidditch practice with ann billy and mike')
+  assert.equal(
+    list.correction.focus.text.slice(list.correction.focus.start, list.correction.focus.end),
+    'ann billy and mike',
+  )
+})
+
+test('the local checker still finds plural agreement when the conjunction is misspelled', () => {
+  const body = 'harry adn ron walks to qidch practise.'
+  const findings = inspectWritingFindings(body)
+
+  const hasCorrection = (original: string, replacement: string) => findings.some((finding) => (
+    body.slice(finding.start, finding.end) === original && finding.replacement === replacement
+  ))
+
+  assert.equal(hasCorrection('adn', 'and'), true)
+  assert.equal(hasCorrection('walks', 'walk'), true)
+  assert.equal(hasCorrection('qidch', 'Quidditch'), true)
+  assert.equal(hasCorrection('practise', 'practice'), true)
+})
+
+test('confirmed sentence meaning becomes verified corrections for the quiz', () => {
+  const reviews = [{
+    id: 'sentence-0-15',
+    start: 0,
+    end: 15,
+    original: 'harry walks.',
+    highlights: [{ start: 0, end: 5 }],
+    attempt: 1,
+    selectedOptionId: 'option-1',
+    selectedText: 'Harry walks.',
+    options: [{
+      id: 'option-1',
+      text: 'Harry walks.',
+      edits: [{
+        offset: 0,
+        length: 5,
+        replacement: 'Harry',
+        category: 'Capitalization' as const,
+        message: 'Capitalize the name.',
+        explanation: 'A person’s name begins with a capital letter.',
+      }],
+    }],
+  }]
+  const matches = selectedMeaningMatches(reviews)
+
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].offset, 0)
+  assert.equal(matches[0].replacements[0], 'Harry')
+  assert.equal(matches[0].verification, 'verified')
+
+  const spellingMatches = selectedMeaningMatches([{
+    ...reviews[0],
+    selectedOptionId: 'spelling-option',
+    options: [{
+      id: 'spelling-option',
+      text: 'Harry walks.',
+      edits: [{
+        offset: 0,
+        length: 5,
+        replacement: 'Harry',
+        category: 'Spelling' as const,
+        message: 'Spell the name correctly.',
+        explanation: 'Use the reviewed spelling.',
+      }],
+    }],
+  }])
+  const spellingFindings = inspectWritingFindings('harry walks.', undefined, spellingMatches)
+  assert.equal(spellingFindings[0].category, 'Spelling')
 })

@@ -26,7 +26,10 @@ function sampleState() {
     }],
     drafts: [{
       id: 'draft-1',
+      readingDate: '2026-10-03',
       title: 'A test draft',
+      author: 'Ursula K. Le Guin',
+      pagesRead: '34–52',
       body: 'Today I receive a persistence test.',
       correctedBody: 'Today I receive a persistence test.',
       updatedAt: '2026-10-03T07:00:00.000Z',
@@ -79,7 +82,10 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.deepEqual(restored.requiredByDay.Monday, ['mandarin', 'math'])
     assert.deepEqual(restored.optionalCompleted, ['voena:0'])
     assert.equal(restored.rewardCredits[0].remainingSeconds, 300)
+    assert.equal(restored.drafts[0].readingDate, '2026-10-03')
     assert.equal(restored.drafts[0].title, 'A test draft')
+    assert.equal(restored.drafts[0].author, 'Ursula K. Le Guin')
+    assert.equal(restored.drafts[0].pagesRead, '34–52')
     assert.equal(restored.drafts[0].correctedBody, 'Today I receive a persistence test.')
     assert.equal(restored.drafts[0].exerciseProgress.example.practiceCompleted, 5)
     assert.deepEqual(restored.drafts[0].spellingWords, [])
@@ -89,7 +95,7 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 26)
+    assert.equal(reopened.info().schemaVersion, 28)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
     reopened.close()
   } finally {
@@ -210,6 +216,36 @@ test('a persisted blank writing workspace remains a draft and preserves earlier 
   assert.equal(saved.drafts[0].reviewStatus, 'draft')
   assert.equal(saved.drafts[1].id, 'draft-1')
   assert.equal(saved.drafts[1].body, 'Today I receive a persistence test.')
+  store.close()
+})
+
+test('sentence meaning review survives persistence and blocks the correction quiz until selected', () => {
+  const store = createStore(':memory:')
+  const state = sampleState()
+  state.activeTimer = null
+  state.drafts[0].sentenceReviews = [{
+    id: 'sentence-0-15',
+    start: 0,
+    end: 15,
+    original: 'She walk home.',
+    highlights: [{ start: 4, end: 8 }],
+    attempt: 1,
+    options: [
+      { id: 'one', text: 'She walks home.', edits: [] },
+      { id: 'two', text: 'She walked home.', edits: [] },
+      { id: 'three', text: 'She will walk home.', edits: [] },
+    ],
+  }]
+
+  const pending = store.saveState(state)
+  assert.equal(pending.drafts[0].reviewStatus, 'intent-review')
+  assert.equal(pending.drafts[0].sentenceReviews[0].options.length, 3)
+
+  pending.drafts[0].sentenceReviews[0].selectedOptionId = 'one'
+  pending.drafts[0].sentenceReviews[0].selectedText = 'She walks home.'
+  const selected = store.saveState(pending)
+  assert.notEqual(selected.drafts[0].reviewStatus, 'intent-review')
+  assert.equal(selected.drafts[0].sentenceReviews[0].selectedOptionId, 'one')
   store.close()
 })
 
@@ -1278,7 +1314,10 @@ test('mock Google delivery is persistent and duplicate-safe for a weekly documen
   assert.equal(prepared.created, true)
   assert.equal(prepared.delivery.status, 'creating')
   assert.equal(prepared.delivery.draftCount, 1)
+  assert.equal(prepared.drafts[0].readingDate, '2026-10-03')
   assert.equal(prepared.drafts[0].title, 'A test draft')
+  assert.equal(prepared.drafts[0].author, 'Ursula K. Le Guin')
+  assert.equal(prepared.drafts[0].pagesRead, '34–52')
 
   const completed = store.completeMockGoogleDelivery(prepared.delivery.id, {
     documentPath: '/tmp/mock-google-proof.html',

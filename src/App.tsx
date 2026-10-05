@@ -1345,7 +1345,7 @@ function WritingView({
     if (!title.trim() && !body.trim()) return
     const submittedBody = body
     setCheckingWriting(true)
-    setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation…')
+    setProofreadingMessage('Checking spelling, grammar, capitalization, and punctuation… AI checks the passage twice; this may take a few minutes.')
     try {
       const proofreading = await proofreadWriting(submittedBody)
       const checkedFindings = inspectWritingFindings(

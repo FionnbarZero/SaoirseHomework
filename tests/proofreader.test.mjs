@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createProofreader, normalizeProofreadingMatches } from '../server/proofreader.mjs'
+import {
+  createProofreader,
+  normalizeProofreadingMatches,
+  proofreadingReviewItems,
+} from '../server/proofreader.mjs'
 
 test('proofreading matches are bounded to the submitted writing', () => {
   const text = 'A freind arrived.'
@@ -40,4 +44,35 @@ test('the proofreader uses only a loopback service and fails closed to offline r
     matches: [],
     error: 'offline',
   })
+})
+
+test('LanguageTool replacements are parent-review candidates, not trusted corrections', () => {
+  const text = 'Noone knows. I went home. I ate dinner.'
+  const items = proofreadingReviewItems(text, [
+    {
+      offset: 0,
+      length: 5,
+      message: 'Possible spelling mistake found.',
+      replacements: ['None', 'No one'],
+      ruleId: 'MORFOLOGIK_RULE_EN_US',
+      category: 'Possible Typo',
+      issueType: 'misspelling',
+    },
+    {
+      offset: 13,
+      length: 1,
+      message: 'Several sentences begin with the same word.',
+      replacements: ['Furthermore, I'],
+      ruleId: 'ENGLISH_WORD_REPEAT_BEGINNING_RULE',
+      category: 'Style',
+      issueType: 'style',
+    },
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0].source, 'languagetool')
+  assert.deepEqual(items[0].alternatives, ['None', 'No one'])
+  assert.equal(items[0].replacement, undefined)
+  assert.equal(items[0].start, 0)
+  assert.equal(items[0].end, 5)
 })

@@ -26,6 +26,7 @@ type FindingInput = {
   additionalEdits?: WritingEdit[]
   contextStart?: number
   contextEnd?: number
+  verifiedExternal?: boolean
 }
 
 type PracticeRow = [correct: string, wrongOne: string, wrongTwo: string]
@@ -157,15 +158,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence with a pronoun that matches its subject.',
     'A singular subject needs a matching singular reflexive pronoun.',
     [
-      ['She taught herself to knit.', 'She taught themselves to knit.', 'She taught herselfs to knit.'],
-      ['He made himself a snack.', 'He made themselves a snack.', 'He made himselfs a snack.'],
-      ['She introduced herself to the class.', 'She introduced themselves to the class.', 'She introduced herselfs to the class.'],
-      ['He helped himself to some water.', 'He helped themselves to some water.', 'He helped himselfs to some water.'],
-      ['She reminded herself to practice.', 'She reminded themselves to practice.', 'She reminded herselfs to practice.'],
-      ['The girl prepared herself for school.', 'The girl prepared themselves for school.', 'The girl prepared herselfs for school.'],
-      ['He dressed himself quickly.', 'He dressed themselves quickly.', 'He dressed himselfs quickly.'],
-      ['The boy taught himself chess.', 'The boy taught themselves chess.', 'The boy taught himselfs chess.'],
-      ['She made herself some tea.', 'She made themselves some tea.', 'She made herselfs some tea.'],
+      ['She taught herself to knit.', 'She taught themselves to knit.', 'She taught himself to knit.'],
+      ['He made himself a snack.', 'He made themselves a snack.', 'He made herself a snack.'],
+      ['She introduced herself to the class.', 'She introduced themselves to the class.', 'She introduced himself to the class.'],
+      ['He helped himself to some water.', 'He helped themselves to some water.', 'He helped herself to some water.'],
+      ['She reminded herself to practice.', 'She reminded themselves to practice.', 'She reminded himself to practice.'],
+      ['The girl prepared herself for school.', 'The girl prepared themselves for school.', 'The girl prepared himself for school.'],
+      ['He dressed himself quickly.', 'He dressed themselves quickly.', 'He dressed herself quickly.'],
+      ['The boy taught himself chess.', 'The boy taught themselves chess.', 'The boy taught herself chess.'],
+      ['She made herself some tea.', 'She made themselves some tea.', 'She made himself some tea.'],
     ],
   ),
   'sentence-capital': practiceSet(
@@ -173,15 +174,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence that begins correctly.',
     'The first word of every sentence begins with a capital letter.',
     [
-      ['The dog waited by the door.', 'the dog waited by the door.', 'THe dog waited by the door.'],
-      ['My class planted a garden.', 'my class planted a garden.', 'MY class planted a garden.'],
-      ['After lunch, we read quietly.', 'after lunch, we read quietly.', 'AFter lunch, we read quietly.'],
-      ['Tomorrow will be sunny.', 'tomorrow will be sunny.', 'TOmorrow will be sunny.'],
-      ['Everyone cheered at the end.', 'everyone cheered at the end.', 'EVeryone cheered at the end.'],
-      ['Our team practiced after school.', 'our team practiced after school.', 'OUr team practiced after school.'],
-      ['Rain tapped against the window.', 'rain tapped against the window.', 'RAin tapped against the window.'],
-      ['Later, we finished the puzzle.', 'later, we finished the puzzle.', 'LAter, we finished the puzzle.'],
-      ['Nothing moved in the hallway.', 'nothing moved in the hallway.', 'NOthing moved in the hallway.'],
+      ['The dog waited by the door.', 'the dog waited by the door.', 'the Dog waited by the door.'],
+      ['My class planted a garden.', 'my class planted a garden.', 'my Class planted a garden.'],
+      ['After lunch, we read quietly.', 'after lunch, we read quietly.', 'after Lunch, we read quietly.'],
+      ['Tomorrow will be sunny.', 'tomorrow will be sunny.', 'tomorrow will be Sunny.'],
+      ['Everyone cheered at the end.', 'everyone cheered at the end.', 'everyone Cheered at the end.'],
+      ['Our team practiced after school.', 'our team practiced after school.', 'our Team practiced after school.'],
+      ['Rain tapped against the window.', 'rain tapped against the window.', 'rain Tapped against the window.'],
+      ['Later, we finished the puzzle.', 'later, we finished the puzzle.', 'later, we Finished the puzzle.'],
+      ['Nothing moved in the hallway.', 'nothing moved in the hallway.', 'nothing Moved in the hallway.'],
     ],
   ),
   'pronoun-i': practiceSet(
@@ -189,15 +190,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence that capitalizes the pronoun “I.”',
     'The pronoun “I” is always capitalized.',
     [
-      ['My sister and I made dinner.', 'My sister and i made dinner.', 'My sister and II made dinner.'],
-      ['I finished my homework.', 'i finished my homework.', 'II finished my homework.'],
-      ['Sam and I rode our bikes.', 'Sam and i rode our bikes.', 'Sam and II rode our bikes.'],
-      ['When I arrived, class had started.', 'When i arrived, class had started.', 'When II arrived, class had started.'],
-      ['I think the answer is seven.', 'i think the answer is seven.', 'II think the answer is seven.'],
-      ['Dad and I cleaned the kitchen.', 'Dad and i cleaned the kitchen.', 'Dad and II cleaned the kitchen.'],
-      ['Maya and I read together.', 'Maya and i read together.', 'Maya and II read together.'],
-      ['After dinner, I washed the dishes.', 'After dinner, i washed the dishes.', 'After dinner, II washed the dishes.'],
-      ['Can I borrow your pencil?', 'Can i borrow your pencil?', 'Can II borrow your pencil?'],
+      ['My sister and I made dinner.', 'My sister and i made dinner.', 'my sister and i made dinner.'],
+      ['I finished my homework.', 'i finished my homework.', 'i Finished my homework.'],
+      ['Sam and I rode our bikes.', 'Sam and i rode our bikes.', 'sam and i rode our bikes.'],
+      ['When I arrived, class had started.', 'When i arrived, class had started.', 'when i arrived, class had started.'],
+      ['I think the answer is seven.', 'i think the answer is seven.', 'i Think the answer is seven.'],
+      ['Dad and I cleaned the kitchen.', 'Dad and i cleaned the kitchen.', 'dad and i cleaned the kitchen.'],
+      ['Maya and I read together.', 'Maya and i read together.', 'maya and i read together.'],
+      ['After dinner, I washed the dishes.', 'After dinner, i washed the dishes.', 'after dinner, i washed the dishes.'],
+      ['Can I borrow your pencil?', 'Can i borrow your pencil?', 'can i borrow your pencil?'],
     ],
   ),
   'calendar-capital': practiceSet(
@@ -221,15 +222,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence that capitalizes a person’s title and name correctly.',
     'A title and the person’s name each begin with one capital letter.',
     [
-      ['Dr. Lee read our stories.', 'dr. Lee read our stories.', 'DR. Lee read our stories.'],
-      ['Mr. Smith opened the door.', 'mr. smith opened the door.', 'MR. SMITH opened the door.'],
-      ['Ms. Rivera teaches science.', 'ms. Rivera teaches science.', 'MS. RIVERA teaches science.'],
-      ['Mrs. Green called the office.', 'mrs. green called the office.', 'MRS. GREEN called the office.'],
-      ['Dr. Brown checked the results.', 'dr. brown checked the results.', 'DR. BROWN checked the results.'],
-      ['Ms. Chen collected our papers.', 'ms. chen collected our papers.', 'MS. CHEN collected our papers.'],
-      ['Mr. Patel coaches our team.', 'mr. patel coaches our team.', 'MR. PATEL coaches our team.'],
-      ['Mrs. Jones leads the club.', 'mrs. jones leads the club.', 'MRS. JONES leads the club.'],
-      ['Dr. Garcia answered my question.', 'dr. garcia answered my question.', 'DR. GARCIA answered my question.'],
+      ['Dr. Lee read our stories.', 'dr. Lee read our stories.', 'Dr. lee read our stories.'],
+      ['Mr. Smith opened the door.', 'mr. Smith opened the door.', 'Mr. smith opened the door.'],
+      ['Ms. Rivera teaches science.', 'ms. Rivera teaches science.', 'Ms. rivera teaches science.'],
+      ['Mrs. Green called the office.', 'mrs. Green called the office.', 'Mrs. green called the office.'],
+      ['Dr. Brown checked the results.', 'dr. Brown checked the results.', 'Dr. brown checked the results.'],
+      ['Ms. Chen collected our papers.', 'ms. Chen collected our papers.', 'Ms. chen collected our papers.'],
+      ['Mr. Patel coaches our team.', 'mr. Patel coaches our team.', 'Mr. patel coaches our team.'],
+      ['Mrs. Jones leads the club.', 'mrs. Jones leads the club.', 'Mrs. jones leads the club.'],
+      ['Dr. Garcia answered my question.', 'dr. Garcia answered my question.', 'Dr. garcia answered my question.'],
     ],
   ),
   'proper-name-capital': practiceSet(
@@ -253,15 +254,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence with the contraction written correctly.',
     'A contraction uses one apostrophe to show where letters were removed.',
     [
-      ['I don’t need help yet.', 'I dont need help yet.', 'I don’’t need help yet.'],
-      ['She can’t find her notebook.', 'She cant find her notebook.', 'She can’’t find her notebook.'],
-      ['We won’t be late.', 'We wont be late.', 'We won’’t be late.'],
-      ['I’m ready to begin.', 'Im ready to begin.', 'I’’m ready to begin.'],
-      ['They’re waiting outside.', 'Theyre waiting outside.', 'They’’re waiting outside.'],
-      ['He isn’t here yet.', 'He isnt here yet.', 'He isn’’t here yet.'],
-      ['You’re welcome to join us.', 'Youre welcome to join us.', 'You’’re welcome to join us.'],
-      ['We’ll finish tomorrow.', 'Well finish tomorrow.', 'We’’ll finish tomorrow.'],
-      ['That’s my backpack.', 'Thats my backpack.', 'That’’s my backpack.'],
+      ['I don’t need help yet.', 'I dont need help yet.', 'I do’nt need help yet.'],
+      ['She can’t find her notebook.', 'She cant find her notebook.', 'She ca’nt find her notebook.'],
+      ['We won’t be late.', 'We wont be late.', 'We wo’nt be late.'],
+      ['I’m ready to begin.', 'Im ready to begin.', 'I’am ready to begin.'],
+      ['They’re waiting outside.', 'Theyre waiting outside.', 'They’are waiting outside.'],
+      ['He isn’t here yet.', 'He isnt here yet.', 'He is’nt here yet.'],
+      ['You’re welcome to join us.', 'Youre welcome to join us.', 'You’are welcome to join us.'],
+      ['We’ll finish tomorrow.', 'Well finish tomorrow.', 'We’ill finish tomorrow.'],
+      ['That’s my backpack.', 'Thats my backpack.', 'That’is my backpack.'],
     ],
   ),
   'intro-comma': practiceSet(
@@ -397,15 +398,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence that uses capitals correctly.',
     'An ordinary verb in the middle of a sentence begins with a lowercase letter unless it is part of a title or name.',
     [
-      ['I walked to the store.', 'I Walked to the store.', 'I WALKED to the store.'],
-      ['She played after school.', 'She Played after school.', 'She PLayed after school.'],
-      ['We visited the library.', 'We Visited the library.', 'We VIsited the library.'],
-      ['They bought a new game.', 'They Bought a new game.', 'They BOught a new game.'],
-      ['He opened the door.', 'He Opened the door.', 'He OPened the door.'],
-      ['I wrote a short story.', 'I Wrote a short story.', 'I WRote a short story.'],
-      ['She found her notebook.', 'She Found her notebook.', 'She FOund her notebook.'],
-      ['We finished the project.', 'We Finished the project.', 'We FInished the project.'],
-      ['They laughed at the joke.', 'They Laughed at the joke.', 'They LAughed at the joke.'],
+      ['I walked to the store.', 'I Walked to the store.', 'I walked to the Store.'],
+      ['She played after school.', 'She Played after school.', 'She played after School.'],
+      ['We visited the library.', 'We Visited the library.', 'We visited the Library.'],
+      ['They bought a new game.', 'They Bought a new game.', 'They bought a new Game.'],
+      ['He opened the door.', 'He Opened the door.', 'He opened the Door.'],
+      ['I wrote a short story.', 'I Wrote a short story.', 'I wrote a short Story.'],
+      ['She found her notebook.', 'She Found her notebook.', 'She found her Notebook.'],
+      ['We finished the project.', 'We Finished the project.', 'We finished the Project.'],
+      ['They laughed at the joke.', 'They Laughed at the joke.', 'They laughed at the Joke.'],
     ],
   ),
   'subject-verb-comma': practiceSet(
@@ -541,9 +542,9 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence that punctuates a direct address correctly.',
     'Use a comma to separate the name of the person being spoken to from the rest of the sentence.',
     [
-      ['Thanks, Mom.', 'Thanks Mom.', 'Thanks Mom,.'],
-      ['Hello, Fionnbar.', 'Hello Fionnbar.', 'Hello Fionnbar,.'],
-      ['Goodbye, Dad.', 'Goodbye Dad.', 'Goodbye Dad,.'],
+      ['Thanks, Mom.', 'Thanks Mom.', 'Thanks, Mom'],
+      ['Hello, Fionnbar.', 'Hello Fionnbar.', 'Hello, Fionnbar'],
+      ['Goodbye, Dad.', 'Goodbye Dad.', 'Goodbye, Dad'],
       ['Please listen, Maya.', 'Please listen Maya.', 'Please, listen Maya.'],
       ['Are you ready, Leo?', 'Are you ready Leo?', 'Are you, ready Leo?'],
       ['Come here, Sam.', 'Come here Sam.', 'Come, here Sam.'],
@@ -557,15 +558,15 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Choose the sentence with the correct ending punctuation.',
     'A complete sentence ends with one appropriate period, question mark, or exclamation mark.',
     [
-      ['The science project is finished.', 'The science project is finished', 'The science project is finished..'],
+      ['The science project is finished.', 'The science project is finished', 'The science project is finished,'],
       ['Where did I put my notebook?', 'Where did I put my notebook.', 'Where did I put my notebook'],
-      ['Watch out for the puddle!', 'Watch out for the puddle', 'Watch out for the puddle!!'],
-      ['She said, “Hello.”', 'She said, “Hello”', 'She said, “Hello..”'],
-      ['We arrived before noon.', 'We arrived before noon', 'We arrived before noon..'],
+      ['Watch out for the puddle!', 'Watch out for the puddle', 'Watch out for the puddle?'],
+      ['She said, “Hello.”', 'She said, “Hello”', 'She said, “Hello,”'],
+      ['We arrived before noon.', 'We arrived before noon', 'We arrived before noon,'],
       ['Did you finish the chapter?', 'Did you finish the chapter.', 'Did you finish the chapter'],
-      ['The library closes at five.', 'The library closes at five', 'The library closes at five..'],
+      ['The library closes at five.', 'The library closes at five', 'The library closes at five,'],
       ['Why is the sky blue?', 'Why is the sky blue.', 'Why is the sky blue'],
-      ['That was an amazing goal!', 'That was an amazing goal', 'That was an amazing goal!!'],
+      ['That was an amazing goal!', 'That was an amazing goal', 'That was an amazing goal,'],
     ],
   ),
 }
@@ -579,6 +580,24 @@ RULE_PRACTICE['quotation-punctuation-inside'] = RULE_PRACTICE['direct-dialogue-q
 RULE_PRACTICE['dialogue-tag-comma'] = RULE_PRACTICE['direct-dialogue-quotes']
 RULE_PRACTICE['dialogue-tag-capitalization'] = RULE_PRACTICE['direct-dialogue-quotes']
 RULE_PRACTICE['comma-splice'] = RULE_PRACTICE['fused-sentence-break']
+
+function assertReviewedPracticeQuality() {
+  const mechanicalError = /\bII\b|\b[A-Z]{2}[a-z]|([.!?,;:’])\1/u
+  for (const [ruleId, practice] of Object.entries(RULE_PRACTICE)) {
+    for (const item of practice) {
+      if (new Set(item.choices).size !== item.choices.length) {
+        throw new Error(`${ruleId} has duplicate reviewed quiz choices`)
+      }
+      if (item.choices.filter((choice) => choice === item.correctAnswer).length !== 1) {
+        throw new Error(`${ruleId} must contain exactly one declared answer`)
+      }
+      const malformed = item.choices.find((choice) => mechanicalError.test(choice))
+      if (malformed) throw new Error(`${ruleId} contains a mechanically generated distractor: ${malformed}`)
+    }
+  }
+}
+
+assertReviewedPracticeQuality()
 
 function sentenceBounds(body: string, index: number) {
   let start = index
@@ -614,8 +633,8 @@ function applyTextEdits(body: string, edits: WritingEdit[], base = 0) {
 }
 
 function editsOverlap(left: WritingEdit, right: WritingEdit) {
-  if (left.start === left.end) return left.start > right.start && left.start < right.end
-  if (right.start === right.end) return right.start > left.start && right.start < left.end
+  if (left.start === left.end) return left.start >= right.start && left.start <= right.end
+  if (right.start === right.end) return right.start >= left.start && right.start <= left.end
   return left.start < right.end && left.end > right.start
 }
 
@@ -634,21 +653,17 @@ function correctionTrial(body: string, input: FindingInput): WritingTrial {
   }
   const original = body.slice(bounds.start, bounds.end)
   const corrected = applyTextEdits(original, inputEdits(input), bounds.start)
-  const wrongReplacement = input.wrongReplacement ?? input.replacement.toUpperCase()
-  let distractor = applyTextEdits(original, [
-    { start: input.start, end: input.end, replacement: wrongReplacement },
-    ...(input.additionalEdits ?? []),
-  ], bounds.start)
-  if (distractor === original || distractor === corrected) distractor = `${corrected}.”`
-  const choices = rotateChoices([...new Set([original, corrected, distractor])], input.start)
-  while (choices.length < 3) choices.push(`${corrected}.`)
   const ruleExplanation = RULE_PRACTICE[input.ruleId]?.[0]?.explanation ?? input.suggestion
   return {
     id: `${input.ruleId}-${input.start}-correction`,
-    prompt: 'Choose the best correction for your original sentence.',
-    choices,
+    prompt: input.verifiedExternal
+      ? 'Choose the option that fixes only the identified part of your sentence.'
+      : 'Compare your original sentence with the exact correction.',
+    choices: rotateChoices([original, corrected], input.start),
     correctAnswer: corrected,
-    explanation: `${ruleExplanation} For your sentence, use “${input.replacement}”.`,
+    explanation: input.verifiedExternal
+      ? `${input.suggestion} This correction was verified in the context of your full passage.`
+      : `${ruleExplanation} For your sentence, use “${input.replacement}”.`,
   }
 }
 
@@ -666,7 +681,13 @@ function addFinding(body: string, findings: Finding[], input: FindingInput) {
     { length: 3 },
     (_, index) => practice[(practiceStart + index) % practice.length],
   )
-  const { contextStart: _contextStart, contextEnd: _contextEnd, wrongReplacement: _wrongReplacement, ...findingInput } = input
+  const {
+    contextStart: _contextStart,
+    contextEnd: _contextEnd,
+    wrongReplacement: _wrongReplacement,
+    verifiedExternal: _verifiedExternal,
+    ...findingInput
+  } = input
   findings.push({
     ...findingInput,
     id: `${input.ruleId}-${input.start}`,
@@ -692,10 +713,10 @@ function proofreadingCategory(match: ProofreadingMatch): Category {
 
 function proofreadingPracticeRule(match: ProofreadingMatch, replacement: string) {
   const rule = match.ruleId.toUpperCase()
-  if (rule === 'COMMA_COMPOUND_SENTENCE') return 'compound-sentence-comma'
-  if (rule === 'MISSING_COMMA_AFTER_INTRODUCTORY_PHRASE') return 'intro-comma'
-  if (rule === 'UPPERCASE_SENTENCE_START') return 'sentence-capital'
-  if (rule === 'HE_VERB_AGR') return 'subject-verb-singular'
+  if (rule === 'COMMA_COMPOUND_SENTENCE' || rule.includes('COMPOUND_SENTENCE_COMMA')) return 'compound-sentence-comma'
+  if (rule === 'MISSING_COMMA_AFTER_INTRODUCTORY_PHRASE' || rule.includes('INTRODUCTORY_COMMA')) return 'intro-comma'
+  if (rule === 'UPPERCASE_SENTENCE_START' || rule.includes('SENTENCE_CAPITAL')) return 'sentence-capital'
+  if (rule === 'HE_VERB_AGR' || rule.includes('SUBJECT_VERB_AGREEMENT')) return 'subject-verb-singular'
   if (rule === 'NON3PRS_VERB') return 'subject-verb-plural'
   if (rule === 'EN_A_VS_AN') return replacement.toLowerCase() === 'an' ? 'article-an' : 'article-a'
   if (rule === 'THIS_NNS') return 'demonstrative-agreement'
@@ -731,14 +752,10 @@ function proofreadingFinding(
   match: ProofreadingMatch,
   sameRuleIndex: number,
 ): Finding | null {
+  if (match.verification !== 'verified' || !['ai', 'parent'].includes(match.source ?? '')) return null
   const original = body.slice(match.offset, match.offset + match.length)
-  const nearbyText = body.slice(Math.max(0, match.offset - 12), match.offset + match.length + 18)
-  const contextualReplacement = original.toLowerCase() === 'gus'
-    && /\bthe\s+gus\s+(?:is|was|seems|looks|said)\b/i.test(nearbyText)
-    ? match.replacements.find((item) => item.toLowerCase() === 'guy')
-    : undefined
-  const replacement = contextualReplacement ?? match.replacements.find((item) => item !== original)
-  if (replacement === undefined) return null
+  const replacement = match.replacements.length === 1 ? match.replacements[0] : undefined
+  if (replacement === undefined || (match.length > 0 && replacement === original)) return null
   const category = proofreadingCategory(match)
   const safeRule = match.ruleId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'review'
   const ruleId = `proofreading-${safeRule}`
@@ -748,23 +765,17 @@ function proofreadingFinding(
     start: match.offset,
     end: match.offset + match.length,
     replacement,
-    message: match.message,
-    suggestion: `The local proofreading engine recommends “${replacement}”.`,
-    wrongReplacement: match.replacements.find((item) => item !== replacement && item !== original) ?? `${replacement}${replacement}`,
+    message: match.shortMessage || match.message,
+    suggestion: match.explanation ?? match.message,
+    verifiedExternal: true,
   }
   const mappedRule = proofreadingPracticeRule(match, replacement)
   const reviewedPractice = mappedRule ? RULE_PRACTICE[mappedRule] : null
-  const fallbackRule = category === 'Grammar'
-    ? 'subject-verb-singular'
-    : category === 'Capitalization'
-      ? 'sentence-capital'
-      : 'terminal-punctuation'
-  const practice = category === 'Spelling'
-    ? dynamicSpellingPractice(match, original, replacement)
-    : (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).slice(
-      (sameRuleIndex * 3) % (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).length,
-      ((sameRuleIndex * 3) % (reviewedPractice ?? RULE_PRACTICE[fallbackRule]).length) + 3,
-    )
+  const practice = reviewedPractice
+    ? Array.from({ length: Math.min(2, reviewedPractice.length) }, (_, index) => (
+      reviewedPractice[((sameRuleIndex * 2) + index) % reviewedPractice.length]
+    ))
+    : []
   return {
     ...input,
     id: `${ruleId}-${match.offset}`,
@@ -1510,9 +1521,11 @@ export function inspectWritingFindings(
   dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
   proofreadingMatches: ProofreadingMatch[] = [],
 ) {
-  const findings = [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
+  const deterministicFindings = [...inspectDraft(body, dictionary), ...inspectSpellingFindings(body, dictionary)]
+  const findings: Finding[] = []
   const ruleCounts = new Map<string, number>()
   for (const match of proofreadingMatches) {
+    if (match.verification !== 'verified') continue
     if (findings.some((finding) => findingOverlapsMatch(finding, match))) continue
     if (match.offset < 0 || match.length < 0 || match.offset + match.length > body.length) continue
     const count = ruleCounts.get(match.ruleId) ?? 0
@@ -1520,6 +1533,14 @@ export function inspectWritingFindings(
     if (!finding || findings.some((item) => finding.start < item.end && finding.end > item.start)) continue
     findings.push(finding)
     ruleCounts.set(match.ruleId, count + 1)
+  }
+  for (const finding of deterministicFindings) {
+    const overlapsVerified = findings.some((verified) => (
+      inputEdits(verified).some((verifiedEdit) => (
+        inputEdits(finding).some((deterministicEdit) => editsOverlap(verifiedEdit, deterministicEdit))
+      ))
+    ))
+    if (!overlapsVerified) findings.push(finding)
   }
   return findings.sort((left, right) => left.start - right.start || left.ruleId.localeCompare(right.ruleId))
 }
@@ -1720,12 +1741,14 @@ export function writingReviewStatus(
   progress: Record<string, FindingProgress>,
   spellingWords?: SpellingWord[],
   spellingProgress: Record<string, SpellingProgress> = {},
-): 'practice' | 'spelling-pending' | 'complete' {
+  pendingReviewCount = 0,
+): 'practice' | 'spelling-pending' | 'awaiting-review' | 'complete' {
   const complete = findings.every((finding) => {
     const item = progress[finding.id]
     return item?.correctionComplete && item.practiceCompleted >= finding.practice.length
   })
   if (!complete) return 'practice'
   if (!spellingWords) return 'spelling-pending'
-  return spellingPracticeComplete(spellingWords, spellingProgress) ? 'complete' : 'spelling-pending'
+  if (!spellingPracticeComplete(spellingWords, spellingProgress)) return 'spelling-pending'
+  return pendingReviewCount > 0 ? 'awaiting-review' : 'complete'
 }

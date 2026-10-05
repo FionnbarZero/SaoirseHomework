@@ -89,8 +89,51 @@ test('SQLite state survives closing and reopening the service', () => {
     assert.equal(restored.activeTimer.remainingSeconds, 917)
     assert.equal(restored.activeTimer.status, 'paused')
     assert.equal(restored.activeTimer.serverControlled, true)
-    assert.equal(reopened.info().schemaVersion, 24)
+    assert.equal(reopened.info().schemaVersion, 26)
     assert.equal(reopened.listAudit()[0].eventType, 'parent_completion_override')
+    reopened.close()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('stored writing quizzes migrate away from mechanically generated distractors', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fionnbar-quiz-choice-migration-'))
+  const filename = join(directory, 'homework.sqlite')
+
+  try {
+    const first = createStore(filename)
+    const state = sampleState()
+    state.activeTimer = null
+    state.drafts[0].body = 'today we begin.'
+    state.drafts[0].correctedBody = 'today we begin.'
+    state.drafts[0].exerciseProgress = {}
+    state.drafts[0].reviewStatus = 'practice'
+    first.saveState(state)
+
+    const finding = inspectDraft(state.drafts[0].body)[0]
+    const staleFinding = {
+      ...finding,
+      correction: {
+        ...finding.correction,
+        choices: ['today we begin.', 'Today we begin.', 'Ttoday we begin.'],
+      },
+    }
+    first.db.prepare(`UPDATE writing_submission SET findings_json = ? WHERE id = ?`)
+      .run(JSON.stringify([staleFinding]), state.drafts[0].id)
+    first.db.prepare(`DELETE FROM app_meta WHERE key = 'reviewed_quiz_choice_quality_v1_migrated'`).run()
+    first.close()
+
+    const reopened = createStore(filename)
+    const migrated = reopened.loadState().drafts[0].findings[0]
+    assert.deepEqual(new Set(migrated.correction.choices), new Set([
+      'today we begin.',
+      'Today we begin.',
+    ]))
+    assert.equal(
+      reopened.listAudit().some((event) => event.eventType === 'writing_quiz_choices_rebuilt'),
+      true,
+    )
     reopened.close()
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -101,13 +144,20 @@ test('AI parent-review suggestions remain attached to their draft across saves',
   const store = createStore(':memory:')
   const state = sampleState()
   state.activeTimer = null
+  state.drafts[0].body = 'Noone knows.'
+  state.drafts[0].correctedBody = 'Noone knows.'
   state.drafts[0].reviewSuggestions = [{
-    id: 'ai-subject-verb-0-8',
-    category: 'Grammar',
-    message: 'The subject and verb may not agree. Suggested change: “She walks”',
-    excerpt: 'She walk home.',
-    explanation: 'A singular subject needs a matching present-tense verb.',
-    suggestion: 'She walks',
+    id: 'ai-no-one-0-5',
+    category: 'Spelling',
+    message: 'Use two words when this means “not anyone.”',
+    excerpt: 'Noone knows.',
+    explanation: '“No one” is written as two words.',
+    suggestion: 'No one',
+    replacement: 'No one',
+    alternatives: ['No one'],
+    start: 0,
+    end: 5,
+    ruleId: 'AI_CONTEXTUAL_SPELLING',
     source: 'ai',
     confidence: 'medium',
   }]
@@ -120,6 +170,8 @@ test('AI parent-review suggestions remain attached to their draft across saves',
 
   const confirmed = store.setWritingReviewStatus(aiItem.id, 'resolved', 'confirmed')
   assert.equal(confirmed.writingReviewQueue.find((item) => item.id === aiItem.id)?.decision, 'confirmed')
+  assert.equal(confirmed.drafts[0].findings.some((finding) => finding.replacement === 'No one'), true)
+  assert.equal(confirmed.drafts[0].reviewStatus, 'practice')
 
   const savedAgain = store.saveState(confirmed)
   assert.equal(savedAgain.writingReviewQueue.some((item) => item.source === 'ai'), true)
@@ -161,7 +213,7 @@ test('a persisted blank writing workspace remains a draft and preserves earlier 
   store.close()
 })
 
-test('server-validated local proofreading matches persist and are recomputed into findings', () => {
+test('unverified local proofreading candidates persist but never become child findings', () => {
   const store = createStore(':memory:')
   const state = sampleState()
   state.drafts[0] = {
@@ -177,6 +229,8 @@ test('server-validated local proofreading matches persist and are recomputed int
       ruleId: 'MORFOLOGIK_RULE_EN_US',
       category: 'Possible Typo',
       issueType: 'misspelling',
+      source: 'languagetool',
+      verification: 'candidate',
     }],
     findings: [],
     exerciseProgress: {},
@@ -185,8 +239,8 @@ test('server-validated local proofreading matches persist and are recomputed int
 
   const saved = store.saveState(state)
   assert.deepEqual(saved.drafts[0].proofreadingMatches.map((match) => match.replacements), [['quick', 'quirk']])
-  assert.equal(saved.drafts[0].findings.find((finding) => finding.start === 2)?.replacement, 'quick')
-  assert.equal(saved.drafts[0].reviewStatus, 'practice')
+  assert.equal(saved.drafts[0].findings.find((finding) => finding.start === 2), undefined)
+  assert.equal(saved.drafts[0].reviewStatus, 'complete')
   store.close()
 })
 

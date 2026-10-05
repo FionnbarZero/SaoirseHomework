@@ -131,8 +131,13 @@ test('every generated answer set has exactly one reviewed correct choice', () =>
 
   for (const finding of drafts.flatMap((draft) => inspectWritingFindings(draft))) {
     assert.equal(finding.practice.length, 3)
+    if (!finding.ruleId.startsWith('spelling-reviewed-')) {
+      assert.equal(new Set(finding.correction.choices).size, 2, `${finding.correction.id} should compare the original with one exact correction`)
+    }
+    for (const trial of finding.practice) {
+      assert.equal(new Set(trial.choices).size, 3, `${trial.id} should have three reviewed choices`)
+    }
     for (const trial of [finding.correction, ...finding.practice]) {
-      assert.equal(new Set(trial.choices).size, 3, `${trial.id} should have three unique choices`)
       assert.equal(trial.choices.filter((choice) => choice === trial.correctAnswer).length, 1)
       assert.equal(evaluateWritingChoice(trial, trial.correctAnswer).correct, true)
       for (const choice of trial.choices.filter((item) => item !== trial.correctAnswer)) {

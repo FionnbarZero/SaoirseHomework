@@ -8,7 +8,7 @@ import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
-import { createProofreader } from './proofreader.mjs'
+import { createProofreader, proofreadingReviewItems } from './proofreader.mjs'
 import { createAiProofreader } from './ai-proofreader.mjs'
 import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mjs'
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
@@ -152,12 +152,6 @@ function sendHtml(response, status, body) {
     'Cache-Control': 'no-store',
   })
   response.end(body)
-}
-
-function proofreadingMatchesOverlap(left, right) {
-  const leftEnd = left.offset + left.length
-  const rightEnd = right.offset + right.length
-  return left.offset < rightEnd && leftEnd > right.offset
 }
 
 function requestCookie(request, name) {
@@ -501,10 +495,8 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/proofread' && request.method === 'POST') {
       const body = await readJson(request)
       const mode = store.getAiProofreadingMode()
-      const [localResult, aiResult] = await Promise.all([
-        proofreader.check(body.text),
-        aiProofreader.check(body.text, mode),
-      ])
+      const localResult = await proofreader.check(body.text)
+      const aiResult = await aiProofreader.check(body.text, mode, localResult.matches)
       if (aiResult.analyzed) {
         store.addAudit('ai_proofreading_completed', {
           mode: aiResult.mode,
@@ -517,18 +509,19 @@ const server = createServer(async (request, response) => {
           reason: aiResult.configured ? 'provider_unavailable' : 'not_configured',
         })
       }
-      const aiMatches = aiResult.matches.filter((candidate) => (
-        !localResult.matches.some((localMatch) => proofreadingMatchesOverlap(localMatch, candidate))
-      ))
+      const reviewItems = aiResult.analyzed
+        ? aiResult.reviewItems
+        : proofreadingReviewItems(String(body.text ?? ''), localResult.matches)
       return sendJson(response, 200, {
         available: localResult.available || aiResult.analyzed,
         engine: [
           localResult.engine,
           aiResult.analyzed ? `${aiResult.provider} · ${aiResult.mode}` : null,
         ].filter(Boolean).join(' + '),
-        matches: [...localResult.matches, ...aiMatches],
+        matches: aiResult.matches,
+        reviewItems,
         ...(localResult.error ? { error: localResult.error } : {}),
-        ai: { ...aiResult, matches: aiMatches },
+        ai: aiResult,
       })
     }
 
@@ -926,6 +919,7 @@ const server = createServer(async (request, response) => {
         decodeURIComponent(writingReviewMatch[1]),
         body.status,
         body.decision,
+        body.replacement,
       )
       return sendJson(response, 200, { state, meta: store.info() })
     }

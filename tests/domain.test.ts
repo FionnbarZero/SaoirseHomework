@@ -49,8 +49,27 @@ test('the deterministic writing rules cover high-confidence grammar cases', () =
     ['tense-yesterday', 'subject-verb-singular', 'demonstrative-agreement'],
   )
   assert.equal(findings.every((finding) => finding.practice.length === 3), true)
-  assert.equal(findings.every((finding) => finding.correction.choices.length === 3), true)
+  assert.equal(findings.every((finding) => finding.correction.choices.length === 2), true)
   assert.equal(inspectDraft('Yesterday I walked home. She plays games with these books.').length, 0)
+})
+
+test('capitalization quizzes use exact corrections and realistic reviewed distractors', () => {
+  const sentenceStart = inspectDraft('today we begin.').find((finding) => finding.ruleId === 'sentence-capital')
+  const midword = inspectDraft('I Walked home.').find((finding) => finding.ruleId === 'unexpected-midword-capital')
+  assert.ok(sentenceStart)
+  assert.ok(midword)
+
+  assert.deepEqual(new Set(sentenceStart.correction.choices), new Set([
+    'today we begin.',
+    'Today we begin.',
+  ]))
+  for (const trial of [...sentenceStart.practice, ...midword.practice]) {
+    assert.equal(
+      trial.choices.some((choice) => /\b[A-Z]{2}[a-z]/.test(choice)),
+      false,
+      `${trial.id} should not contain a mechanically mangled mixed-case word`,
+    )
+  }
 })
 
 test('sentence-start contractions and articles keep their capitalization', () => {
@@ -226,16 +245,20 @@ test('the checker repairs the reported goldfish passage without trusting the fir
       ruleId: 'MORFOLOGIK_RULE_EN_US',
       category: 'Possible Typo',
       issueType: 'misspelling',
+      source: 'ai',
+      verification: 'verified',
     },
     {
       offset: body.indexOf('gus'),
       length: 'gus'.length,
       message: 'Possible spelling mistake found.',
       shortMessage: 'Spelling mistake',
-      replacements: ['Gus', 'us', 'gas', 'bus', 'gun', 'guns', 'guy'],
-      ruleId: 'MORFOLOGIK_RULE_EN_US',
-      category: 'Possible Typo',
-      issueType: 'misspelling',
+      replacements: ['guy'],
+      ruleId: 'AI_CONTEXTUAL_SPELLING',
+      category: 'Spelling',
+      issueType: 'ai-spelling',
+      source: 'ai',
+      verification: 'verified',
     },
     {
       offset: body.indexOf('what up'),
@@ -262,7 +285,7 @@ test('the checker repairs the reported goldfish passage without trusting the fir
   }
   assert.equal(findings.filter((finding) => finding.ruleId === 'comma-splice').length, 2)
   assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.replacement, 'guy')
-  assert.equal(findings.every((finding) => finding.practice.length === 3), true)
+  assert.equal(findings.find((finding) => finding.start === body.indexOf('gus'))?.practice.length, 0)
   assert.equal(findings.every((finding) => finding.correction.choices.includes(finding.correction.correctAnswer)), true)
 
   const progress = Object.fromEntries(findings.map((finding) => [finding.id, {
@@ -422,7 +445,7 @@ test('the checker repairs the audited Eddie passage without teaching comma splic
   )
 })
 
-test('local proofreader findings add broad spelling coverage without overriding reviewed corrections', () => {
+test('local proofreader candidates never override reviewed corrections or enter child practice', () => {
   const body = 'Eddie cbouts a qwick snack.'
   const findings = inspectWritingFindings(body, undefined, [
     {
@@ -434,6 +457,8 @@ test('local proofreader findings add broad spelling coverage without overriding 
       ruleId: 'MORFOLOGIK_RULE_EN_US',
       category: 'Possible Typo',
       issueType: 'misspelling',
+      source: 'languagetool',
+      verification: 'candidate',
     },
     {
       offset: 15,
@@ -444,15 +469,13 @@ test('local proofreader findings add broad spelling coverage without overriding 
       ruleId: 'MORFOLOGIK_RULE_EN_US',
       category: 'Possible Typo',
       issueType: 'misspelling',
+      source: 'languagetool',
+      verification: 'candidate',
     },
   ])
 
   assert.equal(findings.find((finding) => finding.start === 6)?.replacement, 'bought')
-  const broadFinding = findings.find((finding) => finding.start === 15)
-  assert.equal(broadFinding?.replacement, 'quick')
-  assert.equal(broadFinding?.category, 'Spelling')
-  assert.equal(broadFinding?.practice.length, 3)
-  assert.equal(broadFinding?.practice.every((trial) => trial.correctAnswer.includes('quick')), true)
+  assert.equal(findings.find((finding) => finding.start === 15), undefined)
 })
 
 test('ambiguous writing suggestions enter a non-blocking parent review queue', () => {

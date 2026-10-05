@@ -98,6 +98,12 @@ export type ProofreadingMatch = {
   ruleId: string
   category: string
   issueType: string
+  source?: 'languagetool' | 'ai' | 'parent'
+  verification?: 'candidate' | 'verified'
+  confidence?: 'high' | 'medium' | 'low'
+  issueCode?: string
+  explanation?: string
+  reviewId?: string
 }
 
 export type WritingReviewItem = {
@@ -108,8 +114,13 @@ export type WritingReviewItem = {
   excerpt: string
   explanation?: string
   suggestion?: string
-  source?: 'local' | 'ai'
+  source?: 'local' | 'languagetool' | 'ai'
   confidence?: 'high' | 'medium' | 'low'
+  start?: number
+  end?: number
+  replacement?: string
+  alternatives?: string[]
+  ruleId?: string
   status: 'pending' | 'resolved'
   decision?: 'confirmed' | 'dismissed'
   createdAt: string
@@ -134,7 +145,7 @@ export type Draft = {
   exerciseProgress?: Record<string, FindingProgress>
   spellingWords?: SpellingWord[]
   spellingProgress?: Record<string, SpellingProgress>
-  reviewStatus?: 'draft' | 'practice' | 'spelling-pending' | 'complete'
+  reviewStatus?: 'draft' | 'practice' | 'spelling-pending' | 'awaiting-review' | 'complete'
 }
 
 export type RewardCredit = {

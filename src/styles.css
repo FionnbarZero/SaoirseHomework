@@ -502,6 +502,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .writing-review-row > div strong { font-size: 10px; line-height: 1.35; }
 .writing-review-row > div p { margin: 4px 0 0; overflow: hidden; color: #8c918d; font-family: Georgia, serif; font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .writing-review-row > div .review-explanation { color: #68756f; font-family: Inter, ui-rounded, sans-serif; white-space: normal; }
+.writing-review-row > div label { margin-top: 8px; display: grid; gap: 4px; }
+.writing-review-row > div label > span { color: #68756f; font-size: 7px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.writing-review-row > div label input { width: 100%; border: 1px solid #d6d0c5; border-radius: 8px; padding: 7px 8px; color: var(--ink); background: white; font: inherit; font-size: 9px; }
 .review-decision-actions { display: flex; align-items: center; gap: 5px; }
 .writing-review-row.resolved { opacity: .58; }
 .google-proof-panel { margin-top: 18px; }

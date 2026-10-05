@@ -114,6 +114,7 @@ export type ProofreadingResponse = {
   available: boolean
   engine: string
   matches: ProofreadingMatch[]
+  reviewItems: WritingReviewSuggestion[]
   ai: AiProofreadingResult
   error?: string
 }
@@ -287,10 +288,11 @@ export function saveWritingReviewStatus(
   id: string,
   status: 'pending' | 'resolved',
   decision?: 'confirmed' | 'dismissed',
+  replacement?: string,
 ) {
   return request<StateResponse>(`/api/parent/writing-reviews/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    body: JSON.stringify({ status, decision }),
+    body: JSON.stringify({ status, decision, replacement }),
   })
 }
 

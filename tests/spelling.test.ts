@@ -88,4 +88,5 @@ test('writing completion remains fail-closed until spelling practice finishes', 
     incorrectAttempts: 2,
   }]))
   assert.equal(writingReviewStatus([], {}, words, complete), 'complete')
+  assert.equal(writingReviewStatus([], {}, [], {}, 1), 'awaiting-review')
 })

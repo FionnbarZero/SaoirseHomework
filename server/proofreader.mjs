@@ -30,6 +30,9 @@ export function normalizeProofreadingMatches(value, text) {
     )].slice(0, 8)
     if (!Number.isFinite(offset) || !Number.isFinite(matchLength) || offset < 0 || matchLength < 0) return []
     if (offset + matchLength > length || replacements.length === 0) return []
+    const source = ['languagetool', 'ai', 'parent'].includes(item?.source) ? item.source : undefined
+    const verification = ['candidate', 'verified'].includes(item?.verification) ? item.verification : undefined
+    const confidence = ['high', 'medium', 'low'].includes(item?.confidence) ? item.confidence : undefined
     return [{
       offset,
       length: matchLength,
@@ -39,6 +42,59 @@ export function normalizeProofreadingMatches(value, text) {
       ruleId: String(item?.ruleId ?? item?.rule?.id ?? 'proofreading').slice(0, 120),
       category: String(item?.category ?? item?.rule?.category?.name ?? '').slice(0, 120),
       issueType: String(item?.issueType ?? item?.rule?.issueType ?? '').slice(0, 80),
+      ...(source ? { source } : {}),
+      ...(verification ? { verification } : {}),
+      ...(confidence ? { confidence } : {}),
+      ...(item?.issueCode ? { issueCode: String(item.issueCode).slice(0, 80) } : {}),
+      ...(item?.explanation ? { explanation: String(item.explanation).slice(0, 500) } : {}),
+      ...(item?.reviewId ? { reviewId: String(item.reviewId).slice(0, 240) } : {}),
+    }]
+  })
+}
+
+function reviewCategory(match) {
+  const rule = String(match.ruleId).toUpperCase()
+  const description = `${match.category} ${match.issueType}`.toLowerCase()
+  if (rule.includes('UPPERCASE') || description.includes('capitalization') || description.includes('casing')) {
+    return 'Capitalization'
+  }
+  if (rule.includes('COMMA') || rule.includes('PUNCT') || rule.includes('APOSTROPHE') || description.includes('punctuation')) {
+    return 'Punctuation'
+  }
+  if (rule.includes('MORFOLOGIK') || rule.includes('SPELLING') || description.includes('typo') || description.includes('misspelling')) {
+    return 'Spelling'
+  }
+  return 'Grammar'
+}
+
+function sentenceExcerpt(text, offset, length) {
+  let start = Math.max(0, offset)
+  while (start > 0 && !/[.!?\n]/.test(text[start - 1])) start -= 1
+  let end = Math.min(text.length, offset + length)
+  while (end < text.length && !/[.!?\n]/.test(text[end])) end += 1
+  if (end < text.length && /[.!?]/.test(text[end])) end += 1
+  return text.slice(start, end).trim().slice(0, 500)
+}
+
+export function proofreadingReviewItems(text, matches) {
+  return matches.flatMap((match, index) => {
+    const issueType = String(match.issueType).toLowerCase()
+    if (issueType === 'style' || String(match.ruleId).toUpperCase().includes('STYLE')) return []
+    const alternatives = match.replacements.slice(0, 8)
+    if (alternatives.length === 0) return []
+    return [{
+      id: `languagetool-${index}-${match.offset}-${match.length}-${String(match.ruleId).toLowerCase()}`,
+      category: reviewCategory(match),
+      message: `${match.message} LanguageTool suggestions are not automatically trusted.`,
+      excerpt: sentenceExcerpt(text, match.offset, match.length),
+      explanation: 'Choose a replacement only if it preserves the sentence meaning, grammar, and proper names.',
+      suggestion: alternatives.join(' / '),
+      alternatives,
+      start: match.offset,
+      end: match.offset + match.length,
+      ruleId: match.ruleId,
+      source: 'languagetool',
+      confidence: 'medium',
     }]
   })
 }
@@ -66,8 +122,12 @@ export function createProofreader(options = {}) {
         const result = await response.json()
         return {
           available: true,
-          engine: `LanguageTool ${String(result?.software?.version ?? 'local')}`,
-          matches: normalizeProofreadingMatches(result?.matches, text),
+          engine: `LanguageTool ${String(result?.software?.version ?? 'local')} candidate scan`,
+          matches: normalizeProofreadingMatches(result?.matches, text).map((match) => ({
+            ...match,
+            source: 'languagetool',
+            verification: 'candidate',
+          })),
         }
       } catch (error) {
         return {

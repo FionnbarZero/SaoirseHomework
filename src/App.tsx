@@ -1154,6 +1154,9 @@ function WritingView({
     ? inspectSpelling(reviewDraft.body, state.writingDictionary)
     : reviewDraft?.spellingWords ?? analysis.spellingWords
   const reviewSpellingProgress = reviewDraft?.spellingProgress ?? {}
+  const pendingReviewCount = reviewDraft
+    ? state.writingReviewQueue.filter((item) => item.draftId === reviewDraft.id && item.status === 'pending').length
+    : 0
   const activeFinding = reviewFindings.find((finding) => {
     const progress = reviewProgress[finding.id]
     return !progress?.correctionComplete || progress.practiceCompleted < finding.practice.length
@@ -1183,7 +1186,7 @@ function WritingView({
     { name: 'Grammar', label: 'Agreement, articles, and basic tense' },
     { name: 'Capitalization', label: 'Sentence starts and known names' },
     { name: 'Punctuation', label: 'Sentence breaks, commas, and quotations' },
-    { name: 'Spelling', label: 'Reviewed common misspellings only' },
+    { name: 'Spelling', label: 'Reviewed or context-verified spelling' },
   ] as const
 
   const writingLogFingerprint = state.drafts
@@ -1299,6 +1302,7 @@ function WritingView({
         available: false,
         engine: 'reviewed offline rules',
         matches: [],
+        reviewItems: [],
         ai: {
           configured: false,
           mode: 'off' as const,
@@ -1332,7 +1336,7 @@ function WritingView({
         : existingDraft?.versionNumber ?? 1
       const reviewSuggestions = [
         ...analysis.reviewItems,
-        ...proofreading.ai.reviewItems,
+        ...proofreading.reviewItems,
       ]
       const draft: Draft = {
         id: draftId,
@@ -1350,7 +1354,13 @@ function WritingView({
         exerciseProgress: {},
         spellingWords: analysis.spellingWords,
         spellingProgress: {},
-        reviewStatus: writingReviewStatus(checkedFindings, {}, analysis.spellingWords, {}),
+        reviewStatus: writingReviewStatus(
+          checkedFindings,
+          {},
+          analysis.spellingWords,
+          {},
+          reviewSuggestions.length,
+        ),
       }
       const createdAt = new Date().toISOString()
       setState((current) => {
@@ -1478,6 +1488,7 @@ function WritingView({
               nextProgress,
               reviewSpellingWords,
               reviewSpellingProgress,
+              pendingReviewCount,
             ),
             updatedAt: new Date().toISOString(),
           }
@@ -1499,7 +1510,7 @@ function WritingView({
             exerciseProgress: skippedProgress,
             spellingWords: [],
             spellingProgress: {},
-            reviewStatus: 'complete',
+            reviewStatus: pendingReviewCount > 0 ? 'awaiting-review' : 'complete',
             updatedAt: new Date().toISOString(),
           }
         : draft),
@@ -1547,6 +1558,7 @@ function WritingView({
               reviewProgress,
               reviewSpellingWords,
               result.progress,
+              pendingReviewCount,
             ),
             updatedAt: new Date().toISOString(),
           }
@@ -1700,9 +1712,17 @@ function WritingView({
             </form>
           ) : (
             <div className="writing-complete">
-              <span><Check size={24} /></span>
-              <h3>{reviewFindings.length || reviewSpellingWords.length ? 'Correction game complete!' : 'This version is correct!'}</h3>
-              <p>{reviewFindings.length || reviewSpellingWords.length ? 'This version is saved. Return to your writing, make the corrections yourself, and check the next version.' : 'No supported errors remain. Every saved version will be included in the weekly document.'}</p>
+              <span>{pendingReviewCount > 0 ? <ShieldCheck size={24} /> : <Check size={24} />}</span>
+              <h3>{pendingReviewCount > 0
+                ? 'Waiting for parent review'
+                : reviewFindings.length || reviewSpellingWords.length
+                  ? 'Correction game complete!'
+                  : 'This version is correct!'}</h3>
+              <p>{pendingReviewCount > 0
+                ? `${pendingReviewCount} contextual ${pendingReviewCount === 1 ? 'suggestion needs' : 'suggestions need'} a parent decision before this version can be called complete.`
+                : reviewFindings.length || reviewSpellingWords.length
+                  ? 'This version is saved. Return to your writing, make the corrections yourself, and check the next version.'
+                  : 'No supported errors remain. Every saved version will be included in the weekly document.'}</p>
               {writingScore.total > 0 && (
                 <div className="writing-score-card">
                   <small>FIRST-TRY SCORE</small>
@@ -1712,7 +1732,9 @@ function WritingView({
                 </div>
               )}
               {reviewFindings.length > 0 && reviewDraft?.correctedBody && <div className="corrected-preview">{reviewDraft.correctedBody}</div>}
-              {reviewFindings.length > 0 ? (
+              {pendingReviewCount > 0 ? (
+                <div className="spelling-pending"><ShieldCheck size={16} /><p><strong>Parent review required.</strong> Open Parent → Writing review tools to confirm or dismiss each contextual suggestion.</p></div>
+              ) : reviewFindings.length > 0 ? (
                 <button className="primary-button full-button" onClick={beginRevision}>Revise my writing</button>
               ) : (
                 <>
@@ -2037,6 +2059,7 @@ function ParentView({
   const [aiProofreadingMode, setAiProofreadingMode] = useState<AiProofreadingMode>('off')
   const [aiProofreadingBusy, setAiProofreadingBusy] = useState(false)
   const [aiProofreadingMessage, setAiProofreadingMessage] = useState('')
+  const [reviewReplacements, setReviewReplacements] = useState<Record<string, string>>({})
 
   useEffect(() => {
     const receiveAuthorization = (event: MessageEvent) => {
@@ -2130,8 +2153,12 @@ function ParentView({
 
   const reviewWritingSuggestion = async (id: string, decision?: 'confirmed' | 'dismissed') => {
     const status = decision ? 'resolved' : 'pending'
+    const item = state.writingReviewQueue.find((candidate) => candidate.id === id)
+    const replacement = decision === 'confirmed'
+      ? reviewReplacements[id] ?? item?.replacement
+      : undefined
     try {
-      const response = await saveWritingReviewStatus(id, status, decision)
+      const response = await saveWritingReviewStatus(id, status, decision, replacement)
       setState(response.state)
     } catch (error) {
       setWritingConfigurationMessage(error instanceof Error ? error.message : 'The review status could not be saved.')
@@ -2397,7 +2424,7 @@ function ParentView({
       </div>
       <div className="parent-panel writing-review-panel">
         <div className="panel-heading">
-          <div><h3>Writing review tools</h3><p>Teach the local checker known capitalization and review ambiguous, non-blocking suggestions.</p></div>
+          <div><h3>Writing review tools</h3><p>Teach known capitalization and decide contextual suggestions before a draft can be completed.</p></div>
           <span className="mock-badge">{state.writingReviewQueue.filter((item) => item.status === 'pending').length} TO REVIEW</span>
         </div>
         <div className="writing-tools-grid">
@@ -2425,16 +2452,45 @@ function ParentView({
             {writingConfigurationMessage && <p className="google-proof-message" role="status">{writingConfigurationMessage}</p>}
           </div>
           <div className="writing-review-list">
-            <div className="delivery-heading"><strong>Parent review findings</strong><small>These never block writing practice</small></div>
+            <div className="delivery-heading"><strong>Parent review findings</strong><small>Pending decisions block final completion</small></div>
             {state.writingReviewQueue.length === 0 ? (
               <div className="completion-empty">No ambiguous writing findings are waiting for parent review.</div>
             ) : state.writingReviewQueue.slice().reverse().slice(0, 10).map((item) => (
               <div className={`writing-review-row ${item.status}`} key={item.id}>
-                <span><strong>{item.category}</strong><small>{item.source === 'ai' ? `AI · ${item.confidence ?? 'review'} · ${item.decision ?? item.status}` : item.decision ?? item.status}</small></span>
-                <div><strong>{item.message}</strong><p>{item.excerpt}</p>{item.explanation && <p className="review-explanation">{item.explanation}</p>}</div>
+                <span><strong>{item.category}</strong><small>{item.source === 'ai'
+                  ? `AI verified workflow · ${item.confidence ?? 'review'} · ${item.decision ?? item.status}`
+                  : item.source === 'languagetool'
+                    ? `LanguageTool candidate · ${item.decision ?? item.status}`
+                    : item.decision ?? item.status}</small></span>
+                <div>
+                  <strong>{item.message}</strong>
+                  <p>{item.excerpt}</p>
+                  {item.explanation && <p className="review-explanation">{item.explanation}</p>}
+                  {item.status === 'pending' && typeof item.start === 'number' && typeof item.end === 'number' && (
+                    <label>
+                      <span>Parent-approved replacement</span>
+                      <input
+                        value={reviewReplacements[item.id] ?? item.replacement ?? ''}
+                        onChange={(event) => setReviewReplacements((current) => ({ ...current, [item.id]: event.target.value }))}
+                        list={`review-options-${item.id}`}
+                      />
+                      {item.alternatives && item.alternatives.length > 0 && (
+                        <datalist id={`review-options-${item.id}`}>
+                          {item.alternatives.map((alternative) => <option key={alternative} value={alternative} />)}
+                        </datalist>
+                      )}
+                    </label>
+                  )}
+                </div>
                 {item.status === 'pending' ? (
                   <span className="review-decision-actions">
-                    <button className="row-button" onClick={() => reviewWritingSuggestion(item.id, 'confirmed')}>Confirm</button>
+                    {typeof item.start === 'number' && typeof item.end === 'number' && (
+                      <button
+                        className="row-button"
+                        disabled={!(reviewReplacements[item.id] ?? item.replacement ?? '').trim()}
+                        onClick={() => reviewWritingSuggestion(item.id, 'confirmed')}
+                      >Confirm correction</button>
+                    )}
                     <button className="row-button" onClick={() => reviewWritingSuggestion(item.id, 'dismissed')}>Dismiss</button>
                   </span>
                 ) : (

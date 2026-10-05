@@ -15,11 +15,11 @@ import {
   writingReviewStatus,
 } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
-import { normalizeProofreadingMatches } from './proofreader.mjs'
+import { normalizeProofreadingMatches, proofreadingReviewItems } from './proofreader.mjs'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const SCHEMA_VERSION = 24
+const SCHEMA_VERSION = 26
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
 const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
@@ -132,6 +132,13 @@ function normalizeWritingReviewQueue(value) {
     const id = String(item?.id ?? '').slice(0, 240)
     const draftId = String(item?.draftId ?? '').slice(0, 160)
     if (!id || !draftId) return []
+    const start = Number(item.start)
+    const end = Number(item.end)
+    const hasEdit = Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start
+    const alternatives = Array.isArray(item.alternatives)
+      ? [...new Set(item.alternatives.map((entry) => String(entry).slice(0, 400)).filter(Boolean))].slice(0, 8)
+      : []
+    const source = ['local', 'languagetool', 'ai'].includes(item.source) ? item.source : 'local'
     return [{
       id,
       draftId,
@@ -140,10 +147,14 @@ function normalizeWritingReviewQueue(value) {
       excerpt: String(item.excerpt ?? '').slice(0, 500),
       ...(item.explanation ? { explanation: String(item.explanation).slice(0, 500) } : {}),
       ...(item.suggestion ? { suggestion: String(item.suggestion).slice(0, 400) } : {}),
-      ...(item.source === 'ai' ? { source: 'ai' } : { source: 'local' }),
+      source,
       ...(item.confidence && ['high', 'medium', 'low'].includes(item.confidence)
         ? { confidence: item.confidence }
         : {}),
+      ...(hasEdit ? { start, end } : {}),
+      ...(item.replacement ? { replacement: String(item.replacement).slice(0, 400) } : {}),
+      ...(alternatives.length ? { alternatives } : {}),
+      ...(item.ruleId ? { ruleId: String(item.ruleId).slice(0, 120) } : {}),
       status: item.status === 'resolved' ? 'resolved' : 'pending',
       ...(item.status === 'resolved' && ['confirmed', 'dismissed'].includes(item.decision)
         ? { decision: item.decision }
@@ -159,6 +170,13 @@ function normalizeWritingReviewSuggestions(value) {
   return value.slice(-100).flatMap((item) => {
     const id = String(item?.id ?? '').slice(0, 200)
     if (!id) return []
+    const start = Number(item.start)
+    const end = Number(item.end)
+    const hasEdit = Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start
+    const alternatives = Array.isArray(item.alternatives)
+      ? [...new Set(item.alternatives.map((entry) => String(entry).slice(0, 400)).filter(Boolean))].slice(0, 8)
+      : []
+    const source = ['local', 'languagetool', 'ai'].includes(item.source) ? item.source : 'local'
     return [{
       id,
       category: ['Grammar', 'Punctuation', 'Capitalization', 'Spelling'].includes(item.category) ? item.category : 'Grammar',
@@ -166,10 +184,14 @@ function normalizeWritingReviewSuggestions(value) {
       excerpt: String(item.excerpt ?? '').slice(0, 500),
       ...(item.explanation ? { explanation: String(item.explanation).slice(0, 500) } : {}),
       ...(item.suggestion ? { suggestion: String(item.suggestion).slice(0, 400) } : {}),
-      source: item.source === 'ai' ? 'ai' : 'local',
+      source,
       ...(item.confidence && ['high', 'medium', 'low'].includes(item.confidence)
         ? { confidence: item.confidence }
         : {}),
+      ...(hasEdit ? { start, end } : {}),
+      ...(item.replacement ? { replacement: String(item.replacement).slice(0, 400) } : {}),
+      ...(alternatives.length ? { alternatives } : {}),
+      ...(item.ruleId ? { ruleId: String(item.ruleId).slice(0, 120) } : {}),
     }]
   })
 }
@@ -177,7 +199,7 @@ function normalizeWritingReviewSuggestions(value) {
 function reviewSuggestionsForDraft(body, value) {
   const suggestions = [
     ...inspectAmbiguousDraft(body),
-    ...normalizeWritingReviewSuggestions(value).filter((item) => item.source === 'ai'),
+    ...normalizeWritingReviewSuggestions(value),
   ]
   return [...new Map(suggestions.map((item) => [item.id, item])).values()]
 }
@@ -950,6 +972,142 @@ export function createStore(filename, options = {}) {
     }
   }
 
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'verified_proofreading_pipeline_v1_migrated'`).get()?.value !== '1') {
+    const dictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const existingQueue = normalizeWritingReviewQueue(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_review_queue'`).get()?.value ?? '[]',
+      [],
+    ))
+    const existingById = new Map(existingQueue.map((item) => [item.id, item]))
+    const drafts = db.prepare(`
+      SELECT id, body, proofreading_matches_json, review_suggestions_json, exercise_progress_json,
+             spelling_words_json, spelling_progress_json
+      FROM writing_submission
+    `).all()
+    const migratedQueue = []
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updateDraft = db.prepare(`
+        UPDATE writing_submission
+        SET corrected_body = ?, findings_json = ?, proofreading_matches_json = ?,
+            review_suggestions_json = ?, exercise_progress_json = ?, review_status = ?
+        WHERE id = ?
+      `)
+      for (const draft of drafts) {
+        const body = String(draft.body ?? '')
+        const storedMatches = normalizeProofreadingMatches(
+          safeJson(draft.proofreading_matches_json, []),
+          body,
+        )
+        const candidates = storedMatches
+          .filter((match) => match.verification !== 'verified')
+          .map((match) => ({ ...match, source: 'languagetool', verification: 'candidate' }))
+        const proofreadingMatches = [
+          ...storedMatches.filter((match) => match.verification === 'verified'),
+          ...candidates,
+        ]
+        const reviewSuggestions = reviewSuggestionsForDraft(body, [
+          ...safeJson(draft.review_suggestions_json, []),
+          ...proofreadingReviewItems(body, candidates),
+        ])
+        const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
+        const previousProgress = safeJson(draft.exercise_progress_json, {})
+        const exerciseProgress = Object.fromEntries(findings.flatMap((finding) => (
+          previousProgress[finding.id] ? [[finding.id, previousProgress[finding.id]]] : []
+        )))
+        const spellingWords = safeJson(draft.spelling_words_json, [])
+        const spellingProgress = safeJson(draft.spelling_progress_json, {})
+        const queueItems = reviewSuggestions.map((item) => {
+          const id = `${String(draft.id)}:${item.id}`
+          return existingById.get(id) ?? {
+            ...item,
+            id,
+            draftId: String(draft.id),
+            status: 'pending',
+            createdAt: asIso(wallNow()),
+          }
+        })
+        migratedQueue.push(...queueItems)
+        const pendingReviewCount = queueItems.filter((item) => item.status === 'pending').length
+        const reviewStatus = body.trim()
+          ? writingReviewStatus(
+            findings,
+            exerciseProgress,
+            spellingWords,
+            spellingProgress,
+            pendingReviewCount,
+          )
+          : 'draft'
+        updateDraft.run(
+          applyCompletedCorrections(body, findings, exerciseProgress),
+          JSON.stringify(findings),
+          JSON.stringify(proofreadingMatches),
+          JSON.stringify(reviewSuggestions),
+          JSON.stringify(exerciseProgress),
+          reviewStatus,
+          draft.id,
+        )
+      }
+      setSetting.run('writing_review_queue', JSON.stringify(normalizeWritingReviewQueue([
+        ...migratedQueue,
+        ...existingQueue.filter((item) => !migratedQueue.some((migrated) => migrated.id === item.id)),
+      ])))
+      setMeta.run('verified_proofreading_pipeline_v1_migrated', '1')
+      if (drafts.length > 0) {
+        insertAudit.run(
+          'writing_proofreading_migrated_to_verified_pipeline',
+          JSON.stringify({ draftsUpdated: drafts.length }),
+          asIso(wallNow()),
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  if (db.prepare(`SELECT value FROM app_meta WHERE key = 'reviewed_quiz_choice_quality_v1_migrated'`).get()?.value !== '1') {
+    const dictionary = normalizeWritingDictionary(safeJson(
+      db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+      {},
+    ))
+    const drafts = db.prepare(`
+      SELECT id, body, proofreading_matches_json
+      FROM writing_submission
+    `).all()
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const updateDraft = db.prepare(`
+        UPDATE writing_submission SET findings_json = ? WHERE id = ?
+      `)
+      for (const draft of drafts) {
+        const body = String(draft.body ?? '')
+        const proofreadingMatches = normalizeProofreadingMatches(
+          safeJson(draft.proofreading_matches_json, []),
+          body,
+        )
+        const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
+        updateDraft.run(JSON.stringify(findings), draft.id)
+      }
+      setMeta.run('reviewed_quiz_choice_quality_v1_migrated', '1')
+      if (drafts.length > 0) {
+        insertAudit.run(
+          'writing_quiz_choices_rebuilt',
+          JSON.stringify({ draftsUpdated: drafts.length }),
+          asIso(wallNow()),
+        )
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   db.prepare('UPDATE activity_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
   db.prepare('UPDATE game_session SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
   db.prepare('UPDATE writing_submission SET week_id = ? WHERE week_id IS NULL').run(migrationWeek)
@@ -1521,6 +1679,7 @@ export function createStore(filename, options = {}) {
         }
       }
 
+      const existingReviews = new Map(previousReviewQueue.map((item) => [item.id, item]))
       for (const draft of state.drafts) {
         const body = String(draft.body ?? '')
         const proofreadingMatches = normalizeProofreadingMatches(draft.proofreadingMatches, body)
@@ -1536,8 +1695,12 @@ export function createStore(filename, options = {}) {
           return progress?.correctionComplete === true &&
             Number(progress.practiceCompleted) >= finding.practice.length
         })
+        const pendingReviewCount = reviewSuggestions.filter((item) => {
+          const existing = existingReviews.get(`${String(draft.id)}:${item.id}`)
+          return !existing || existing.status !== 'resolved'
+        }).length
         const reviewStatus = body.trim()
-          ? grammarComplete ? 'complete' : 'practice'
+          ? grammarComplete ? pendingReviewCount > 0 ? 'awaiting-review' : 'complete' : 'practice'
           : 'draft'
         const correctedBody = applyCompletedCorrections(body, findings, exerciseProgress)
         insertDraft.run(
@@ -1557,7 +1720,6 @@ export function createStore(filename, options = {}) {
         )
       }
 
-      const existingReviews = new Map(previousReviewQueue.map((item) => [item.id, item]))
       const writingReviewQueue = state.drafts.flatMap((draft) => reviewSuggestionsForDraft(
         String(draft.body ?? ''),
         draft.reviewSuggestions,
@@ -1635,7 +1797,7 @@ export function createStore(filename, options = {}) {
     return mode
   }
 
-  function setWritingReviewStatus(id, status, decision) {
+  function setWritingReviewStatus(id, status, decision, replacementInput) {
     if (!['pending', 'resolved'].includes(status)) throw serviceError('Invalid writing review status')
     if (status === 'resolved' && !['confirmed', 'dismissed'].includes(decision)) {
       throw serviceError('Choose whether the finding was confirmed or dismissed')
@@ -1647,14 +1809,89 @@ export function createStore(filename, options = {}) {
     const index = current.findIndex((item) => item.id === String(id))
     if (index < 0) throw serviceError('Writing review item was not found', 404, 'review_not_found')
     const resolvedAt = status === 'resolved' ? asIso(wallNow()) : undefined
+    const selectedReplacement = decision === 'confirmed'
+      ? String(replacementInput ?? current[index].replacement ?? '').slice(0, 400)
+      : undefined
+    if (decision === 'confirmed' && !selectedReplacement) {
+      throw serviceError('Enter the exact parent-approved replacement before confirming')
+    }
     current[index] = {
       ...current[index],
       status,
       ...(resolvedAt ? { resolvedAt, decision } : {}),
+      ...(selectedReplacement ? { replacement: selectedReplacement } : {}),
     }
     if (!resolvedAt) {
       delete current[index].resolvedAt
       delete current[index].decision
+    }
+    const reviewItem = current[index]
+    const draft = db.prepare(`
+      SELECT body, proofreading_matches_json, exercise_progress_json, spelling_words_json, spelling_progress_json
+      FROM writing_submission WHERE id = ?
+    `).get(reviewItem.draftId)
+    if (draft) {
+      const body = String(draft.body ?? '')
+      let proofreadingMatches = normalizeProofreadingMatches(
+        safeJson(draft.proofreading_matches_json, []),
+        body,
+      ).filter((match) => match.reviewId !== reviewItem.id)
+      if (decision === 'confirmed') {
+        const start = Number(reviewItem.start)
+        const end = Number(reviewItem.end)
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > body.length) {
+          throw serviceError('This review item no longer points to valid writing. Recheck the draft.')
+        }
+        proofreadingMatches.push({
+          offset: start,
+          length: end - start,
+          message: reviewItem.message,
+          shortMessage: reviewItem.message,
+          replacements: [selectedReplacement],
+          ruleId: `PARENT_${String(reviewItem.ruleId ?? 'REVIEW').replace(/[^A-Za-z0-9_]+/g, '_')}`.slice(0, 120),
+          category: reviewItem.category,
+          issueType: `parent-${reviewItem.category.toLowerCase()}`,
+          source: 'parent',
+          verification: 'verified',
+          confidence: 'high',
+          explanation: reviewItem.explanation ?? reviewItem.message,
+          reviewId: reviewItem.id,
+        })
+      }
+      proofreadingMatches = normalizeProofreadingMatches(proofreadingMatches, body)
+      const dictionary = normalizeWritingDictionary(safeJson(
+        db.prepare(`SELECT value FROM settings WHERE key = 'writing_dictionary'`).get()?.value ?? '{}',
+        {},
+      ))
+      const findings = inspectWritingFindings(body, dictionary, proofreadingMatches)
+      const exerciseProgress = safeJson(draft.exercise_progress_json, {})
+      const spellingWords = safeJson(draft.spelling_words_json, [])
+      const spellingProgress = safeJson(draft.spelling_progress_json, {})
+      const pendingReviewCount = current.filter((item) => (
+        item.draftId === reviewItem.draftId && item.status === 'pending'
+      )).length
+      const reviewStatus = body.trim()
+        ? writingReviewStatus(
+          findings,
+          exerciseProgress,
+          spellingWords,
+          spellingProgress,
+          pendingReviewCount,
+        )
+        : 'draft'
+      const correctedBody = applyCompletedCorrections(body, findings, exerciseProgress)
+      db.prepare(`
+        UPDATE writing_submission
+        SET proofreading_matches_json = ?, findings_json = ?, corrected_body = ?, review_status = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        JSON.stringify(proofreadingMatches),
+        JSON.stringify(findings),
+        correctedBody,
+        reviewStatus,
+        resolvedAt ?? asIso(wallNow()),
+        reviewItem.draftId,
+      )
     }
     setSetting.run('writing_review_queue', JSON.stringify(current))
     addAudit('writing_review_status_changed', {
@@ -1844,10 +2081,22 @@ export function createStore(filename, options = {}) {
       const progress = safeJson(draft.exercise_progress_json, {})
       const spellingWords = safeJson(draft.spelling_words_json, [])
       const spellingProgress = safeJson(draft.spelling_progress_json, {})
-      const reviewStatus = writingReviewStatus(findings, progress, spellingWords, spellingProgress)
+      const pendingReviewCount = normalizeWritingReviewQueue(safeJson(
+        db.prepare(`SELECT value FROM settings WHERE key = 'writing_review_queue'`).get()?.value ?? '[]',
+        [],
+      )).filter((item) => item.draftId === draftId && item.status === 'pending').length
+      const reviewStatus = writingReviewStatus(
+        findings,
+        progress,
+        spellingWords,
+        spellingProgress,
+        pendingReviewCount,
+      )
       if (reviewStatus !== 'complete') {
         throw serviceError(
-          'Answer every correction and practice question, then finish the editing step',
+          reviewStatus === 'awaiting-review'
+            ? 'A parent must confirm or dismiss every contextual writing suggestion first'
+            : 'Answer every correction and practice question, then finish the editing step',
           409,
           'writing_practice_incomplete',
         )

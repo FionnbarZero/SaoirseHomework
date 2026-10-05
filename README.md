@@ -14,13 +14,13 @@ Open `http://127.0.0.1:4180`.
 
 `npm run dev` starts both the Vite interface and the loopback data service. The service listens only on `127.0.0.1:4179` and stores its SQLite database in `data/homework.sqlite`.
 
-Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API.
+Writing uses a local LanguageTool server when its official standalone package is installed under `~/.local/share/fionnbar-homework/LanguageTool-*`. `npm run dev` starts that loopback-only service automatically on `127.0.0.1:8081`; if it is unavailable, the app continues with its reviewed offline rules and says so in the writing screen. Draft text is never sent to the public LanguageTool API. LanguageTool output is treated only as untrusted candidate evidence: it cannot create a child-facing correction until the contextual AI verifier or a parent approves the exact replacement.
 
 ### Optional AI proofreading
 
-The local checker remains the first pass. An optional, parent-controlled OpenAI second pass can run in four modes: **Off**, **Shadow** (measure findings without showing them), **Parent review** (non-blocking suggestions only), and **Guided practice** (high-confidence corrections become exercises while medium-confidence suggestions go to Parent review).
+The local checker remains the candidate pass. An optional, parent-controlled OpenAI workflow performs one exhaustive detection pass and one independent verification pass. It can run in four modes: **Off**, **Shadow** (measure findings without showing them), **Parent review** (send contextual corrections to a parent), and **Guided practice** (only independently verified, high-confidence corrections become exercises while everything uncertain goes to Parent review).
 
-To make those modes available, copy `.env.example` to the untracked `.env` file and set both `OPENAI_API_KEY` and `HOMEWORK_OPENAI_MODEL`, then restart `npm run dev`. The API key stays in the local Node service. Each request contains only the current passage—never its title, Fionnbar's name/profile, prior drafts, or the Google writing log—and uses the Responses API with `store: false`. The model must return a strict JSON schema; the service rejects findings whose quoted text cannot be mapped exactly back to the submitted passage. The parent must explicitly choose a mode in **Parent → Writing review tools**; the default remains Off. Parent-review findings can be confirmed or dismissed, creating audit evidence for measuring false positives before Guided practice is enabled.
+To make those modes available, copy `.env.example` to the untracked `.env` file and set both `OPENAI_API_KEY` and `HOMEWORK_OPENAI_MODEL`, then restart `npm run dev`. The API key stays in the local Node service. Each request contains only the current passage—never its title, Fionnbar's name/profile, prior drafts, or the Google writing log—and uses the Responses API with `store: false`. Both model passes must return strict JSON schemas; the service rejects findings whose quoted anchor cannot be mapped exactly back to the submitted passage. The parent must explicitly choose a mode in **Parent → Writing review tools**; the default remains Off. Parent-review findings can be edited, confirmed, or dismissed. A confirmed replacement becomes a traceable correction; unresolved findings prevent the version from being called complete.
 
 After `npm run build`, `npm start` serves the production build and API together from `http://127.0.0.1:4179`.
 
@@ -31,6 +31,8 @@ npm test
 npm run build
 ```
 
+The checked-in proofreading evaluation corpus contains 160 labeled passages, including 30 clean controls and Harry Potter names that must not be "corrected." After configuring the optional AI workflow, run the live release gate with `npm run eval:proofreading`. It requires at least 98% exact-edit precision, 90% exact-edit recall, and no more than a 2% false-positive rate on clean passages. Use `HOMEWORK_PROOFREADING_EVAL_LIMIT=20 npm run eval:proofreading` for a smaller development sample; only the full corpus is a release check.
+
 ## Implemented in this milestone
 
 - Child entry screen and Monday–Friday quest path
@@ -39,14 +41,14 @@ npm run build
 - Cumulative nine-session weekly music practice bank
 - Focus timers that pause when the tab is hidden
 - Local reward-credit ledger and reward timer
-- Local writing drafts with layered LanguageTool, reviewed contextual rules, and browser spelling assistance
-- Optional schema-constrained AI second pass with Off, Shadow, Parent review, and high-confidence Guided practice modes
-- One original-sentence correction plus three three-choice practice trials for every supported finding
+- Local writing drafts with reviewed deterministic rules, quarantined LanguageTool candidates, and browser spelling assistance
+- Optional two-pass, schema-constrained AI detection and verification with Off, Shadow, Parent review, and Guided practice modes
+- A focused contextual correction for every verified finding; extra practice appears only when a matching reviewed rule exists
 - Reviewed spelling mistakes use the same original correction plus three multiple-choice reviews as the other writing areas
 - A separate full-width correction-game frame followed by child revision and rechecking until no supported errors remain
 - Restart-safe exercise progress and separately persisted version history; earlier writing is never overwritten
 - Parent-editable capitalization dictionaries for known names and places
-- Persistent, non-blocking parent review queue for ambiguous repeated-word, tense, and run-on suggestions
+- Persistent parent review queue whose confirmed edits become corrections and whose pending decisions block final completion
 - Parent preview dashboard and completion overrides
 - macOS administrator authorization challenges for Parent controls, with no password field in the web app
 - Ten-minute HttpOnly parent sessions, explicit lock, sensitive-action reauthorization, and restart revocation

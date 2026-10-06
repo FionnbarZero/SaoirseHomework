@@ -16,22 +16,15 @@ import {
 } from '../src/writing.ts'
 import { emptyActivityConfiguration, normalizeActivityConfiguration } from './activity-config.mjs'
 import { normalizeProofreadingMatches, proofreadingReviewItems } from './proofreader.mjs'
+import { activeRequiredActivities } from '../src/domain.ts'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const SCHEMA_VERSION = 29
 const MAX_HEARTBEAT_GAP_MS = 7_000
 const GAME_ACTIVITY_ID = 'reading-strategies'
-const BROWSER_COMPLETION_ACTIVITIES = new Set(['mandarin', 'math', 'english-packet'])
-const REQUIRED_ACTIVITY_IDS = [
-  'mandarin',
-  'level-chinese',
-  'du-chinese',
-  'math',
-  'english-packet',
-  'reading-strategies',
-  'ninja-dojo',
-]
+const BROWSER_COMPLETION_ACTIVITIES = new Set(activeRequiredActivities().filter((activity) => activity.method === 'self').map((activity) => activity.id))
+const requiredActivityIds = (day) => activeRequiredActivities(day).map((activity) => activity.id)
 const OPTIONAL_SESSION_KEYS = new Set([
   'voena:0', 'voena:1', 'voena:2',
   'drums:0', 'drums:1', 'drums:2',
@@ -1393,7 +1386,8 @@ export function createStore(filename, options = {}) {
       const completed = new Set(db.prepare(`
         SELECT activity_id FROM weekly_daily_completion WHERE week_id = ? AND day = ?
       `).all(weekId, day).map((row) => row.activity_id))
-      const eligible = REQUIRED_ACTIVITY_IDS.every((activityId) => completed.has(activityId)) &&
+      const requiredIds = requiredActivityIds(day)
+      const eligible = requiredIds.every((activityId) => completed.has(activityId)) &&
         optionalCompleted >= OPTIONAL_TARGETS[day]
       const existing = db.prepare(`
         SELECT unlocked_at FROM free_mode_unlock WHERE week_id = ? AND day = ?
@@ -1405,7 +1399,7 @@ export function createStore(filename, options = {}) {
         `).run(weekId, day, now)
         insertAudit.run(
           'free_mode_unlocked',
-          JSON.stringify({ weekId, day, requiredCompleted: REQUIRED_ACTIVITY_IDS.length, optionalCompleted }),
+          JSON.stringify({ weekId, day, requiredCompleted: requiredIds.length, optionalCompleted }),
           now,
         )
       } else if (!eligible && existing) {
@@ -1577,10 +1571,11 @@ export function createStore(filename, options = {}) {
       throw error
     }
 
+    const requiredIds = requiredActivityIds(day)
     const requiredCompleted = Number(db.prepare(`
       SELECT count(*) AS count FROM weekly_daily_completion
-      WHERE week_id = ? AND day = ? AND activity_id IN (?, ?, ?, ?, ?, ?, ?)
-    `).get(weekId, day, ...REQUIRED_ACTIVITY_IDS).count)
+      WHERE week_id = ? AND day = ? AND activity_id IN (${requiredIds.map(() => '?').join(', ')})
+    `).get(weekId, day, ...requiredIds).count)
     const optionalCompleted = Number(db.prepare(`
       SELECT count(*) AS count FROM weekly_optional_completion WHERE week_id = ?
     `).get(weekId).count)
@@ -1591,7 +1586,7 @@ export function createStore(filename, options = {}) {
           day,
           eligibleAt: unlock,
           requiredCompleted,
-          requiredTarget: REQUIRED_ACTIVITY_IDS.length,
+          requiredTarget: requiredIds.length,
           optionalCompleted,
           optionalTarget: OPTIONAL_TARGETS[day],
         }
@@ -1673,7 +1668,7 @@ export function createStore(filename, options = {}) {
         for (const day of DAYS) {
           const activities = Array.isArray(state.requiredByDay[day]) ? state.requiredByDay[day] : []
           for (const activityId of [...new Set(activities)]) {
-            if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId))) continue
+            if (!BROWSER_COMPLETION_ACTIVITIES.has(String(activityId)) || !requiredActivityIds(day).includes(String(activityId))) continue
             insertRequired.run(weekId, day, String(activityId), 'browser', now)
             const hasRecord = db.prepare(`
               SELECT 1 FROM completion_record
@@ -2495,6 +2490,8 @@ export function createStore(filename, options = {}) {
   function setDailyCompletion({ day, activityId, completed, method, weekId: requestedWeekId }) {
     if (!DAYS.includes(day)) throw new Error('Invalid weekday')
     if (!['self-reported', 'parent-override'].includes(method)) throw new Error('Invalid completion method')
+    if (!requiredActivityIds(day).includes(activityId)) throw serviceError('That activity is not scheduled for this day', 400, 'activity_not_scheduled')
+    if (method === 'self-reported' && !BROWSER_COMPLETION_ACTIVITIES.has(activityId)) throw serviceError('That activity cannot be self-reported', 400, 'invalid_completion_method')
     const weekId = ensureCurrentWeek().weekId
     if (requestedWeekId && String(requestedWeekId) !== weekId) {
       throw serviceError('That completion belongs to an archived week', 409, 'stale_week')
@@ -3016,12 +3013,19 @@ export function createStore(filename, options = {}) {
       reviewStatus: row.review_status,
       updatedAt: row.updated_at,
     }))
-    const eligibleGroups = new Set(drafts
+    const latestByGroup = new Map()
+    for (const draft of drafts) {
+      const current = latestByGroup.get(draft.revisionGroupId)
+      if (!current || draft.versionNumber > current.versionNumber || (
+        draft.versionNumber === current.versionNumber && Date.parse(draft.updatedAt) > Date.parse(current.updatedAt)
+      )) {
+        latestByGroup.set(draft.revisionGroupId, draft)
+      }
+    }
+    const eligibleGroups = new Set([...latestByGroup.values()]
       .filter((draft) => draft.reviewStatus === 'complete' && draft.findings.length === 0)
       .map((draft) => draft.revisionGroupId))
-    return drafts.filter((draft) =>
-      draft.reviewStatus === 'complete' && eligibleGroups.has(draft.revisionGroupId),
-    )
+    return drafts.filter((draft) => eligibleGroups.has(draft.revisionGroupId))
   }
 
   function prepareLiveGoogleDelivery(input = {}) {

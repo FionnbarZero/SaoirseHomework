@@ -4,9 +4,9 @@ Live delivery is deliberately disabled by default. The local proof remains avail
 
 ## What live mode does
 
-After Friday at 12:00 p.m. in the configured school time zone, the local service:
+After Friday at 3:00 p.m. in the configured school time zone, the local service:
 
-1. Selects revision groups whose final checked version has no supported errors and snapshots every completed version into one restart-safe weekly queue record.
+1. Selects revision groups whose latest checked version has no supported errors and snapshots every saved attempt and revision in each eligible group into one restart-safe weekly queue record.
 2. Creates `My Drive/Fionnbar Homework/<School Year>/Writing` when needed.
 3. Creates `Fionnbar Writing — Week of <Monday date>` with every version, its corrected model, and its practice summary.
 4. Exports the Google Doc as PDF and verifies the `%PDF-` signature before continuing.
@@ -75,4 +75,4 @@ After authorization, every saved Writing state is queued to the configured docum
 
 ## Writing eligibility
 
-Live delivery includes only drafts whose review status is `complete`. A draft reaches that state only after every supported grammar, punctuation, capitalization, and spelling exercise is finished. The writing screen combines reviewed contextual rules with a loopback-only LanguageTool service. The browser stores the sanitized LanguageTool findings with each version so the server can reproduce the same mandatory practice without sending child writing to a public proofreading API.
+Live delivery includes a revision group only when its latest saved version has review status `complete` and no supported errors. Once eligible, every non-empty saved attempt and revision in that group is included, even when an earlier attempt still shows the corrections it needed. A draft reaches `complete` only after every supported grammar, punctuation, capitalization, and spelling exercise is finished. The writing screen combines reviewed contextual rules with a loopback-only LanguageTool service. The browser stores the sanitized LanguageTool findings with each version so the server can reproduce the same mandatory practice without sending child writing to a public proofreading API.

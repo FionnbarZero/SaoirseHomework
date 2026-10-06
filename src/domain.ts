@@ -4,6 +4,7 @@ export type LocalDayName = DayName | 'Saturday' | 'Sunday'
 export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
 export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
 export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
+export const DEFAULT_CLEVER_URL = 'https://clever.com/'
 
 export type WeekContext = {
   weekId: string
@@ -23,6 +24,7 @@ export type RequiredActivity = {
   method: CompletionMethod
   minutes?: number
   icon: string
+  days?: DayName[]
 }
 
 export type OptionalActivity = {
@@ -379,6 +381,22 @@ export function getBrowserWeekContext(date = new Date()): WeekContext {
 
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
   {
+    id: 'mandarin-homework-turned-in',
+    title: 'Turned in my Mandarin Homework',
+    description: 'Check this after handing in your Mandarin homework.',
+    method: 'self',
+    icon: '✓',
+    days: ['Monday'],
+  },
+  {
+    id: 'english-homework-turned-in',
+    title: 'Turned in English Homework',
+    description: 'Check this after handing in your English homework.',
+    method: 'self',
+    icon: '✓',
+    days: ['Friday'],
+  },
+  {
     id: 'mandarin',
     title: 'Mandarin Daily Work',
     description: 'Finish today’s Mandarin assignment.',
@@ -517,7 +535,7 @@ export const defaultState: AppState = {
       allowedOrigins: ['https://duchinese.net'],
       ready: true,
     },
-    levelChinese: { cleverUrl: '', learningUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    levelChinese: { cleverUrl: DEFAULT_CLEVER_URL, learningUrl: '', redirectOrigins: [], allowedOrigins: ['https://clever.com'], ready: false },
   },
   googleProof: {
     mode: 'mock',
@@ -541,8 +559,12 @@ export const defaultState: AppState = {
   weekContext: getBrowserWeekContext(),
 }
 
-export function activeRequiredActivities() {
-  return REQUIRED_ACTIVITIES.filter((activity) => activity.method !== 'coming-soon')
+export function requiredActivitiesForDay(day: DayName) {
+  return REQUIRED_ACTIVITIES.filter((activity) => !activity.days || activity.days.includes(day))
+}
+
+export function activeRequiredActivities(day?: DayName) {
+  return (day ? requiredActivitiesForDay(day) : REQUIRED_ACTIVITIES).filter((activity) => activity.method !== 'coming-soon')
 }
 
 export function optionalSessionKey(activityId: string, index: number) {
@@ -551,20 +573,20 @@ export function optionalSessionKey(activityId: string, index: number) {
 
 export function completedRequiredCount(state: AppState, day: DayName) {
   return state.requiredByDay[day].filter((id) =>
-    activeRequiredActivities().some((activity) => activity.id === id),
+    activeRequiredActivities(day).some((activity) => activity.id === id),
   ).length
 }
 
 export function dayIsComplete(state: AppState, day: DayName) {
   return (
-    completedRequiredCount(state, day) === activeRequiredActivities().length &&
+    completedRequiredCount(state, day) === activeRequiredActivities(day).length &&
     state.optionalCompleted.length >= OPTIONAL_TARGETS[day]
   )
 }
 
 export function progressForDay(state: AppState, day: DayName) {
   const required = completedRequiredCount(state, day)
-  const requiredTotal = activeRequiredActivities().length
+  const requiredTotal = activeRequiredActivities(day).length
   const optional = Math.min(state.optionalCompleted.length, OPTIONAL_TARGETS[day])
   return {
     required,
@@ -576,13 +598,12 @@ export function progressForDay(state: AppState, day: DayName) {
 }
 
 export function getFridayFunSummary(state: AppState) {
-  const requiredActivities = activeRequiredActivities()
   const days = DAYS.map((day) => {
     const completed = completedRequiredCount(state, day)
     return {
       day,
       completed,
-      total: requiredActivities.length,
+      total: activeRequiredActivities(day).length,
       questComplete: dayIsComplete(state, day),
     }
   })
@@ -597,7 +618,7 @@ export function getFridayFunSummary(state: AppState) {
     unlockedAt: state.freeModeByDay.Friday ?? null,
     days,
     requiredCompleted: days.reduce((total, day) => total + day.completed, 0),
-    requiredTotal: requiredActivities.length * DAYS.length,
+    requiredTotal: days.reduce((total, day) => total + day.total, 0),
     optionalCompleted: Math.min(state.optionalCompleted.length, OPTIONAL_TARGETS.Friday),
     optionalTotal: OPTIONAL_TARGETS.Friday,
     writingDrafts: writingDrafts.length,

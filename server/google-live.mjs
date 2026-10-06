@@ -260,7 +260,7 @@ export function isFridayDeliveryDue(value, timeZone = 'America/Los_Angeles') {
     minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date).map((part) => [part.type, part.value]))
-  return parts.weekday === 'Friday' && (Number(parts.hour) > 12 || (Number(parts.hour) === 12 && Number(parts.minute) >= 0))
+  return parts.weekday === 'Friday' && (Number(parts.hour) > 15 || (Number(parts.hour) === 15 && Number(parts.minute) >= 0))
 }
 
 export function createGoogleLiveIntegration(options) {

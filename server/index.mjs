@@ -15,6 +15,7 @@ import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mj
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
 import { createPrivateAccess } from './private-access.mjs'
+import { activeRequiredActivities } from '../src/domain.ts'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
 const projectRoot = resolve(serverDirectory, '..')
@@ -93,16 +94,8 @@ const youtubePlaybackOrigins = [
   'https://music.youtube.com',
 ]
 const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
-const selfReportedActivities = new Set(['mandarin', 'math', 'english-packet'])
-const parentOverrideActivities = new Set([
-  'mandarin',
-  'level-chinese',
-  'du-chinese',
-  'math',
-  'english-packet',
-  'reading-strategies',
-  'ninja-dojo',
-])
+const selfReportedActivities = new Set(activeRequiredActivities().filter((activity) => activity.method === 'self').map((activity) => activity.id))
+const parentOverrideActivities = new Set(activeRequiredActivities().map((activity) => activity.id))
 const optionalActivities = new Map([
   ['voena', { label: 'Voena', sessions: 3, targetSeconds: 20 * 60 }],
   ['drums', { label: 'Drum Drills', sessions: 3, targetSeconds: 20 * 60 }],

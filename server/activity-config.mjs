@@ -4,6 +4,7 @@ export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
 const DEFAULT_NINJA_DOJO_ORIGIN = new URL(DEFAULT_NINJA_DOJO_URL).origin
 export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
 export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
+export const DEFAULT_CLEVER_URL = 'https://clever.com/'
 const DEFAULT_DU_CHINESE_ORIGIN = new URL(DEFAULT_DU_CHINESE_READING_URL).origin
 
 export function emptyActivityConfiguration() {
@@ -21,7 +22,7 @@ export function emptyActivityConfiguration() {
       allowedOrigins: [DEFAULT_DU_CHINESE_ORIGIN],
       ready: true,
     },
-    levelChinese: { cleverUrl: '', learningUrl: '', redirectOrigins: [], allowedOrigins: [], ready: false },
+    levelChinese: { cleverUrl: DEFAULT_CLEVER_URL, learningUrl: '', redirectOrigins: [], allowedOrigins: ['https://clever.com'], ready: false },
   }
 }
 
@@ -92,7 +93,7 @@ export function normalizeActivityConfiguration(input = {}) {
   )
   const duOrigins = normalizeAllowedOrigins(duRedirects, [duReadingUrl, duFlashcardUrl])
 
-  const levelCleverUrl = normalizeUrl(levelInput.cleverUrl, 'Clever login URL')
+  const levelCleverUrl = normalizeUrl(levelInput.cleverUrl, 'Clever login URL') || DEFAULT_CLEVER_URL
   const levelLearningUrl = normalizeUrl(levelInput.learningUrl, 'Level Learning URL')
   const levelLaunchOrigins = [levelCleverUrl, levelLearningUrl].filter(Boolean).map(originFromUrl)
   const levelRedirects = normalizeAllowedOrigins(

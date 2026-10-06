@@ -286,7 +286,7 @@ Each rule requires reviewed positive examples, distractors, and regression tests
 
 ### Friday behavior
 
-- At 12:00 p.m. Friday, send the completed revision groups that exist at that moment. Do not include a group until it has a final checked version with no supported errors.
+- At 3:00 p.m. Friday, send the completed revision groups that exist at that moment. Do not include a group until its latest checked version has no supported errors; once eligible, include every saved attempt and revision in that group.
 - Export and verify a PDF.
 - Share the Google Doc as view-only with one configured school address.
 - Send a separate email from Fionnbar's authorized Google account containing the PDF and link.

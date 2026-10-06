@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_DU_CHINESE_FLASHCARD_URL,
+  DEFAULT_CLEVER_URL,
   DEFAULT_DU_CHINESE_READING_URL,
   DEFAULT_NINJA_DOJO_URL,
   buildActivitySessionPlan,
@@ -19,6 +20,8 @@ test('reviewed activity links are ready while activities without links stay fail
   assert.equal(empty.duChinese.flashcardUrl, DEFAULT_DU_CHINESE_FLASHCARD_URL)
   assert.deepEqual(empty.duChinese.allowedOrigins, ['https://duchinese.net'])
   assert.equal(empty.levelChinese.ready, false)
+  assert.equal(empty.levelChinese.cleverUrl, DEFAULT_CLEVER_URL)
+  assert.deepEqual(empty.levelChinese.allowedOrigins, ['https://clever.com'])
   const ninja = buildActivitySessionPlan('ninja-dojo', empty)
   assert.equal(ninja.phases[0].launchUrl, DEFAULT_NINJA_DOJO_URL)
   assert.deepEqual(ninja.phases[0].creditOrigins, ['https://weeklydictation-g5-beta.web.app'])
@@ -29,6 +32,14 @@ test('reviewed activity links are ready while activities without links stay fail
     () => buildActivitySessionPlan('level-chinese', empty),
     (error) => error.status === 409 && error.code === 'activity_not_configured',
   )
+})
+
+test('blank saved Clever links use clever.com without enabling unverified learning credit', () => {
+  const config = normalizeActivityConfiguration({ levelChinese: { cleverUrl: '', learningUrl: '' } })
+  assert.equal(config.levelChinese.cleverUrl, DEFAULT_CLEVER_URL)
+  assert.equal(config.levelChinese.ready, false)
+  assert.deepEqual(config.levelChinese.allowedOrigins, ['https://clever.com'])
+  assert.throws(() => buildActivitySessionPlan('level-chinese', config), { code: 'activity_not_configured' })
 })
 
 test('activity configuration normalizes launch and redirect origins exactly', () => {

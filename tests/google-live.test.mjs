@@ -181,8 +181,8 @@ test('writing log creates one managed newest-first range and replaces it on late
 })
 
 test('Friday delivery gate follows the configured school time zone', () => {
-  assert.equal(isFridayDeliveryDue('2026-10-02T18:59:00.000Z', 'America/Los_Angeles'), false)
-  assert.equal(isFridayDeliveryDue('2026-10-02T19:00:00.000Z', 'America/Los_Angeles'), true)
+  assert.equal(isFridayDeliveryDue('2026-10-02T21:59:00.000Z', 'America/Los_Angeles'), false)
+  assert.equal(isFridayDeliveryDue('2026-10-02T22:00:00.000Z', 'America/Los_Angeles'), true)
   assert.equal(isFridayDeliveryDue('2026-10-03T01:00:00.000Z', 'America/Los_Angeles'), true)
   assert.equal(isFridayDeliveryDue('2026-10-03T08:00:00.000Z', 'America/Los_Angeles'), false)
 })

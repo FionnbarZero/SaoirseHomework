@@ -107,6 +107,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .secondary-button:hover { background: #f4f1e9; }
 .row-button { background: #2f756b; color: white; border-radius: 10px; padding: 10px 13px; white-space: nowrap; }
 .row-button:hover { background: #255f57; }
+a.row-button { text-decoration: none; }
 .row-button:disabled { opacity: .48; cursor: not-allowed; }
 .text-button { padding: 7px 0; background: none; color: var(--teal); }
 .text-button.danger { color: #a74f45; }
@@ -229,6 +230,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .head-start-note small { margin-bottom: 4px; color: #9a6e1b; font-size: 8px; font-weight: 900; letter-spacing: .13em; }
 .head-start-note strong { font-family: Georgia, serif; font-size: 18px; }
 .head-start-note p { margin: 4px 0 0; color: #856c3b; font-size: 10px; line-height: 1.45; }
+.daily-practice { margin-top: 32px; padding-top: 26px; border-top: 1px solid var(--line); }
+.daily-practice .page-heading { margin-bottom: 20px; }
+.daily-practice .page-heading h2 { font-size: 28px; }
+.daily-practice .page-heading p + p { margin-top: 6px; }
 .practice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .practice-card { min-height: 245px; padding: 21px; border: 1px solid var(--line); border-radius: 20px; background: rgba(251,249,244,.94); box-shadow: 0 10px 34px rgba(63,58,44,.04); }
 .practice-card:nth-child(4), .practice-card:nth-child(5) { grid-column: span 1; }

@@ -7,6 +7,8 @@ import {
   defaultState,
   getFridayFunSummary,
   optionalSessionKey,
+  requiredActivitiesForDay,
+  progressForDay,
   type AppState,
 } from '../src/domain.ts'
 import {
@@ -24,8 +26,26 @@ test('optional sessions have stable unique keys', () => {
   assert.notEqual(optionalSessionKey('voena', 0), optionalSessionKey('voena', 1))
 })
 
+test('homework hand-in checkboxes appear and count only on their assigned weekdays', () => {
+  const checks = (day) => requiredActivitiesForDay(day).filter((activity) => activity.id.endsWith('-turned-in'))
+  assert.deepEqual(checks('Monday').map((activity) => [activity.title, activity.method]), [['Turned in my Mandarin Homework', 'self']])
+  assert.deepEqual(checks('Friday').map((activity) => [activity.title, activity.method]), [['Turned in English Homework', 'self']])
+  for (const day of ['Tuesday', 'Wednesday', 'Thursday'] as const) assert.deepEqual(checks(day), [])
+  const state = structuredClone(defaultState)
+  state.optionalCompleted = Array.from({ length: 9 }, (_, index) => `session:${index}`)
+  for (const day of ['Monday', 'Friday'] as const) {
+    state.requiredByDay[day] = activeRequiredActivities(day).filter((activity) => !activity.id.endsWith('-turned-in')).map((activity) => activity.id)
+    assert.equal(dayIsComplete(state, day), false)
+    assert.equal(progressForDay(state, day).requiredTotal, 8)
+    state.requiredByDay[day].push(checks(day)[0].id)
+    assert.equal(dayIsComplete(state, day), true)
+  }
+  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 7)
+  assert.equal(getFridayFunSummary(state).requiredTotal, 37)
+})
+
 test('a day needs required work and its cumulative practice target', () => {
-  const mondayRequired = activeRequiredActivities().map((activity) => activity.id)
+  const mondayRequired = activeRequiredActivities('Monday').map((activity) => activity.id)
   const state: AppState = {
     ...structuredClone(defaultState),
     requiredByDay: { ...defaultState.requiredByDay, Monday: mondayRequired },
@@ -524,7 +544,7 @@ test('ambiguous writing suggestions enter a non-blocking parent review queue', (
 })
 
 test('Friday Fun stays locked until Friday work and all practice are complete', () => {
-  const fridayRequired = activeRequiredActivities().map((activity) => activity.id)
+  const fridayRequired = activeRequiredActivities('Friday').map((activity) => activity.id)
   const state: AppState = {
     ...structuredClone(defaultState),
     requiredByDay: { ...defaultState.requiredByDay, Friday: fridayRequired },

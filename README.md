@@ -88,7 +88,7 @@ The browser deadline covers the local check, both AI passes, and optional meanin
 - Parent dashboard controls and downloadable proof artifacts with explicit no-send labeling
 - Safe-by-default live Google foundation with Desktop OAuth PKCE and macOS Keychain refresh-token storage
 - Drive/Docs weekly document creation, verified PDF export, view-only sharing, and Gmail attachment delivery
-- Friday 12 p.m. queue, weekly idempotency, restart recovery, exponential retry, and parent retry/revoke controls
+- Friday 3 p.m. queue, weekly idempotency, restart recovery, exponential retry, and parent retry/revoke controls
 - Fail-closed delivery eligibility: a revision group can leave the Mac only after its final checked version has no supported errors
 - Sunday 4:00 a.m. **Get a Head Start** screen with optional activities only
 - Friday Fun celebration with a weekly recap and persisted, audited Free Mode unlock
@@ -123,6 +123,6 @@ Configure tracked school activities from the Parent screen. Launch URLs must use
 
 The Parent screen's Google delivery proof remains deliberately local and is the default. It assembles saved writing into an HTML document and PDF, records one idempotent delivery per weekly document, and simulates sharing and email without contacting Google. Generated proof artifacts remain under `data/google-proof/`.
 
-The live path is implemented but fail-closed until explicitly configured. In the packaged production architecture, the signed login agent performs Authorization Code with PKCE, token exchange, refresh, revocation, and login-Keychain storage; the root service receives only short-lived access tokens through its authenticated broker queue. It uses `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). A revision group becomes delivery-eligible only after every game is complete and its latest checked version has no supported errors; the weekly document then includes every completed version in that group.
+The live path is implemented but fail-closed until explicitly configured. In the packaged production architecture, the signed login agent performs Authorization Code with PKCE, token exchange, refresh, revocation, and login-Keychain storage; the root service receives only short-lived access tokens through its authenticated broker queue. It uses `drive.file` and `gmail.send`, a Friday queue, and one weekly delivery record. See [GOOGLE_SETUP.md](GOOGLE_SETUP.md). A revision group becomes delivery-eligible only after every game is complete and its latest checked version has no supported errors; the weekly document then includes every saved attempt and revision in that group.
 
 Weekly plans use `America/Los_Angeles` by default and roll over at 4:00 a.m. Sunday. Set `HOMEWORK_TIME_ZONE` to an IANA time-zone name only if the child Mac should follow a different school time zone.

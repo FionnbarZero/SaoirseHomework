@@ -27,11 +27,13 @@ import {
 } from 'lucide-react'
 import {
   DAYS,
+  DEFAULT_CLEVER_URL,
   OPTIONAL_ACTIVITIES,
   OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
   REQUIRED_ACTIVITIES,
   activeRequiredActivities,
+  requiredActivitiesForDay,
   dayIsComplete,
   defaultState,
   formatTimer,
@@ -114,7 +116,7 @@ import {
   type WritingLogState,
 } from './service'
 
-type View = 'path' | 'day' | 'options' | 'writing' | 'rewards' | 'parent' | 'session'
+type View = 'path' | 'day' | 'writing' | 'rewards' | 'parent' | 'session'
 
 const STORAGE_KEY = 'fionnbar-homework-v1'
 const SECURITY_STATUS_KEY = 'fionnbar-homework-security-v1'
@@ -498,7 +500,7 @@ function App() {
       setState(response.state)
       setServiceMeta(response.meta)
       setSessionError('')
-      setView(timer.kind === 'optional' ? 'options' : timer.kind === 'reward' ? 'rewards' : 'day')
+      setView(timer.kind === 'reward' ? 'rewards' : 'day')
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'The completion could not be closed.')
     }
@@ -513,7 +515,7 @@ function App() {
       setState(response.state)
       setServiceMeta(response.meta)
       setSessionError('')
-      setView(timer.kind === 'optional' ? 'options' : timer.kind === 'reward' ? 'rewards' : 'day')
+      setView(timer.kind === 'reward' ? 'rewards' : 'day')
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'The session could not be ended.')
     }
@@ -609,13 +611,9 @@ function App() {
               toggleSelfReported={toggleSelfReported}
               startTimer={startTimer}
               startReadingGame={startReadingGame}
-              openOptions={() => setView('options')}
               openPath={() => setView('path')}
               openRewards={() => setView('rewards')}
             />
-          )}
-          {view === 'options' && (
-            <OptionalView state={state} startTimer={startTimer} onBack={() => setView('path')} />
           )}
           {view === 'writing' && (
             <WritingView
@@ -722,7 +720,7 @@ function EntryScreen({
 function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view: View) => void; rewardCount: number }) {
   const items: { id: View; label: string; icon: typeof Home }[] = [
     { id: 'path', label: 'Home', icon: Home },
-    { id: 'options', label: 'Practice', icon: Music2 },
+    { id: 'day', label: 'Daily plan', icon: Music2 },
     { id: 'writing', label: 'Writing', icon: BookOpen },
     { id: 'rewards', label: 'Rewards', icon: Gift },
   ]
@@ -734,7 +732,7 @@ function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view:
       </button>
       <nav className="main-nav" aria-label="Main navigation">
         {items.map(({ id, label, icon: Icon }) => (
-          <button key={id} className={view === id ? 'nav-item active' : 'nav-item'} onClick={() => navigate(id)}>
+          <button key={id} className={view === id ? 'nav-item active' : 'nav-item'} aria-label={label} title={label} onClick={() => navigate(id)}>
             <Icon size={20} />
             <span>{label}</span>
             {id === 'rewards' && rewardCount > 0 && <b className="nav-count">{rewardCount}</b>}
@@ -843,7 +841,6 @@ function DayView({
   toggleSelfReported,
   startTimer,
   startReadingGame,
-  openOptions,
   openPath,
   openRewards,
 }: {
@@ -853,7 +850,6 @@ function DayView({
   toggleSelfReported: (id: string) => void
   startTimer: (timer: ActiveTimer) => void
   startReadingGame: (day: DayName) => void
-  openOptions: () => void
   openPath: () => void
   openRewards: () => void
 }) {
@@ -861,7 +857,7 @@ function DayView({
   const progress = progressForDay(state, day)
   const free = dayIsComplete(state, day)
   if (day === 'Friday' && free) {
-    return <FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} />
+    return <><FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} /><PracticeChoices state={state} day={day} startTimer={startTimer} /></>
   }
   return (
     <section className="page">
@@ -882,7 +878,7 @@ function DayView({
 
       <div className="section-label"><span>REQUIRED TODAY</span><span>{progress.required}/{progress.requiredTotal}</span></div>
       <div className="activity-list">
-        {REQUIRED_ACTIVITIES.map((activity) => {
+        {requiredActivitiesForDay(day).map((activity) => {
           const done = completed.includes(activity.id)
           const self = activity.method === 'self'
           const configuration = activity.id === 'ninja-dojo'
@@ -916,7 +912,10 @@ function DayView({
                   {done ? <Check size={21} strokeWidth={3} /> : <span />}
                 </button>
               )}
-              {activity.method === 'timer' && !done && (
+              {activity.id === 'level-chinese' && !externalReady && (
+                <a className="row-button" href={state.activityConfiguration.levelChinese.cleverUrl || DEFAULT_CLEVER_URL} target="_blank" rel="noopener noreferrer" title="Open Clever to sign in. Timed credit still needs the Level Learning link and managed Chrome setup.">Open Clever <ChevronRight size={15} /></a>
+              )}
+              {activity.method === 'timer' && !done && !(activity.id === 'level-chinese' && !externalReady) && (
                 <button className="row-button" disabled={!canStartTimer} title={!externalReady ? 'Parent setup is required' : needsExternalSetup && !state.chromeConnected ? 'Managed Chrome is checked when the session starts' : undefined} onClick={() => startTimer({
                   kind: 'required', activityId: activity.id, sessionKey: day, label: activity.title,
                   totalSeconds: (activity.minutes ?? 0) * 60, remainingSeconds: (activity.minutes ?? 0) * 60, running: true,
@@ -935,12 +934,7 @@ function DayView({
         })}
       </div>
 
-      <button className="practice-banner" onClick={openOptions}>
-        <span className="practice-banner-icon"><Music2 size={27} /></span>
-        <span><small>WEEKLY PRACTICE BANK</small><strong>{state.optionalCompleted.length} of {OPTIONAL_SESSION_TOTAL} sessions complete</strong></span>
-        <span className="banner-progress"><span style={{ width: `${(state.optionalCompleted.length / OPTIONAL_SESSION_TOTAL) * 100}%` }} /></span>
-        <ChevronRight />
-      </button>
+      <PracticeChoices state={state} day={day} startTimer={startTimer} />
     </section>
   )
 }
@@ -1007,20 +1001,19 @@ function FridayFunView({
   )
 }
 
-function OptionalView({
+function PracticeChoices({
   state,
+  day,
   startTimer,
-  onBack,
-  headStart = false,
 }: {
   state: AppState
+  day: DayName
   startTimer: (timer: ActiveTimer) => void
-  onBack?: () => void
-  headStart?: boolean
 }) {
+  const headStart = state.weekContext.headStart
+  const remaining = Math.max(0, OPTIONAL_TARGETS[day] - state.optionalCompleted.length)
   return (
-    <section className={headStart ? 'page head-start-page' : 'page'}>
-      {!headStart && onBack && <button className="text-button back-button" onClick={onBack}><ArrowLeft size={17} /> Back to week</button>}
+    <section className="daily-practice" aria-labelledby="practice-heading">
       {headStart && (
         <div className="head-start-note">
           <span><Sparkles size={22} /></span>
@@ -1029,9 +1022,10 @@ function OptionalView({
       )}
       <div className="page-heading split-heading">
         <div>
-          <p className="eyebrow">{headStart ? 'GET A HEAD START' : 'PRACTICE BANK'}</p>
-          <h2>{headStart ? 'Build momentum for Monday.' : 'Choose your next session.'}</h2>
-          <p>{headStart ? `These sessions are banked for the week of ${getWeekLabel(state.weekContext.weekId)}.` : 'Finish sessions early and they count toward the whole week.'}</p>
+          <p className="eyebrow">{headStart ? 'GET A HEAD START' : 'PRACTICE · PART OF YOUR DAILY PLAN'}</p>
+          <h2 id="practice-heading">Choose an activity</h2>
+          <p>{headStart ? `Bank sessions early for the week of ${getWeekLabel(state.weekContext.weekId)}.` : remaining > 0 ? `Choose ${remaining} more ${remaining === 1 ? 'session' : 'sessions'} to reach ${day}’s practice target.` : `${day}’s practice target is complete. You can bank more for later in the week.`}</p>
+          <p>Pick any unfinished session below. Every session counts toward your weekly total.</p>
         </div>
         <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of {OPTIONAL_SESSION_TOTAL}<br />banked</span></div>
       </div>
@@ -1048,7 +1042,7 @@ function OptionalView({
                   const key = optionalSessionKey(activity.id, index)
                   const done = state.optionalCompleted.includes(key)
                   return (
-                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done} onClick={() => startTimer({
+                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done} aria-label={`${activity.title}, session ${index + 1}${done ? ', complete' : ', start'}`} title={done ? 'Session complete' : `Start ${activity.title}, session ${index + 1}`} onClick={() => startTimer({
                       kind: 'optional', activityId: activity.id, sessionKey: key,
                       label: `${activity.title} · Session ${index + 1}`,
                       totalSeconds: activity.minutes * 60, remainingSeconds: activity.minutes * 60, running: true,
@@ -1063,7 +1057,6 @@ function OptionalView({
           )
         })}
       </div>
-      <div className="head-start-note"><Sparkles size={20} /><div><strong>Get a Head Start</strong><p>The next practice week opens every Sunday at 4:00 a.m.</p></div></div>
     </section>
   )
 }
@@ -2014,7 +2007,7 @@ function WritingView({
           {writingLog?.configured && <button className="secondary-button" type="button" disabled={writingLogBusy || serviceStatus !== 'online' || writingLog.status === 'safe-test' || writingLog.status === 'authorization-required'} onClick={() => { void syncWritingLogNow() }}>{writingLogBusy ? 'Syncing…' : 'Sync now'}</button>}
         </div>
       </div>
-      <div className="integration-note"><Clock3 size={19} /><div><strong>Every version is saved for Friday.</strong><p>After the final check is correct, authorized live Google delivery puts each version in the weekly document and emails it to the teacher Friday at 12:00 p.m. Safe-test mode keeps it local.</p></div></div>
+      <div className="integration-note"><Clock3 size={19} /><div><strong>Every attempt and revision is saved for Friday.</strong><p>After the final check is correct, authorized live Google delivery puts the complete revision history in the weekly document and emails it directly to the teacher Friday at 3:00 p.m. Safe-test mode keeps it local.</p></div></div>
     </section>
   )
 }
@@ -2614,7 +2607,7 @@ function ParentView({
         <div className="parent-panel">
           <div className="panel-heading"><div><h3>Daily completion</h3><p>Use these as preview overrides.</p></div><select value={day} onChange={(event) => setDay(event.target.value as DayName)}>{DAYS.map((item) => <option key={item}>{item}</option>)}</select></div>
           <div className="override-list">
-            {activeRequiredActivities().map((activity) => {
+            {activeRequiredActivities(day).map((activity) => {
               const done = state.requiredByDay[day].includes(activity.id)
               return <button key={activity.id} onClick={() => toggleOverride(activity.id)}><span className={done ? 'override-check done' : 'override-check'}>{done && <Check size={15} />}</span><span><strong>{activity.title}</strong><small>{activity.method === 'self' ? 'Self-reported' : activity.method === 'timer' ? 'Time-in-session' : 'Game-verified'}</small></span><span>{done ? 'Complete' : 'Incomplete'}</span></button>
             })}
@@ -2796,7 +2789,7 @@ function ParentView({
       </div>
       <div className="parent-panel google-proof-panel live-google-panel">
         <div className="panel-heading">
-          <div><h3>Live Friday Google delivery</h3><p>Creates the weekly Google Doc with every saved writing version, exports a verified PDF, shares view-only, and emails the school recipient Friday at 12:00 p.m.</p></div>
+          <div><h3>Live Friday Google delivery</h3><p>Creates the weekly Google Doc with every saved attempt and revision, exports a verified PDF, shares view-only, and emails the school recipient Friday at 3:00 p.m.</p></div>
           <span className={`mock-badge ${state.googleLive.enabled ? 'live-badge' : ''}`}>{state.googleLive.enabled ? 'LIVE MODE' : 'SAFE MODE ACTIVE'}</span>
         </div>
         <div className="google-proof-content">

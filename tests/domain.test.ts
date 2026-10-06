@@ -47,7 +47,7 @@ test('homework hand-in checkboxes appear and count only on their assigned weekda
 })
 
 test('the seven-day plan keeps weekends practice-only and reading Monday through Thursday', () => {
-  assert.deepEqual(PLAN_DAYS, ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+  assert.deepEqual(PLAN_DAYS, ['Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
   for (const day of PLAN_DAYS) {
     assert.equal(isSchoolDay(day), day !== 'Saturday' && day !== 'Sunday')
     const reading = requiredActivitiesForDay(day).find((activity) => activity.id === 'independent-reading')

@@ -1,7 +1,7 @@
 export const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
 export type DayName = (typeof DAYS)[number]
 export type LocalDayName = DayName | 'Saturday' | 'Sunday'
-export const PLAN_DAYS = [...DAYS, 'Saturday', 'Sunday'] as const
+export const PLAN_DAYS = ['Saturday', 'Sunday', ...DAYS] as const
 export function isSchoolDay(day: LocalDayName): day is DayName {
   return day !== 'Saturday' && day !== 'Sunday'
 }

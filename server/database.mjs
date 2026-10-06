@@ -29,6 +29,7 @@ const OPTIONAL_SESSION_KEYS = new Set([
   'voena:0', 'voena:1', 'voena:2',
   'drums:0', 'drums:1', 'drums:2',
   'band:0', 'band:1', 'band:2',
+  'volleyball:0', 'volleyball:1', 'volleyball:2',
 ])
 const OPTIONAL_TARGETS = { Monday: 2, Tuesday: 4, Wednesday: 6, Thursday: 8, Friday: 9 }
 const DEFAULT_TIME_ZONE = 'America/Los_Angeles'
@@ -53,7 +54,7 @@ function emptyState(weekContext = emptyWeekContext()) {
     freeModeByDay: {},
     rewardCredits: [],
     drafts: [],
-    writingDictionary: { knownNames: ['Fionnbar'], knownPlaces: [] },
+    writingDictionary: { knownNames: ['Saoirse'], knownPlaces: [] },
     writingReviewQueue: [],
     activeTimer: null,
     activeGameSession: null,
@@ -123,7 +124,7 @@ function normalizeDictionaryEntries(values) {
 
 function normalizeWritingDictionary(value) {
   return {
-    knownNames: normalizeDictionaryEntries(value?.knownNames ?? ['Fionnbar']),
+    knownNames: normalizeDictionaryEntries(value?.knownNames ?? ['Saoirse']),
     knownPlaces: normalizeDictionaryEntries(value?.knownPlaces),
   }
 }
@@ -2778,7 +2779,7 @@ export function createStore(filename, options = {}) {
     }
 
     const now = asIso(wallNow())
-    const documentName = `Fionnbar Writing - Week of ${weekId}`
+    const documentName = `Saoirse Writing - Week of ${weekId}`
     if (existing) {
       db.exec('BEGIN IMMEDIATE')
       try {
@@ -3065,7 +3066,7 @@ export function createStore(filename, options = {}) {
     const id = makeId()
     const now = asIso(wallNow())
     const status = drafts.length ? 'queued' : 'skipped'
-    const documentName = `Fionnbar Writing — Week of ${weekId}`
+    const documentName = `Saoirse Writing — Week of ${weekId}`
     db.exec('BEGIN IMMEDIATE')
     try {
       setSetting.run('google_live_recipient', recipient)

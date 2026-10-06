@@ -628,8 +628,8 @@ test('verified completion proof unlocks free mode and a correction rotates the l
   const weekId = started.session.weekId
 
   for (const activityId of [
-    'mandarin', 'level-chinese', 'du-chinese', 'math', 'english-packet',
-    'reading-strategies', 'ninja-dojo', 'mandarin-homework-turned-in', 'independent-reading',
+    'mandarin', 'science', 'du-chinese', 'math', 'english-packet',
+    'ninja-dojo', 'independent-reading',
   ]) {
     store.setDailyCompletion({
       day: 'Monday',
@@ -654,8 +654,8 @@ test('verified completion proof unlocks free mode and a correction rotates the l
     weekId,
     day: 'Monday',
     eligibleAt: free.session.completionProof.eligibleAt,
-    requiredCompleted: 9,
-    requiredTarget: 9,
+    requiredCompleted: 7,
+    requiredTarget: 7,
     optionalCompleted: 2,
     optionalTarget: 2,
   })
@@ -1940,13 +1940,13 @@ test('a controlled session completed after rollover stays with the week where it
   store.close()
 })
 
-test('day-specific manual hand-ins persist, can be unchecked, and reject the wrong day', () => {
+test('the Friday English hand-in persists, can be unchecked, and rejects the wrong day', () => {
   const directory = mkdtempSync(join(tmpdir(), 'homework-handins-'))
   const path = join(directory, 'homework.sqlite')
   const clock = controlledClock('2026-10-05T16:00:00.000Z')
   let store = createStore(path, clock.options())
   try {
-    for (const [day, activityId] of [['Monday', 'mandarin-homework-turned-in'], ['Friday', 'english-homework-turned-in']]) {
+    for (const [day, activityId] of [['Friday', 'english-homework-turned-in']]) {
       const input = { day, activityId, completed: true, method: 'self-reported' }
       store.setDailyCompletion(input)
       store.setDailyCompletion(input)
@@ -1955,10 +1955,9 @@ test('day-specific manual hand-ins persist, can be unchecked, and reject the wro
     }
     store.close()
     store = createStore(path, clock.options())
-    assert.ok(store.loadState().requiredByDay.Monday.includes('mandarin-homework-turned-in'))
     assert.ok(store.loadState().requiredByDay.Friday.includes('english-homework-turned-in'))
-    const state = store.setDailyCompletion({ day: 'Monday', activityId: 'mandarin-homework-turned-in', completed: false, method: 'self-reported' })
-    assert.equal(state.requiredByDay.Monday.includes('mandarin-homework-turned-in'), false)
+    const state = store.setDailyCompletion({ day: 'Friday', activityId: 'english-homework-turned-in', completed: false, method: 'self-reported' })
+    assert.equal(state.requiredByDay.Friday.includes('english-homework-turned-in'), false)
   } finally {
     store.close()
     rmSync(directory, { recursive: true, force: true })
@@ -1969,8 +1968,8 @@ test('Friday Free Mode unlocks once, relocks after a correction, and resets on r
   const clock = controlledClock('2026-10-09T16:00:00.000Z')
   const store = createStore(':memory:', clock.options())
   const required = [
-    'mandarin', 'level-chinese', 'du-chinese', 'math', 'english-packet',
-    'reading-strategies', 'ninja-dojo', 'english-homework-turned-in',
+    'mandarin', 'science', 'du-chinese', 'math', 'english-packet',
+    'ninja-dojo', 'english-homework-turned-in',
   ]
   const optional = [
     'voena:0', 'voena:1', 'voena:2',

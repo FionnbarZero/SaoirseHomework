@@ -130,7 +130,7 @@ function progressFor(progress: Record<string, SpellingProgress>, id: string): Sp
 
 export function inspectSpelling(
   body: string,
-  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+  dictionary: WritingDictionary = { knownNames: ['Saoirse'], knownPlaces: [] },
 ): SpellingWord[] {
   const protectedWords = new Set(
     [...dictionary.knownNames, ...dictionary.knownPlaces]
@@ -156,7 +156,7 @@ export function inspectSpelling(
 
 export function inspectSpellingFindings(
   body: string,
-  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+  dictionary: WritingDictionary = { knownNames: ['Saoirse'], knownPlaces: [] },
 ): Finding[] {
   const protectedWords = new Set(
     [...dictionary.knownNames, ...dictionary.knownPlaces]

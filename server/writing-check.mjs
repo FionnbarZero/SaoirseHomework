@@ -24,7 +24,7 @@ function sameCandidate(item, match) {
 }
 
 // One orchestration path for the HTTP endpoint and integration tests.
-export async function checkWriting(text, { proofreader, aiProofreader, mode, dictionary = { knownNames: ['Fionnbar'], knownPlaces: [] } }) {
+export async function checkWriting(text, { proofreader, aiProofreader, mode, dictionary = { knownNames: ['Saoirse'], knownPlaces: [] } }) {
   const local = await proofreader.check(text)
   // Every rule that could enter the game must first be visible to the verifier.
   const offlineCandidates = inspectWritingFindings(text, dictionary).flatMap((finding) => (

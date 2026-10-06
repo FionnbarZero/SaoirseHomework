@@ -173,7 +173,7 @@ function htmlDocument({ documentName, weekId, accountEmail, recipient, drafts, g
     <p class="meta">Week ID: ${escapeHtml(weekId)}<br />Test account: ${escapeHtml(accountEmail)}<br />Test recipient: ${escapeHtml(recipient)}</p>
     <p class="notice">This local artifact proves weekly document assembly and export. No Google account, Drive file, share, or email was created.</p>
     ${draftSections}
-    <footer>Generated ${escapeHtml(formatDate(generatedAt))} by Fionnbar Homework App safe test mode.</footer>
+    <footer>Generated ${escapeHtml(formatDate(generatedAt))} by Saoirse Homework App safe test mode.</footer>
   </main>
 </body>
 </html>`
@@ -188,7 +188,7 @@ async function writePdf(path, details) {
       bufferPages: true,
       info: {
         Title: details.documentName,
-        Author: 'Fionnbar Homework App - safe test mode',
+        Author: 'Saoirse Homework App - safe test mode',
         Subject: 'Local Google delivery feasibility proof',
       },
     })

@@ -78,7 +78,7 @@ function contextualUncertaintyRanges(sentence) {
   return ranges
 }
 
-const REVIEWED_FALLBACK_NAMES = ['Harry', 'Ron', 'Ann', 'Billy', 'Mike', 'Fionnbar']
+const REVIEWED_FALLBACK_NAMES = ['Harry', 'Ron', 'Ann', 'Billy', 'Mike', 'Saoirse']
 
 function capitalizedName(value) {
   return value

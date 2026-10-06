@@ -196,7 +196,7 @@ export function buildWritingLogText(drafts) {
     .filter((draft) => String(draft?.body ?? '').trim())
     .sort((left, right) => safeDate(right.updatedAt).getTime() - safeDate(left.updatedAt).getTime())
   const sections = [
-    'Fionnbar Writing Attempts & Corrections',
+    'Saoirse Writing Attempts & Corrections',
     'Newest entries appear first.',
     '',
   ]
@@ -618,7 +618,7 @@ export function createGoogleLiveIntegration(options) {
   }
 
   async function ensureWritingFolder(weekId) {
-    const root = await findOrCreateFolder('Fionnbar Homework', null)
+    const root = await findOrCreateFolder('Saoirse Homework', null)
     const schoolYear = await findOrCreateFolder(schoolYearForWeek(weekId), root)
     return findOrCreateFolder('Writing', schoolYear)
   }
@@ -678,7 +678,7 @@ export function createGoogleLiveIntegration(options) {
       from: delivery.accountEmail,
       to: delivery.recipient,
       subject: delivery.documentName,
-      text: `Hello,\n\nAttached is Fionnbar's completed writing for the week of ${delivery.weekId}.\n\n${linkLine}\n\nSent by Fionnbar Homework.`,
+      text: `Hello,\n\nAttached is Saoirse's completed writing for the week of ${delivery.weekId}.\n\n${linkLine}\n\nSent by Saoirse Homework.`,
       pdf,
       filename: `${safeFilename(delivery.documentName)}.pdf`,
       messageId: `fionnbar-${delivery.weekId}-${delivery.documentId}@homework.local`,

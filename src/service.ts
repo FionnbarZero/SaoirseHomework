@@ -193,6 +193,32 @@ type WritingLogResponse = {
   writingLog: WritingLogState
 }
 
+export type CalendarEvent = {
+  id: string
+  title: string
+  day: string
+  start: string
+  end: string | null
+  allDay: boolean
+}
+
+export type CalendarStatus = {
+  configured: boolean
+  connected: boolean
+  expectedAccountEmail?: string | null
+  accountEmail?: string | null
+  calendarId?: string
+  scopes?: string[]
+  lastSyncedAt: string | null
+  lastError: string | null
+}
+
+export type CalendarWeekResponse = {
+  events: CalendarEvent[]
+  status: CalendarStatus
+  stale?: boolean
+}
+
 export class ServiceRequestError extends Error {
   status: number
   code: string
@@ -272,6 +298,33 @@ export function getWritingLogStatus() {
 
 export function syncWritingLog() {
   return request<WritingLogResponse>('/api/writing-log/sync', { method: 'POST' })
+}
+
+export function getCalendarStatus() {
+  return request<{ calendar: CalendarStatus }>('/api/calendar/status')
+}
+
+export function getCalendarAdminStatus() {
+  return request<{ calendar: CalendarStatus }>('/api/calendar/admin/status')
+}
+
+export function getCalendarWeek(weekId: string) {
+  return request<CalendarWeekResponse>(`/api/calendar/week?weekId=${encodeURIComponent(weekId)}`, {
+    signal: AbortSignal.timeout(10_000),
+  })
+}
+
+export function beginCalendarAuthorization() {
+  return request<{ authorizationUrl: string; expiresAt: string }>('/api/calendar/authorize', {
+    method: 'POST',
+  })
+}
+
+export function disconnectCalendar() {
+  return request<{ calendar: CalendarStatus }>('/api/calendar/disconnect', {
+    method: 'POST',
+    signal: AbortSignal.timeout(15_000),
+  })
 }
 
 export function startLearningSession() {

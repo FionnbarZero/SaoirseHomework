@@ -441,7 +441,7 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['“Please sit down,” said Mr. Lee.', '“Please sit down, said Mr. Lee.', 'Please sit down,” said Mr. Lee.'],
       ['I heard her shout, “Wait!”', 'I heard her shout, “Wait!', 'I heard her shout, Wait!”'],
       ['Dad asked, “Are you ready?”', 'Dad asked, “Are you ready?', 'Dad asked, Are you ready?”'],
-      ['“That was amazing,” Fionnbar said.', '“That was amazing, Fionnbar said.', 'That was amazing,” Fionnbar said.'],
+      ['“That was amazing,” Saoirse said.', '“That was amazing, Saoirse said.', 'That was amazing,” Saoirse said.'],
       ['Leo whispered, “Be quiet.”', 'Leo whispered, “Be quiet.', 'Leo whispered, Be quiet.”'],
       ['“I found it,” Maya said.', '“I found it, Maya said.', 'I found it,” Maya said.'],
       ['Mom said, “Dinner is ready.”', 'Mom said, “Dinner is ready.', 'Mom said, Dinner is ready.”'],
@@ -461,7 +461,7 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
       ['Mom said, “Dinner is ready.”', 'Mom said “dinner is ready”.', 'Mom said, Dinner is ready.'],
       ['“Turn left,” the guide said.', '“Turn left.” the guide said.', '“turn left”, the guide said.'],
       ['Ava asked, “May I help?”', 'Ava asked “may I help”?', 'Ava asked, May I help?'],
-      ['“That was amazing!” Fionnbar said.', '“That was amazing”! Fionnbar said.', '“that was amazing!” fionnbar said.'],
+      ['“That was amazing!” Saoirse said.', '“That was amazing”! Saoirse said.', '“that was amazing!” saoirse said.'],
     ],
   ),
   'unexpected-midword-capital': practiceSet(
@@ -614,7 +614,7 @@ const RULE_PRACTICE: Record<string, WritingTrial[]> = {
     'Use a comma to separate the name of the person being spoken to from the rest of the sentence.',
     [
       ['Thanks, Mom.', 'Thanks Mom.', 'Thanks, Mom'],
-      ['Hello, Fionnbar.', 'Hello Fionnbar.', 'Hello, Fionnbar'],
+      ['Hello, Saoirse.', 'Hello Saoirse.', 'Hello, Saoirse'],
       ['Goodbye, Dad.', 'Goodbye Dad.', 'Goodbye, Dad'],
       ['Please listen, Maya.', 'Please listen Maya.', 'Please, listen Maya.'],
       ['Are you ready, Leo?', 'Are you ready Leo?', 'Are you, ready Leo?'],
@@ -949,7 +949,7 @@ function inferredProperNames(body: string) {
 
 export function inspectDraft(
   body: string,
-  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+  dictionary: WritingDictionary = { knownNames: ['Saoirse'], knownPlaces: [] },
 ): Finding[] {
   const findings: Finding[] = []
   if (!body.trim()) return findings
@@ -1487,7 +1487,7 @@ export function inspectDraft(
     })
   }
 
-  const directAddressNames = [...new Set(['Mom', 'Dad', 'Fionnbar', ...dictionary.knownNames])]
+  const directAddressNames = [...new Set(['Mom', 'Dad', 'Saoirse', ...dictionary.knownNames])]
     .filter(Boolean)
     .map(escapeRegex)
     .join('|')
@@ -1730,7 +1730,7 @@ export function inspectDraft(
 
 export function inspectWritingFindings(
   body: string,
-  dictionary: WritingDictionary = { knownNames: ['Fionnbar'], knownPlaces: [] },
+  dictionary: WritingDictionary = { knownNames: ['Saoirse'], knownPlaces: [] },
   proofreadingMatches: ProofreadingMatch[] = [],
   options: { authoritative?: boolean } = {},
 ) {

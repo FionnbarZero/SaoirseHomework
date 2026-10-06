@@ -162,6 +162,7 @@ a.row-button { text-decoration: none; }
 .icon-mandarin, .icon-level-chinese { color: #994f42; background: #f1dcd5; }
 .icon-du-chinese { color: #405f8b; background: #dae3ef; }
 .icon-math { color: #2f7066; background: #d9eae5; font-size: 25px; }
+.icon-science { color: #365f85; background: #dce8f2; font-size: 22px; }
 .icon-english-packet { color: #845f1e; background: #f4e6bd; }
 .icon-reading-strategies { color: #476593; background: #dfe7f1; font-size: 13px; }
 .icon-ninja-dojo { color: #803f30; background: #ead3ca; }
@@ -175,6 +176,16 @@ a.row-button { text-decoration: none; }
 .verified-check { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--teal); background: var(--teal-soft); }
 .waiting-pill, .soon-pill { flex: 0 0 auto; color: #8b7554; background: #f3ead9; border-radius: 999px; padding: 7px 10px; font-size: 9px; font-weight: 800; }
 .soon-pill { color: #787d79; background: #ece9e2; }
+.calendar-schedule { margin-top: 27px; }
+.calendar-event-list { display: grid; gap: 8px; }
+.calendar-event { min-height: 66px; padding: 11px 15px; display: flex; align-items: center; gap: 12px; border: 1px solid #cdded9; border-radius: 15px; background: #f3f8f6; }
+.calendar-event-icon { width: 39px; height: 39px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 12px; color: #2f6b62; background: #dcece7; }
+.calendar-event strong, .calendar-event small { display: block; }
+.calendar-event strong { font-size: 13px; }
+.calendar-event small { margin-top: 4px; color: #77827e; font-size: 10px; font-weight: 800; }
+.calendar-empty { min-height: 60px; padding: 15px 17px; display: flex; flex-direction: column; justify-content: center; gap: 3px; border: 1px dashed #d5d0c6; border-radius: 14px; color: #858b87; background: rgba(251,249,244,.58); font-size: 10px; line-height: 1.45; }
+.calendar-empty strong { color: #68746f; font-size: 11px; }
+.calendar-message { margin: 8px 3px 0; color: #8a7551; font-size: 9px; }
 .practice-banner { width: 100%; margin-top: 24px; border: 0; border-radius: 17px; padding: 15px 18px; display: grid; grid-template-columns: auto minmax(160px, 240px) 1fr auto; align-items: center; gap: 14px; color: white; background: #315f58; cursor: pointer; text-align: left; }
 .practice-banner-icon { width: 47px; height: 47px; display: grid; place-items: center; border-radius: 13px; color: #2e5852; background: #f0c767; }
 .practice-banner small, .practice-banner strong { display: block; }
@@ -194,7 +205,7 @@ a.row-button { text-decoration: none; }
 .friday-sparkles span:nth-child(2) { right: 12%; top: 19%; font-size: 37px; animation-delay: -.8s; }
 .friday-sparkles span:nth-child(3) { right: 22%; bottom: 20%; font-size: 20px; animation-delay: -1.5s; }
 .friday-actions { margin-top: 25px; display: flex; justify-content: center; gap: 10px; }
-.friday-summary { margin-top: 20px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.friday-summary { margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .friday-summary article { min-height: 170px; padding: 20px; border: 1px solid var(--line); border-radius: 19px; background: rgba(251,249,244,.94); box-shadow: 0 10px 32px rgba(63,58,44,.04); }
 .summary-icon { width: 43px; height: 43px; margin-bottom: 18px; display: grid; place-items: center; border-radius: 13px; color: #8a6115; background: #f5e4b0; }
 .friday-summary article:nth-child(2) .summary-icon { color: #2e6e64; background: #dcece7; }
@@ -241,6 +252,7 @@ a.row-button { text-decoration: none; }
 .large-activity-icon { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 16px; color: #6d4c12; background: #f4e4b5; font-family: Georgia, serif; font-size: 25px; font-weight: 800; }
 .practice-drums .large-activity-icon { background: #ead4cb; }
 .practice-band .large-activity-icon { color: #914327; background: #f2d4c7; }
+.practice-volleyball .large-activity-icon { color: #305f8a; background: #dce8f3; }
 .practice-level-chinese .large-activity-icon { color: #2d625a; background: #d6e9e3; }
 .practice-du-chinese .large-activity-icon { color: #405f8b; background: #dae3ef; }
 .duration { display: inline-flex; align-items: center; gap: 4px; color: #858b87; font-size: 10px; font-weight: 700; }
@@ -499,6 +511,16 @@ a.row-button { text-decoration: none; }
 .connection-row button { color: var(--teal); cursor: pointer; }
 .integration-panel > .secondary-button { width: calc(100% - 32px); margin: 15px 16px 0; }
 .activity-configuration-panel { margin-top: 18px; }
+.calendar-parent-panel { margin-top: 18px; border-color: #bfd9d2; }
+.calendar-parent-content { padding: 18px; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(280px, .8fr); gap: 18px; }
+.calendar-readiness { display: grid; gap: 8px; }
+.calendar-readiness > div { min-height: 54px; padding: 10px 13px; display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f7f4ed; }
+.calendar-readiness strong, .calendar-readiness small { display: block; }
+.calendar-readiness strong { font-size: 10px; }
+.calendar-readiness small { margin-top: 3px; color: #8b918d; font-size: 8px; line-height: 1.4; }
+.calendar-parent-actions { padding: 15px; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; border-radius: 13px; background: #f1f7f5; }
+.calendar-parent-actions > button { justify-content: center; }
+.calendar-parent-actions > p:not(.google-proof-message), .calendar-parent-actions > small { margin: 0; color: #71807a; font-size: 8px; line-height: 1.5; }
 .activity-config-grid { padding: 17px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
 .activity-config-grid fieldset { min-width: 0; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 14px; background: #f8f5ee; }
 .activity-config-grid legend { width: 100%; padding: 0 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: Georgia, serif; font-size: 14px; font-weight: 700; }
@@ -513,6 +535,7 @@ a.row-button { text-decoration: none; }
 .configuration-actions button { flex: 0 0 auto; }
 .configuration-message { margin: 0 17px 17px; }
 .writing-review-panel { margin-top: 18px; }
+.writing-review-panel, .google-proof-panel { display: none; }
 .writing-tools-grid { display: grid; grid-template-columns: minmax(280px, .7fr) minmax(420px, 1.3fr); }
 .writing-dictionary-form { padding: 18px; border-right: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 12px; }
 .writing-dictionary-form label { display: grid; gap: 6px; }
@@ -611,7 +634,7 @@ a.row-button { text-decoration: none; }
   .today-illustration { grid-row: span 5; margin: 0; height: 100%; min-height: 180px; }
   .practice-grid { grid-template-columns: repeat(2, 1fr); }
   .friday-summary { grid-template-columns: repeat(2, 1fr); }
-  .reward-content, .parent-grid, .google-proof-content { grid-template-columns: 1fr; }
+  .reward-content, .parent-grid, .google-proof-content, .calendar-parent-content { grid-template-columns: 1fr; }
   .activity-config-grid { grid-template-columns: 1fr; }
   .google-proof-form { border-right: 0; border-bottom: 1px solid var(--line); }
   .parent-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }

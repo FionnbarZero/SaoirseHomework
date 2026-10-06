@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  OPTIONAL_ACTIVITIES,
+  OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
   PLAN_DAYS,
   isSchoolDay,
@@ -26,24 +28,26 @@ import {
 test('optional sessions have stable unique keys', () => {
   assert.equal(optionalSessionKey('voena', 0), 'voena:0')
   assert.notEqual(optionalSessionKey('voena', 0), optionalSessionKey('voena', 1))
+  assert.equal(OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'drums')?.title, 'Bass Drills')
+  assert.equal(OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'volleyball')?.title, 'Volleyball Drills')
+  assert.equal(OPTIONAL_SESSION_TOTAL, 12)
 })
 
-test('homework hand-in checkboxes appear and count only on their assigned weekdays', () => {
+test('the English hand-in checkbox appears and counts only on Friday', () => {
   const checks = (day) => requiredActivitiesForDay(day).filter((activity) => activity.id.endsWith('-turned-in'))
-  assert.deepEqual(checks('Monday').map((activity) => [activity.title, activity.method]), [['Turned in my Mandarin Homework', 'self']])
+  assert.deepEqual(checks('Monday'), [])
   assert.deepEqual(checks('Friday').map((activity) => [activity.title, activity.method]), [['Turned in English Homework', 'self']])
   for (const day of ['Tuesday', 'Wednesday', 'Thursday'] as const) assert.deepEqual(checks(day), [])
   const state = structuredClone(defaultState)
   state.optionalCompleted = Array.from({ length: 9 }, (_, index) => `session:${index}`)
-  for (const day of ['Monday', 'Friday'] as const) {
-    state.requiredByDay[day] = activeRequiredActivities(day).filter((activity) => !activity.id.endsWith('-turned-in')).map((activity) => activity.id)
-    assert.equal(dayIsComplete(state, day), false)
-    assert.equal(progressForDay(state, day).requiredTotal, day === 'Monday' ? 9 : 8)
-    state.requiredByDay[day].push(checks(day)[0].id)
-    assert.equal(dayIsComplete(state, day), true)
-  }
-  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 8)
-  assert.equal(getFridayFunSummary(state).requiredTotal, 41)
+  state.requiredByDay.Friday = activeRequiredActivities('Friday').filter((activity) => !activity.id.endsWith('-turned-in')).map((activity) => activity.id)
+  assert.equal(dayIsComplete(state, 'Friday'), false)
+  assert.equal(progressForDay(state, 'Friday').requiredTotal, 7)
+  state.requiredByDay.Friday.push(checks('Friday')[0].id)
+  assert.equal(dayIsComplete(state, 'Friday'), true)
+  assert.equal(progressForDay(state, 'Monday').requiredTotal, 7)
+  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 7)
+  assert.equal(getFridayFunSummary(state).requiredTotal, 35)
 })
 
 test('the seven-day plan keeps weekends practice-only and reading Monday through Thursday', () => {
@@ -56,6 +60,15 @@ test('the seven-day plan keeps weekends practice-only and reading Monday through
       assert.equal(reading?.minutes, 20)
       assert.equal(reading?.method, 'timer')
     } else assert.equal(reading, undefined)
+    const dailyActivities = requiredActivitiesForDay(day)
+    if (isSchoolDay(day)) {
+      assert.equal(dailyActivities.some((activity) => activity.id === 'science'), true)
+      assert.equal(dailyActivities.some((activity) => activity.id === 'level-chinese'), false)
+      assert.equal(dailyActivities.some((activity) => activity.id === 'reading-strategies'), false)
+      assert.equal(dailyActivities.some((activity) => activity.id === 'english-escape'), false)
+      assert.equal(dailyActivities.find((activity) => activity.id === 'math')?.title, 'Advanced Math')
+      assert.equal(dailyActivities.find((activity) => activity.id === 'english-packet')?.title, 'Advanced ELA')
+    }
   }
   assert.deepEqual(activeRequiredActivities('Saturday'), [])
   assert.deepEqual(activeRequiredActivities('Sunday'), [])

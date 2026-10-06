@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { buildActivitySessionPlan } from './activity-config.mjs'
 import { createStore } from './database.mjs'
 import { createGoogleLiveIntegration } from './google-live.mjs'
+import { createGoogleCalendarIntegration } from './google-calendar.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
 import { createMacOSKeychain } from './keychain.mjs'
 import { createParentAuthorization } from './parent-auth.mjs'
@@ -37,6 +38,8 @@ const timeZone = process.env.HOMEWORK_TIME_ZONE || 'America/Los_Angeles'
 const googleMode = process.env.HOMEWORK_GOOGLE_MODE === 'live' ? 'live' : 'safe-test'
 const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim()
 const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
+const calendarAccountEmail = String(process.env.HOMEWORK_CALENDAR_ACCOUNT_EMAIL ?? '').trim()
+const calendarId = String(process.env.HOMEWORK_CALENDAR_ID ?? 'primary').trim() || 'primary'
 const writingLogDocumentId = String(process.env.HOMEWORK_WRITING_LOG_DOCUMENT_ID ?? '').trim()
 const writingLogTabId = String(process.env.HOMEWORK_WRITING_LOG_TAB_ID ?? 't.0').trim() || 't.0'
 const guardianSharedSecret = String(process.env.HOMEWORK_GUARDIAN_SHARED_SECRET ?? '').trim()
@@ -57,6 +60,10 @@ const userSessionBroker = createUserSessionBroker({
   required: requireRootOwnership,
 })
 const googleKeychain = requireRootOwnership ? null : createMacOSKeychain()
+const calendarKeychain = requireRootOwnership ? null : createMacOSKeychain({
+  service: 'com.fionnbar.homework.calendar.google',
+  account: 'oauth-refresh-token',
+})
 const googleCredentialBroker = requireRootOwnership ? userSessionBroker.googleCredentials : null
 const parentAuthorizationConfigured = requireRootOwnership
   ? userSessionBroker.configured
@@ -83,6 +90,15 @@ const googleLive = createGoogleLiveIntegration({
   writingLogDocumentId,
   writingLogTabId,
 })
+const googleCalendar = createGoogleCalendarIntegration({
+  keychain: calendarKeychain,
+  clientId: googleClientId,
+  clientSecret: googleClientSecret,
+  redirectUri: `${serviceOrigin}/api/google/calendar/oauth/callback`,
+  expectedEmail: calendarAccountEmail,
+  calendarId,
+  timeZone,
+})
 const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'mmpeglplfjkbefdgikaldkncikpfdend'
 const readingGameOrigin = new URL(
   process.env.HOMEWORK_READING_GAME_ORIGIN || serviceOrigin,
@@ -99,8 +115,9 @@ const selfReportedActivities = new Set(activeRequiredActivities().filter((activi
 const parentOverrideActivities = new Set(activeRequiredActivities().map((activity) => activity.id))
 const optionalActivities = new Map([
   ['voena', { label: 'Voena', sessions: 3, targetSeconds: 20 * 60 }],
-  ['drums', { label: 'Drum Drills', sessions: 3, targetSeconds: 20 * 60 }],
+  ['drums', { label: 'Bass Drills', sessions: 3, targetSeconds: 20 * 60 }],
   ['band', { label: 'Band Practice', sessions: 3, targetSeconds: 20 * 60 }],
+  ['volleyball', { label: 'Volleyball Drills', sessions: 3, targetSeconds: 20 * 60 }],
 ])
 const requiredTimedActivities = new Map([
   ['independent-reading', { label: 'Read for 20 minutes' }],
@@ -243,14 +260,14 @@ function requireParent(request, options = {}) {
   throw error
 }
 
-function oauthResultPage(success, message) {
+function oauthResultPage(success, message, eventType = 'fionnbar-google-oauth') {
   const title = success ? 'Google connected' : 'Google connection failed'
   const safeMessage = String(message)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><style>body{font-family:system-ui,sans-serif;background:#f5f2ea;color:#26342f;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:520px;background:#fff;padding:32px;border-radius:18px;box-shadow:0 12px 40px #0002}h1{font-size:24px}p{line-height:1.55;color:#5d6965}</style></head><body><main class="card"><h1>${title}</h1><p>${safeMessage}</p><p>You can close this window and return to Fionnbar Homework.</p></main><script>window.opener?.postMessage({type:'fionnbar-google-oauth',success:${success}},window.location.origin)</script></body></html>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title><style>body{font-family:system-ui,sans-serif;background:#f5f2ea;color:#26342f;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:520px;background:#fff;padding:32px;border-radius:18px;box-shadow:0 12px 40px #0002}h1{font-size:24px}p{line-height:1.55;color:#5d6965}</style></head><body><main class="card"><h1>${title}</h1><p>${safeMessage}</p><p>You can close this window and return to Saoirse Homework.</p></main><script>for(const target of [window.location.origin,'http://127.0.0.1:4180'])window.opener?.postMessage({type:${JSON.stringify(eventType)},success:${success}},target)</script></body></html>`
 }
 
 function gameCorsHeaders(origin) {
@@ -789,6 +806,51 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { extension, status: chromeResponse() })
     }
 
+    if (url.pathname === '/api/calendar/status' && request.method === 'GET') {
+      return sendJson(response, 200, { calendar: await googleCalendar.getStatus() })
+    }
+
+    if (url.pathname === '/api/calendar/week' && request.method === 'GET') {
+      const weekId = url.searchParams.get('weekId')
+      return sendJson(response, 200, await googleCalendar.listWeek(weekId))
+    }
+
+    if (url.pathname === '/api/calendar/admin/status' && request.method === 'GET') {
+      requireParent(request)
+      return sendJson(response, 200, { calendar: await googleCalendar.getStatus({ includeAccount: true }) })
+    }
+
+    if (url.pathname === '/api/calendar/authorize' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
+      return sendJson(response, 200, await googleCalendar.beginAuthorization())
+    }
+
+    if (url.pathname === '/api/google/calendar/oauth/callback' && request.method === 'GET') {
+      try {
+        const calendar = await googleCalendar.completeAuthorization({
+          state: url.searchParams.get('state'),
+          code: url.searchParams.get('code'),
+          error: url.searchParams.get('error'),
+        })
+        return sendHtml(
+          response,
+          200,
+          oauthResultPage(true, `${calendar.accountEmail} is connected with read-only Calendar access.`, 'saoirse-calendar-oauth'),
+        )
+      } catch (error) {
+        return sendHtml(
+          response,
+          Number.isInteger(error?.status) ? error.status : 500,
+          oauthResultPage(false, error instanceof Error ? error.message : 'Calendar authorization could not be completed.', 'saoirse-calendar-oauth'),
+        )
+      }
+    }
+
+    if (url.pathname === '/api/calendar/disconnect' && request.method === 'POST') {
+      requireParent(request, { sensitive: true })
+      return sendJson(response, 200, { calendar: await googleCalendar.disconnect() })
+    }
+
     if (url.pathname === '/api/google/mock/status' && request.method === 'GET') {
       requireParent(request)
       return sendJson(response, 200, {
@@ -1146,6 +1208,7 @@ server.listen(port, host, () => {
   console.log(`SQLite database: ${databasePath}`)
   console.log(`Writing remediation origin: ${readingGameOrigin}`)
   console.log(`Google delivery mode: ${googleMode}`)
+  console.log(`Google Calendar: ${calendarAccountEmail && googleClientId ? 'configured' : 'setup required'}`)
   console.log(`Parent authorization: ${parentAuthorizationConfigured ? 'configured' : 'locked (shared secret missing)'}`)
   console.log(`Recovery security mode: ${securityMode}`)
 })

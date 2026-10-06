@@ -222,6 +222,7 @@ export type ActiveTimer = {
   launchUrl?: string
   allowedOrigins?: string[]
   managedChromeRequired?: boolean
+  inAppBrowserRequired?: boolean
   waitingForVerification?: boolean
   navigateOnPhaseStart?: boolean
   rewardSelectionDeadlineAt?: string

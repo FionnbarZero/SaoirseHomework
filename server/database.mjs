@@ -3338,6 +3338,7 @@ export function createStore(filename, options = {}) {
     listCompletions,
     info,
     isInitialized,
+    checkpoint: () => db.exec('PRAGMA wal_checkpoint(TRUNCATE)'),
     close: () => db.close(),
   }
 }

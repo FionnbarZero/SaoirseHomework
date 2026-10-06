@@ -11,3 +11,4 @@ guardian/.build
 guardian/build
 chrome/private
 chrome/build
+.tools

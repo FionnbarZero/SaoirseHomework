@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildActivitySessionPlan } from './activity-config.mjs'
 import { createStore } from './database.mjs'
+import { createFirestoreBackedStore } from './cloud-store.mjs'
 import { createGoogleLiveIntegration } from './google-live.mjs'
 import { createGoogleCalendarIntegration } from './google-calendar.mjs'
 import { createMockGoogleArtifacts } from './google-proof.mjs'
@@ -16,6 +17,7 @@ import { createLifecycleAuthenticatorFromEnvironment } from './lifecycle-auth.mj
 import { enforceRootOwnedRuntime } from './runtime-security.mjs'
 import { createUserSessionBroker } from './user-session-broker.mjs'
 import { createPrivateAccess } from './private-access.mjs'
+import { createSecretManagerTokenStore } from './secret-manager-token-store.mjs'
 import { activeRequiredActivities } from '../src/domain.ts'
 
 const serverDirectory = fileURLToPath(new URL('.', import.meta.url))
@@ -25,10 +27,12 @@ try {
 } catch (error) {
   if (error?.code !== 'ENOENT') throw error
 }
-const port = Number(process.env.HOMEWORK_PORT || 4179)
+const port = Number(process.env.PORT || process.env.HOMEWORK_PORT || 4179)
 const privateAccess = createPrivateAccess()
-const host = '127.0.0.1'
-const serviceOrigin = `http://${host}:${port}`
+const host = process.env.HOMEWORK_HOST || (process.env.K_SERVICE ? '0.0.0.0' : '127.0.0.1')
+const localServiceOrigin = `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`
+const configuredPublicOrigin = String(process.env.HOMEWORK_PUBLIC_ORIGIN ?? '').trim()
+const serviceOrigin = configuredPublicOrigin || localServiceOrigin
 const dataDirectory = process.env.HOMEWORK_DATA_DIR || join(projectRoot, 'data')
 const databasePath = join(dataDirectory, 'homework.sqlite')
 const googleProofDirectory = process.env.HOMEWORK_GOOGLE_PROOF_DIR || join(dataDirectory, 'google-proof')
@@ -40,6 +44,8 @@ const googleClientId = String(process.env.HOMEWORK_GOOGLE_CLIENT_ID ?? '').trim(
 const googleClientSecret = String(process.env.HOMEWORK_GOOGLE_CLIENT_SECRET ?? '').trim()
 const calendarAccountEmail = String(process.env.HOMEWORK_CALENDAR_ACCOUNT_EMAIL ?? '').trim()
 const calendarId = String(process.env.HOMEWORK_CALENDAR_ID ?? 'primary').trim() || 'primary'
+const cloudProjectId = String(process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? '').trim()
+const calendarTokenSecret = String(process.env.HOMEWORK_CALENDAR_TOKEN_SECRET ?? '').trim()
 const writingLogDocumentId = String(process.env.HOMEWORK_WRITING_LOG_DOCUMENT_ID ?? '').trim()
 const writingLogTabId = String(process.env.HOMEWORK_WRITING_LOG_TAB_ID ?? 't.0').trim() || 't.0'
 const guardianSharedSecret = String(process.env.HOMEWORK_GUARDIAN_SHARED_SECRET ?? '').trim()
@@ -60,15 +66,19 @@ const userSessionBroker = createUserSessionBroker({
   required: requireRootOwnership,
 })
 const googleKeychain = requireRootOwnership ? null : createMacOSKeychain()
-const calendarKeychain = requireRootOwnership ? null : createMacOSKeychain({
-  service: 'com.fionnbar.homework.calendar.google',
-  account: 'oauth-refresh-token',
-})
+const calendarKeychain = requireRootOwnership
+  ? null
+  : calendarTokenSecret
+    ? createSecretManagerTokenStore({ projectId: cloudProjectId, secretId: calendarTokenSecret })
+    : createMacOSKeychain({
+        service: 'com.fionnbar.homework.calendar.google',
+        account: 'oauth-refresh-token',
+      })
 const googleCredentialBroker = requireRootOwnership ? userSessionBroker.googleCredentials : null
 const parentAuthorizationConfigured = requireRootOwnership
   ? userSessionBroker.configured
   : guardianSharedSecret.length >= 32
-const store = createStore(databasePath, {
+const storeOptions = {
   timeZone,
   enforceFilePermissions: requireRootOwnership,
   googleLiveConfiguration: {
@@ -76,7 +86,14 @@ const store = createStore(databasePath, {
     clientConfigured: Boolean(googleClientId),
     keychainAvailable: googleCredentialBroker?.available ?? googleKeychain?.available ?? false,
   },
-})
+}
+const store = process.env.HOMEWORK_PERSISTENCE === 'firestore'
+  ? await createFirestoreBackedStore(databasePath, {
+      projectId: cloudProjectId,
+      documentPath: process.env.HOMEWORK_FIRESTORE_DOCUMENT,
+      storeOptions,
+    })
+  : createStore(databasePath, storeOptions)
 const googleLive = createGoogleLiveIntegration({
   store,
   keychain: googleKeychain,
@@ -149,7 +166,33 @@ const mimeTypes = {
   '.png': 'image/png',
 }
 
-function sendJson(response, status, value, extraHeaders = {}) {
+async function persistBeforeResponse(response) {
+  if (typeof store.flushIfDirty !== 'function') return true
+  try {
+    await store.flushIfDirty()
+    return true
+  } catch (error) {
+    console.error('Cloud persistence failed:', error instanceof Error ? error.message : error)
+    if (response.headersSent) {
+      response.destroy()
+      return false
+    }
+    const body = JSON.stringify({
+      error: error instanceof Error ? error.message : 'Homework data could not be saved.',
+      code: error?.code || 'cloud_persistence_failed',
+    })
+    response.writeHead(Number.isInteger(error?.status) ? error.status : 503, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
+    })
+    response.end(body)
+    return false
+  }
+}
+
+async function sendJson(response, status, value, extraHeaders = {}) {
+  if (!(await persistBeforeResponse(response))) return
   const body = JSON.stringify(value)
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -160,12 +203,14 @@ function sendJson(response, status, value, extraHeaders = {}) {
   response.end(body)
 }
 
-function sendEmpty(response, status, extraHeaders = {}) {
+async function sendEmpty(response, status, extraHeaders = {}) {
+  if (!(await persistBeforeResponse(response))) return
   response.writeHead(status, { 'Cache-Control': 'no-store', ...extraHeaders })
   response.end()
 }
 
-function sendHtml(response, status, body) {
+async function sendHtml(response, status, body) {
+  if (!(await persistBeforeResponse(response))) return
   response.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
@@ -1204,8 +1249,9 @@ const server = createServer(async (request, response) => {
 })
 
 server.listen(port, host, () => {
-  console.log(`Homework service listening at ${serviceOrigin}`)
-  console.log(`SQLite database: ${databasePath}`)
+  console.log(`Homework service listening on ${host}:${port}`)
+  console.log(`Public origin: ${serviceOrigin}`)
+  console.log(`Database: ${store.info().database}`)
   console.log(`Writing remediation origin: ${readingGameOrigin}`)
   console.log(`Google delivery mode: ${googleMode}`)
   console.log(`Google Calendar: ${calendarAccountEmail && googleClientId ? 'configured' : 'setup required'}`)
@@ -1214,12 +1260,16 @@ server.listen(port, host, () => {
 })
 
 const googleQueueInterval = setInterval(() => {
-  void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
+  void googleLive.runQueue()
+    .then(() => store.flushIfDirty?.())
+    .catch((error) => console.error('Google delivery queue failed:', error.message))
 }, 60_000)
 googleQueueInterval.unref()
 const initialGoogleQueueRun = setTimeout(() => {
   void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
   void googleLive.queueWritingLogSync(store.loadState().drafts)
+    .then(() => store.flushIfDirty?.())
+    .catch((error) => console.error('Writing log startup sync failed:', error.message))
 }, 2_000)
 initialGoogleQueueRun.unref()
 
@@ -1227,9 +1277,14 @@ function close() {
   clearInterval(googleQueueInterval)
   clearTimeout(initialGoogleQueueRun)
   userSessionBroker.close()
-  server.close(() => {
-    store.close()
-    process.exit(0)
+  server.close(async () => {
+    try {
+      await store.close()
+      process.exit(0)
+    } catch (error) {
+      console.error('Cloud persistence failed during shutdown:', error instanceof Error ? error.message : error)
+      process.exit(1)
+    }
   })
 }
 

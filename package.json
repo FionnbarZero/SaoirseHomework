@@ -8,9 +8,11 @@
     "dev:web": "vite --host 127.0.0.1",
     "dev:server": "node server/index.mjs",
     "connect:calendar": "node scripts/authorize-calendar.mjs",
+    "cloud:upload-state": "node scripts/upload-cloud-state.mjs",
+    "cloud:upload-calendar-token": "node scripts/upload-calendar-token.mjs",
     "setup:proofreader": "node scripts/install-languagetool.mjs",
     "start": "node server/index.mjs",
-    "test": "node --test tests/domain.test.ts tests/writing-game.test.ts tests/spelling.test.ts tests/proofreader.test.mjs tests/ai-proofreader.test.mjs tests/proofreading-eval.test.mjs tests/writing-pipeline.test.mjs tests/activity-config.test.mjs tests/database.test.mjs tests/chrome-extension.test.mjs tests/google-proof.test.mjs tests/google-live.test.mjs tests/google-calendar.test.mjs tests/lifecycle-auth.test.mjs tests/user-session-broker.test.mjs tests/parent-auth.test.mjs tests/private-access.test.mjs tests/guardian-deployment.test.mjs tests/guardian-production.test.mjs",
+    "test": "node --test tests/domain.test.ts tests/writing-game.test.ts tests/spelling.test.ts tests/proofreader.test.mjs tests/ai-proofreader.test.mjs tests/proofreading-eval.test.mjs tests/writing-pipeline.test.mjs tests/activity-config.test.mjs tests/database.test.mjs tests/cloud-persistence.test.mjs tests/chrome-extension.test.mjs tests/google-proof.test.mjs tests/google-live.test.mjs tests/google-calendar.test.mjs tests/lifecycle-auth.test.mjs tests/user-session-broker.test.mjs tests/parent-auth.test.mjs tests/private-access.test.mjs tests/guardian-deployment.test.mjs tests/guardian-production.test.mjs",
     "eval:proofreading": "node scripts/evaluate-proofreader.mjs",
     "build": "tsc -b && vite build",
     "build:chrome": "node scripts/build-chrome-extension.mjs",
@@ -19,6 +21,8 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.3.1",
+    "@google-cloud/secret-manager": "^7.1.1",
     "@vitejs/plugin-react": "latest",
     "jose": "6.2.12",
     "lucide-react": "latest",

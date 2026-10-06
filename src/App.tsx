@@ -610,7 +610,7 @@ function App() {
           {view === 'day' && (
             <DayView
               state={state}
-              day={selectedDay}
+              day={selectedPlanDay}
               setDay={setSelectedDay}
               toggleSelfReported={toggleSelfReported}
               startTimer={startTimer}

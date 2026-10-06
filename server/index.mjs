@@ -103,6 +103,7 @@ const optionalActivities = new Map([
   ['band', { label: 'Band Practice', sessions: 3, targetSeconds: 20 * 60 }],
 ])
 const requiredTimedActivities = new Map([
+  ['independent-reading', { label: 'Read for 20 minutes' }],
   ['ninja-dojo', { label: 'Ninja Dojo' }],
   ['level-chinese', { label: 'Level Chinese' }],
   ['du-chinese', { label: 'Du Chinese' }],
@@ -308,7 +309,7 @@ function serveArtifact(artifact, response) {
 function resolveSessionRequest(body) {
   if (body.kind === 'required') {
     const activity = requiredTimedActivities.get(body.activityId)
-    if (!activity || !days.has(body.sessionKey)) {
+    if (!activity || !days.has(body.sessionKey) || !activeRequiredActivities(body.sessionKey).some((item) => item.id === body.activityId)) {
       throw new Error('Unsupported required activity session')
     }
     const configuredPlan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
@@ -322,7 +323,7 @@ function resolveSessionRequest(body) {
           })),
         }
       : configuredPlan
-    if (!inAppNinjaPreview && !store.getChromeExtensionStatus().connected) {
+    if (plan.phases.some((phase) => phase.verification === 'managed-chrome') && !store.getChromeExtensionStatus().connected) {
       const error = new Error(`Managed Chrome must be connected before ${activity.label} can start`)
       error.status = 409
       error.code = 'managed_chrome_required'

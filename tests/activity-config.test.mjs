@@ -90,6 +90,10 @@ test('activity configuration normalizes launch and redirect origins exactly', ()
 })
 
 test('configured session plans preserve the required activity phases', () => {
+  const reading = buildActivitySessionPlan('independent-reading', emptyActivityConfiguration())
+  assert.equal(reading.targetSeconds, 1200)
+  assert.equal(reading.phases[0].targetSeconds, 1200)
+  assert.equal(reading.phases[0].verification, 'browser-focus')
   const configuration = normalizeActivityConfiguration({
     ninjaDojo: { launchUrl: 'https://hub.example.edu/grade-5', allowedOrigins: [] },
     duChinese: {

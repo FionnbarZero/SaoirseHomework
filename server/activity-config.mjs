@@ -135,6 +135,17 @@ function notConfigured(label) {
 
 export function buildActivitySessionPlan(activityId, configuration) {
   const config = normalizeActivityConfiguration(configuration)
+  if (activityId === 'independent-reading') {
+    return {
+      targetSeconds: 20 * 60,
+      phases: [{
+        id: 'reading',
+        label: 'Read for 20 minutes',
+        targetSeconds: 20 * 60,
+        verification: 'browser-focus',
+      }],
+    }
+  }
   if (activityId === 'ninja-dojo') {
     if (!config.ninjaDojo.ready) throw notConfigured('Ninja Dojo')
     return {

@@ -629,7 +629,7 @@ test('verified completion proof unlocks free mode and a correction rotates the l
 
   for (const activityId of [
     'mandarin', 'level-chinese', 'du-chinese', 'math', 'english-packet',
-    'reading-strategies', 'ninja-dojo', 'mandarin-homework-turned-in',
+    'reading-strategies', 'ninja-dojo', 'mandarin-homework-turned-in', 'independent-reading',
   ]) {
     store.setDailyCompletion({
       day: 'Monday',
@@ -654,8 +654,8 @@ test('verified completion proof unlocks free mode and a correction rotates the l
     weekId,
     day: 'Monday',
     eligibleAt: free.session.completionProof.eligibleAt,
-    requiredCompleted: 8,
-    requiredTarget: 8,
+    requiredCompleted: 9,
+    requiredTarget: 9,
     optionalCompleted: 2,
     optionalTarget: 2,
   })
@@ -704,6 +704,29 @@ function controlledClock(start = '2026-10-03T16:00:00.000Z') {
     },
   }
 }
+
+test('reading needs twenty active minutes, saves to its day, and cannot start on Friday or weekends', () => {
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  const request = { kind: 'required', activityId: 'independent-reading', sessionKey: 'Monday', label: 'Read for 20 minutes', targetSeconds: 1200 }
+  for (const sessionKey of ['Friday', 'Saturday', 'Sunday']) {
+    assert.throws(() => store.startSession({ ...request, sessionKey }), { code: 'activity_not_scheduled' })
+  }
+  const session = store.startSession(request)
+  let result
+  for (let index = 0; index < 239; index++) {
+    clock.advance(5000)
+    result = store.heartbeatSession(session.id, true)
+  }
+  assert.equal(result.remainingSeconds, 5)
+  assert.equal(store.loadState().requiredByDay.Monday.includes('independent-reading'), false)
+  clock.advance(5000)
+  result = store.heartbeatSession(session.id, true)
+  assert.equal(result.status, 'completed')
+  assert.ok(store.loadState().requiredByDay.Monday.includes('independent-reading'))
+  assert.equal(store.loadState().requiredByDay.Tuesday.includes('independent-reading'), false)
+  store.close()
+})
 
 test('heartbeats award only bounded active monotonic time', () => {
   const clock = controlledClock()

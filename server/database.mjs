@@ -2251,6 +2251,9 @@ export function createStore(filename, options = {}) {
   }
 
   function startSession(input) {
+    if (input.activityId === 'independent-reading' && (
+      input.kind !== 'required' || !DAYS.includes(input.sessionKey) || !requiredActivityIds(input.sessionKey).includes(input.activityId)
+    )) throw serviceError('Reading is scheduled Monday through Thursday', 400, 'activity_not_scheduled')
     if (getPendingSessionRow()) throw new Error('Finish or end the current session first')
     const targetSeconds = Math.floor(Number(input.targetSeconds))
     if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) throw new Error('A positive target duration is required')

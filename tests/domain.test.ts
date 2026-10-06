@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   OPTIONAL_TARGETS,
+  PLAN_DAYS,
+  isSchoolDay,
   activeRequiredActivities,
   dayIsComplete,
   defaultState,
@@ -36,12 +38,27 @@ test('homework hand-in checkboxes appear and count only on their assigned weekda
   for (const day of ['Monday', 'Friday'] as const) {
     state.requiredByDay[day] = activeRequiredActivities(day).filter((activity) => !activity.id.endsWith('-turned-in')).map((activity) => activity.id)
     assert.equal(dayIsComplete(state, day), false)
-    assert.equal(progressForDay(state, day).requiredTotal, 8)
+    assert.equal(progressForDay(state, day).requiredTotal, day === 'Monday' ? 9 : 8)
     state.requiredByDay[day].push(checks(day)[0].id)
     assert.equal(dayIsComplete(state, day), true)
   }
-  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 7)
-  assert.equal(getFridayFunSummary(state).requiredTotal, 37)
+  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 8)
+  assert.equal(getFridayFunSummary(state).requiredTotal, 41)
+})
+
+test('the seven-day plan keeps weekends practice-only and reading Monday through Thursday', () => {
+  assert.deepEqual(PLAN_DAYS, ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+  for (const day of PLAN_DAYS) {
+    assert.equal(isSchoolDay(day), day !== 'Saturday' && day !== 'Sunday')
+    const reading = requiredActivitiesForDay(day).find((activity) => activity.id === 'independent-reading')
+    if (['Monday', 'Tuesday', 'Wednesday', 'Thursday'].includes(day)) {
+      assert.equal(reading?.title, 'Read for 20 minutes')
+      assert.equal(reading?.minutes, 20)
+      assert.equal(reading?.method, 'timer')
+    } else assert.equal(reading, undefined)
+  }
+  assert.deepEqual(activeRequiredActivities('Saturday'), [])
+  assert.deepEqual(activeRequiredActivities('Sunday'), [])
 })
 
 test('a day needs required work and its cumulative practice target', () => {

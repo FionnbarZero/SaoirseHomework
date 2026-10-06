@@ -1,6 +1,10 @@
 export const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const
 export type DayName = (typeof DAYS)[number]
 export type LocalDayName = DayName | 'Saturday' | 'Sunday'
+export const PLAN_DAYS = [...DAYS, 'Saturday', 'Sunday'] as const
+export function isSchoolDay(day: LocalDayName): day is DayName {
+  return day !== 'Saturday' && day !== 'Sunday'
+}
 export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
 export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
 export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
@@ -560,11 +564,12 @@ export const defaultState: AppState = {
   weekContext: getBrowserWeekContext(),
 }
 
-export function requiredActivitiesForDay(day: DayName) {
+export function requiredActivitiesForDay(day: LocalDayName) {
+  if (!isSchoolDay(day)) return []
   return REQUIRED_ACTIVITIES.filter((activity) => !activity.days || activity.days.includes(day))
 }
 
-export function activeRequiredActivities(day?: DayName) {
+export function activeRequiredActivities(day?: LocalDayName) {
   return (day ? requiredActivitiesForDay(day) : REQUIRED_ACTIVITIES).filter((activity) => activity.method !== 'coming-soon')
 }
 
@@ -629,9 +634,9 @@ export function getFridayFunSummary(state: AppState) {
   }
 }
 
-export function getToday(): DayName {
+export function getToday(): LocalDayName {
   const current = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date())
-  return DAYS.includes(current as DayName) ? (current as DayName) : 'Monday'
+  return PLAN_DAYS.includes(current as LocalDayName) ? (current as LocalDayName) : 'Monday'
 }
 
 export function getWeekLabel(weekId?: string) {

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import {
   DAYS,
+  isSchoolDay,
   DEFAULT_CLEVER_URL,
   OPTIONAL_ACTIVITIES,
   OPTIONAL_SESSION_TOTAL,
@@ -47,6 +48,7 @@ import {
   type ActivityConfiguration,
   type AppState,
   type DayName,
+  type LocalDayName,
   type Draft,
   type SentenceMeaningReview,
 } from './domain'
@@ -164,7 +166,8 @@ function loadSecurityStatus(): SecurityStatus | null {
 function App() {
   const [state, setState] = useState<AppState>(loadState)
   const [view, setView] = useState<View>(state.activeTimer ? 'session' : 'path')
-  const [selectedDay, setSelectedDay] = useState<DayName>(getToday)
+  const [selectedPlanDay, setSelectedDay] = useState<LocalDayName>(getToday)
+  const selectedDay = isSchoolDay(selectedPlanDay) ? selectedPlanDay : 'Monday'
   const [serviceStatus, setServiceStatus] = useState<'connecting' | 'online' | 'offline'>('connecting')
   const [serviceMeta, setServiceMeta] = useState<ServiceMeta | null>(null)
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(loadSecurityStatus)
@@ -374,7 +377,7 @@ function App() {
     setView(next)
   }
 
-  const openDay = (day: DayName) => {
+  const openDay = (day: LocalDayName) => {
     setSelectedDay(day)
     setView('day')
   }
@@ -602,7 +605,7 @@ function App() {
               <button onClick={() => setSessionError('')} aria-label="Dismiss message"><X size={16} /></button>
             </div>
           )}
-          {view === 'path' && <PathView state={state} selectedDay={selectedDay} openDay={openDay} />}
+          {view === 'path' && <PathView state={state} selectedDay={selectedPlanDay} openDay={openDay} />}
           {view === 'day' && (
             <DayView
               state={state}
@@ -768,8 +771,11 @@ function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'con
   )
 }
 
-function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDay: DayName; openDay: (day: DayName) => void }) {
+function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDay: LocalDayName; openDay: (day: LocalDayName) => void }) {
   const optionalTotal = state.optionalCompleted.length
+  const today = getToday()
+  const todaySchoolDay = isSchoolDay(today) ? today : 'Monday'
+  const practiceRemaining = Math.max(0, OPTIONAL_TARGETS[todaySchoolDay] - optionalTotal)
   return (
     <section className="page path-page">
       <div className="page-heading split-heading">
@@ -824,9 +830,9 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
         <aside className="today-card">
           <div className="today-illustration"><span>✦</span><Trophy size={50} /></div>
           <p className="eyebrow">TODAY’S MOMENTUM</p>
-          <h3>{state.optionalCompleted.length >= OPTIONAL_TARGETS[getToday()] ? 'Practice target reached!' : 'You’re building a great week.'}</h3>
-          <p>{Math.max(0, OPTIONAL_TARGETS[getToday()] - optionalTotal)} more practice {Math.max(0, OPTIONAL_TARGETS[getToday()] - optionalTotal) === 1 ? 'session' : 'sessions'} to reach today’s banking target.</p>
-          <button className="secondary-button" onClick={() => openDay(getToday())}>Open today <ChevronRight size={18} /></button>
+          <h3>{practiceRemaining === 0 ? 'Practice target reached!' : 'You’re building a great week.'}</h3>
+          <p>{practiceRemaining} more practice {practiceRemaining === 1 ? 'session' : 'sessions'} to reach today’s banking target.</p>
+          <button className="secondary-button" onClick={() => openDay(todaySchoolDay)}>Open today <ChevronRight size={18} /></button>
           <div className="quote-card">“Small steps are still progress.”</div>
         </aside>
       </div>

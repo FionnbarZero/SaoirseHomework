@@ -16,6 +16,7 @@ included in the container image, Firestore document, logs, or source control.
 
 Required production settings:
 
+- `GOOGLE_CLOUD_PROJECT=weeklydictationapp`
 - `HOMEWORK_PERSISTENCE=firestore`
 - `HOMEWORK_FIRESTORE_DOCUMENT=homework_state/saoirse`
 - `HOMEWORK_DATA_DIR=/tmp/saoirse-homework`

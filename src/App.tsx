@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import {
   DAYS,
+  PLAN_DAYS,
   isSchoolDay,
   DEFAULT_CLEVER_URL,
   OPTIONAL_ACTIVITIES,
@@ -773,7 +774,7 @@ function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'con
 
 function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDay: LocalDayName; openDay: (day: LocalDayName) => void }) {
   const optionalTotal = state.optionalCompleted.length
-  const today = getToday()
+  const today = state.weekContext.localDay
   const todaySchoolDay = isSchoolDay(today) ? today : 'Monday'
   const practiceRemaining = Math.max(0, OPTIONAL_TARGETS[todaySchoolDay] - optionalTotal)
   return (
@@ -803,10 +804,10 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
       <div className="quest-grid">
         <div className="journey-card">
           <div className="journey-line" aria-hidden="true" />
-          {DAYS.map((day, index) => {
-            const progress = progressForDay(state, day)
-            const complete = dayIsComplete(state, day)
-            const isToday = day === getToday()
+          {PLAN_DAYS.map((day, index) => {
+            const progress = isSchoolDay(day) ? progressForDay(state, day) : null
+            const complete = isSchoolDay(day) && dayIsComplete(state, day)
+            const isToday = day === today
             return (
               <button
                 key={day}
@@ -818,8 +819,8 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
                 </span>
                 <span className="day-copy">
                   <span className="day-title-row"><strong>{day === 'Friday' ? 'Friday Fun!' : day}</strong>{isToday && <b>TODAY</b>}</span>
-                  <small>{complete ? 'Quest complete!' : `${progress.percent}% complete · ${progress.optional}/${progress.optionalTarget} practice`}</small>
-                  <span className="mini-progress"><span style={{ width: `${progress.percent}%` }} /></span>
+                  <small>{!progress ? `Optional practice · ${optionalTotal}/${OPTIONAL_SESSION_TOTAL} banked this week` : complete ? 'Quest complete!' : `${progress.percent}% complete · ${progress.optional}/${progress.optionalTarget} practice`}</small>
+                  {progress && <span className="mini-progress"><span style={{ width: `${progress.percent}%` }} /></span>}
                 </span>
                 <ChevronRight size={20} />
               </button>
@@ -830,14 +831,20 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
         <aside className="today-card">
           <div className="today-illustration"><span>✦</span><Trophy size={50} /></div>
           <p className="eyebrow">TODAY’S MOMENTUM</p>
-          <h3>{practiceRemaining === 0 ? 'Practice target reached!' : 'You’re building a great week.'}</h3>
-          <p>{practiceRemaining} more practice {practiceRemaining === 1 ? 'session' : 'sessions'} to reach today’s banking target.</p>
-          <button className="secondary-button" onClick={() => openDay(todaySchoolDay)}>Open today <ChevronRight size={18} /></button>
+          <h3>{!isSchoolDay(today) ? 'A little weekend practice?' : practiceRemaining === 0 ? 'Practice target reached!' : 'You’re building a great week.'}</h3>
+          <p>{!isSchoolDay(today) ? 'Choose an optional activity. There are no required homework items today.' : `${practiceRemaining} more practice ${practiceRemaining === 1 ? 'session' : 'sessions'} to reach today’s banking target.`}</p>
+          <button className="secondary-button" onClick={() => openDay(today)}>Open today <ChevronRight size={18} /></button>
           <div className="quote-card">“Small steps are still progress.”</div>
         </aside>
       </div>
     </section>
   )
+}
+
+function DayTabs({ day, setDay }: { day: LocalDayName; setDay: (day: LocalDayName) => void }) {
+  return <div className="day-tabs" role="group" aria-label="Choose a day">
+    {PLAN_DAYS.map((item) => <button key={item} className={item === day ? 'active' : ''} aria-pressed={item === day} onClick={() => setDay(item)}>{item.slice(0, 3)}</button>)}
+  </div>
 }
 
 function DayView({
@@ -851,14 +858,26 @@ function DayView({
   openRewards,
 }: {
   state: AppState
-  day: DayName
-  setDay: (day: DayName) => void
+  day: LocalDayName
+  setDay: (day: LocalDayName) => void
   toggleSelfReported: (id: string) => void
   startTimer: (timer: ActiveTimer) => void
   startReadingGame: (day: DayName) => void
   openPath: () => void
   openRewards: () => void
 }) {
+  if (!isSchoolDay(day)) {
+    return <section className="page weekend-page">
+      <DayTabs day={day} setDay={setDay} />
+      <div className="page-heading">
+        <p className="eyebrow">{day.toUpperCase()} · OPTIONAL PRACTICE</p>
+        <h2>A little practice, your choice.</h2>
+        <p>No required homework today. Choose any unfinished practice session below.</p>
+      </div>
+      <PracticeChoices state={state} day={day} startTimer={startTimer} />
+      <div className="head-start-note"><Sparkles size={20} /><div><strong>Your weekly practice bank</strong><p>Sessions count toward the week shown above. The next week opens on Sunday at 4:00 a.m.</p></div></div>
+    </section>
+  }
   const completed = state.requiredByDay[day]
   const progress = progressForDay(state, day)
   const free = dayIsComplete(state, day)
@@ -867,9 +886,7 @@ function DayView({
   }
   return (
     <section className="page">
-      <div className="day-tabs" role="tablist" aria-label="Choose a weekday">
-        {DAYS.map((item) => <button key={item} className={item === day ? 'active' : ''} onClick={() => setDay(item)}>{item.slice(0, 3)}</button>)}
-      </div>
+      <DayTabs day={day} setDay={setDay} />
       <div className="page-heading split-heading day-heading">
         <div>
           <p className="eyebrow">{day.toUpperCase()}’S QUEST</p>
@@ -952,20 +969,14 @@ function FridayFunView({
   openRewards,
 }: {
   state: AppState
-  setDay: (day: DayName) => void
+  setDay: (day: LocalDayName) => void
   openPath: () => void
   openRewards: () => void
 }) {
   const summary = getFridayFunSummary(state)
   return (
     <section className="page friday-fun-page">
-      <div className="day-tabs" role="tablist" aria-label="Choose a weekday">
-        {DAYS.map((item) => (
-          <button key={item} className={item === 'Friday' ? 'active' : ''} onClick={() => setDay(item)}>
-            {item.slice(0, 3)}
-          </button>
-        ))}
-      </div>
+      <DayTabs day="Friday" setDay={setDay} />
 
       <div className="friday-hero">
         <div className="friday-sparkles" aria-hidden="true"><span>✦</span><span>★</span><span>✦</span></div>
@@ -1013,11 +1024,12 @@ function PracticeChoices({
   startTimer,
 }: {
   state: AppState
-  day: DayName
+  day: LocalDayName
   startTimer: (timer: ActiveTimer) => void
 }) {
-  const headStart = state.weekContext.headStart
-  const remaining = Math.max(0, OPTIONAL_TARGETS[day] - state.optionalCompleted.length)
+  const headStart = state.weekContext.headStart && day === 'Sunday'
+  const weekend = !isSchoolDay(day)
+  const remaining = isSchoolDay(day) ? Math.max(0, OPTIONAL_TARGETS[day] - state.optionalCompleted.length) : 0
   return (
     <section className="daily-practice" aria-labelledby="practice-heading">
       {headStart && (
@@ -1030,7 +1042,7 @@ function PracticeChoices({
         <div>
           <p className="eyebrow">{headStart ? 'GET A HEAD START' : 'PRACTICE · PART OF YOUR DAILY PLAN'}</p>
           <h2 id="practice-heading">Choose an activity</h2>
-          <p>{headStart ? `Bank sessions early for the week of ${getWeekLabel(state.weekContext.weekId)}.` : remaining > 0 ? `Choose ${remaining} more ${remaining === 1 ? 'session' : 'sessions'} to reach ${day}’s practice target.` : `${day}’s practice target is complete. You can bank more for later in the week.`}</p>
+          <p>{headStart ? `Bank sessions early for the week of ${getWeekLabel(state.weekContext.weekId)}.` : weekend ? 'Practice is optional today—there is no daily session target.' : remaining > 0 ? `Choose ${remaining} more ${remaining === 1 ? 'session' : 'sessions'} to reach ${day}’s practice target.` : `${day}’s practice target is complete. You can bank more for later in the week.`}</p>
           <p>Pick any unfinished session below. Every session counts toward your weekly total.</p>
         </div>
         <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of {OPTIONAL_SESSION_TOTAL}<br />banked</span></div>

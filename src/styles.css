@@ -144,7 +144,7 @@ a.row-button { text-decoration: none; }
 .today-card .secondary-button { width: 100%; margin-top: 12px; }
 .quote-card { margin: 22px -8px -8px; padding: 14px; border-top: 1px solid rgba(255,255,255,.12); text-align: center; color: #aac3be; font-family: Georgia, serif; font-size: 13px; font-style: italic; }
 
-.day-tabs { display: inline-flex; gap: 5px; margin-bottom: 27px; background: rgba(255,255,255,.5); border: 1px solid var(--line); padding: 5px; border-radius: 12px; }
+.day-tabs { display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 5px; margin-bottom: 27px; background: rgba(255,255,255,.5); border: 1px solid var(--line); padding: 5px; border-radius: 12px; }
 .day-tabs button { border: 0; background: transparent; border-radius: 8px; padding: 8px 14px; cursor: pointer; color: #7c837f; font-size: 12px; font-weight: 800; }
 .day-tabs button.active { background: var(--ink); color: white; }
 .day-heading { margin-bottom: 28px; }

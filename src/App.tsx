@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ProblemReporter from './ProblemReporter'
 import {
   ArrowLeft,
   BookOpen,
@@ -581,12 +582,15 @@ function App() {
 
   if (!state.entered) {
     return (
+      <>
       <EntryScreen
         onEnter={() => { void enterHomework() }}
         starting={entryStarting}
         ready={hydrated}
         error={entryError}
       />
+      <ProblemReporter screen="Welcome" day={selectedPlanDay} connection={serviceStatus} />
+      </>
     )
   }
 
@@ -595,15 +599,19 @@ function App() {
     : securityStatus
   if (recoveryStatus?.locked && view !== 'parent') {
     return (
+      <>
       <RecoveryScreen
         status={recoveryStatus}
         openParent={() => setView('parent')}
       />
+      <ProblemReporter screen="Recovery" day={selectedPlanDay} connection={serviceStatus} />
+      </>
     )
   }
 
   return (
     <div className="app-shell">
+      <ProblemReporter screen={view} day={selectedPlanDay} connection={serviceStatus} />
       <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} />
       <main className="main-shell">
         <Topbar state={state} serviceStatus={serviceStatus} />

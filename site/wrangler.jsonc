@@ -1,0 +1,9 @@
+{
+  "name": "meghangames-saoirsequest",
+  "account_id": "4c11957e0121dba35fe2f16be80526f8",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-07",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "saoirsequest.meghangames.com", "custom_domain": true }]
+}

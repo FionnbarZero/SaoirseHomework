@@ -1,5 +1,18 @@
 # Permanent Chromebook deployment
 
+## Public entry page
+
+`https://saoirsequest.meghangames.com` is served by the Cloudflare Worker
+`meghangames-saoirsequest`, configured in `site/wrangler.jsonc`. It serves only
+public app information, `/privacy`, and `/terms`. The Open Homework Quest link
+leads to the existing Google IAP-protected Cloud Run URL; the public Worker has
+no data bindings, credentials, or proxy to private APIs. Unknown paths return 404.
+
+Deploy the entry page with `wrangler deploy --config site/wrangler.jsonc`.
+The custom domain is an entry page, not a hostname migration of the private app.
+
+## Private app
+
 The production app runs as one request-billed Cloud Run instance protected by
 direct Identity-Aware Proxy (IAP). Only explicitly granted Google accounts can
 open the site. The service scales to zero when idle.

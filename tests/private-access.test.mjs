@@ -3,6 +3,30 @@ import test from 'node:test'
 import { generateKeyPair, SignJWT } from 'jose'
 import { createPrivateAccess } from '../server/private-access.mjs'
 
+test('Google IAP validates signed identity and assigns the parent role only to the configured parent', async () => {
+  const pair = await generateKeyPair('ES256')
+  const settings = {
+    HOMEWORK_DEPLOYMENT_MODE: 'google-iap',
+    HOMEWORK_PUBLIC_ORIGIN: 'https://homework.example.com',
+    HOMEWORK_ACCESS_AUDIENCE: '/projects/123/locations/us-west1/services/homework',
+    HOMEWORK_ACCESS_EMAILS: 'parent@example.com,child@example.com',
+    HOMEWORK_PARENT_EMAILS: 'parent@example.com',
+  }
+  const gate = createPrivateAccess({ env: settings, keys: pair.publicKey })
+  const token = (email, overrides = {}) => new SignJWT({ email, ...overrides })
+    .setProtectedHeader({ alg: 'ES256' }).setIssuer('https://cloud.google.com/iap')
+    .setAudience(settings.HOMEWORK_ACCESS_AUDIENCE).setSubject('google-user').setIssuedAt().setExpirationTime('5m').sign(pair.privateKey)
+  const req = jwt => ({ method: 'GET', headers: { host: 'homework.example.com', 'x-goog-iap-jwt-assertion': jwt } })
+  assert.equal((await gate.authenticate(req(await token('parent@example.com')))).role, 'parent')
+  assert.equal((await gate.authenticate(req(await token('child@example.com')))).role, 'child')
+  await assert.rejects(gate.authenticate(req(await token('outsider@example.com'))), { status: 403 })
+  await assert.rejects(gate.authenticate({ method: 'GET', headers: { host: 'homework.example.com', 'x-goog-authenticated-user-email': 'accounts.google.com:parent@example.com' } }), { status: 401 })
+  const wrongAudience = await new SignJWT({email:'parent@example.com'}).setProtectedHeader({alg:'ES256'}).setIssuer('https://cloud.google.com/iap').setAudience('other-service').setSubject('user').setIssuedAt().setExpirationTime('5m').sign(pair.privateKey)
+  await assert.rejects(gate.authenticate(req(wrongAudience)), { status: 401 })
+  await assert.rejects(gate.authenticate({ ...req(await token('parent@example.com')), method: 'POST' }), { status: 403 })
+  assert.throws(() => createPrivateAccess({ env: { ...settings, HOMEWORK_PARENT_EMAILS: '' } }))
+})
+
 const { publicKey, privateKey } = await generateKeyPair('RS256')
 const env = {
   HOMEWORK_DEPLOYMENT_MODE: 'private-cloud',

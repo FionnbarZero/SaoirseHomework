@@ -293,10 +293,11 @@ function App() {
       if (heartbeatInFlight.current) return
       const timer = latestState.current.activeTimer
       if (!timer?.id || timer.id !== sessionId || timer.status === 'completed') return
-      const active = sessionWantsRunning.current && document.visibilityState === 'visible' && document.hasFocus()
+      const active = sessionWantsRunning.current && (timer.selfTimed || (document.visibilityState === 'visible' && document.hasFocus()))
       heartbeatInFlight.current = true
       try {
         const response = await heartbeatControlledSession(sessionId, active)
+        if (timer.selfTimed && response.session?.phaseId !== timer.phaseId) sessionWantsRunning.current = false
         const intent = response.session?.managedChromeRequired
           ? Boolean(response.session.running)
           : response.session?.status === 'completed'
@@ -741,7 +742,7 @@ function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view:
         <button className={view === 'parent' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('parent')}>
           <Settings2 size={20} /> <span>Parent</span>
         </button>
-        <div className="safe-note"><ShieldCheck size={16} /> Progress saves on this Mac</div>
+        <div className="safe-note"><ShieldCheck size={16} /> Progress saved to your homework account</div>
       </div>
     </aside>
   )
@@ -2175,7 +2176,7 @@ function SessionView({
     : timer.waitingForVerification
       ? 'WAITING FOR CLEVER LOGIN'
       : timer.running
-        ? 'ACTIVE FOCUS TIME'
+        ? timer.selfTimed ? 'SELF-TIMED PRACTICE' : 'ACTIVE FOCUS TIME'
         : managed
           ? 'APPROVED PAGE REQUIRED'
           : 'SESSION PAUSED'
@@ -2185,6 +2186,8 @@ function SessionView({
       ? 'Managed Chrome opened a separate YouTube window. Start a video before the selection window ends to use this credit.'
       : timer.kind === 'reward'
         ? 'Only visible video playback counts. Pauses, buffering, ads, and time outside the YouTube window do not use your credit.'
+    : timer.selfTimed
+      ? 'Open the activity in another tab and keep this homework tab open. Pause for breaks. This timer records practice time; it does not verify work on the other website. Return here to move from reading to flashcards. Browser sleep may pause the timer.'
     : inApp
       ? 'Ninja Dojo is authenticated to this local homework session. Time counts only while this homework tab is visible and focused.'
     : timer.waitingForVerification
@@ -2228,7 +2231,7 @@ function SessionView({
         ) : (
           <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> {timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'HttpOnly session capability · checks app focus every five seconds' : 'Server verified · checks focus every five seconds'}</div>
+        <div className="focus-note"><ShieldCheck size={17} /> {timer.selfTimed ? 'Self-timed practice · pause when taking a break' : timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'Time counts while this homework tab is focused' : 'Time counts while this homework tab is focused'}</div>
       </div>
     </section>
   )
@@ -2273,6 +2276,7 @@ function ParentRoute(props: {
   }, [])
 
   const authorize = async (purpose: 'dashboard' | 'sensitive') => {
+    if (authorization?.mode === 'google') return refreshAuthorization()
     setBusy(true)
     setMessage('Waiting for the macOS administrator authorization window…')
     try {
@@ -2308,6 +2312,11 @@ function ParentRoute(props: {
   }
 
   if (!authorization?.authenticated) {
+    if (authorization?.mode === 'google') return <section className="page parent-access-page"><div className="parent-access-card">
+      <h2>Parent Google account required</h2>
+      <p>Parent controls are available only to Meghan’s Google account. Open the app in a separate Chrome profile signed in as Meghan to make changes.</p>
+      <p>Currently signed in as {authorization.accountEmail}.</p>
+    </div></section>
     return (
       <section className="page parent-access-page">
         <div className="parent-access-card">
@@ -2731,7 +2740,7 @@ function ParentView({
     }
   }
   const reset = async () => {
-    if (!window.confirm('Reset all preview progress on this Mac? This cannot be undone.')) return
+    if (!window.confirm('Reset all homework progress in this account? This cannot be undone.')) return
     try {
       await reauthorize()
       const response = await resetParentPreviewData()
@@ -2743,8 +2752,8 @@ function ParentView({
   return (
     <section className="page parent-page">
       <div className="page-heading split-heading">
-        <div><p className="eyebrow">PARENT DASHBOARD · AUTHORIZED</p><h2>See what’s happening.</h2><p>This short-lived session was approved by macOS. Sensitive actions ask again.</p></div>
-        <button className="admin-pill" onClick={() => { void lockParent() }}><CircleUserRound size={20} /><span><small>SESSION EXPIRES</small><strong>{authorization.expiresAt ? new Date(authorization.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Soon'} · Lock</strong></span></button>
+        <div><p className="eyebrow">PARENT DASHBOARD · AUTHORIZED</p><h2>See what’s happening.</h2><p>{authorization.mode === 'google' ? 'Authorized with your parent Google account. Use a separate Chrome profile for Saoirse; anyone using your signed-in profile has parent access.' : 'This short-lived session was approved by macOS. Sensitive actions ask again.'}</p></div>
+        {authorization.mode === 'google' ? <span className="admin-pill">{authorization.accountEmail}</span> : <button className="admin-pill" onClick={() => { void lockParent() }}><CircleUserRound size={20} /><span><small>SESSION EXPIRES</small><strong>{authorization.expiresAt ? new Date(authorization.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Soon'} · Lock</strong></span></button>}
       </div>
       <div className="parent-stats">
         <div><small>WEEKLY PRACTICE</small><strong>{state.optionalCompleted.length}<span>/{OPTIONAL_SESSION_TOTAL}</span></strong></div>

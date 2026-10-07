@@ -1231,7 +1231,7 @@ export function createStore(filename, options = {}) {
     const phases = input.phases.map((phase, index) => {
       const phaseSeconds = Math.floor(Number(phase.targetSeconds))
       if (!Number.isFinite(phaseSeconds) || phaseSeconds < 0) throw new Error('Session phase duration is invalid')
-      const verification = ['managed-chrome', 'youtube-playback', 'in-app-browser'].includes(phase.verification)
+      const verification = ['managed-chrome', 'youtube-playback', 'in-app-browser', 'self-timed'].includes(phase.verification)
         ? phase.verification
         : 'browser-focus'
       const allowedOrigins = [...new Set(Array.isArray(phase.allowedOrigins) ? phase.allowedOrigins.map(String) : [])]
@@ -1308,6 +1308,7 @@ export function createStore(filename, options = {}) {
       allowedOrigins: phase.allowedOrigins,
       managedChromeRequired: ['managed-chrome', 'youtube-playback'].includes(phase.verification),
       inAppBrowserRequired: phase.verification === 'in-app-browser',
+      selfTimed: phase.verification === 'self-timed',
       waitingForVerification: Number(phase.targetSeconds) === 0,
       navigateOnPhaseStart: phase.navigateOnStart === true,
       rewardSelectionDeadlineAt: row.selection_deadline_at ?? undefined,
@@ -2414,7 +2415,7 @@ export function createStore(filename, options = {}) {
 
     if (requestedActive && row.status === 'active' && row.runtime_id === runtimeId && row.last_tick_ms != null) {
       const elapsed = tick - Number(row.last_tick_ms)
-      if (elapsed >= 0 && elapsed <= MAX_HEARTBEAT_GAP_MS) {
+      if (elapsed >= 0 && elapsed <= (phase.verification === 'self-timed' ? 75_000 : MAX_HEARTBEAT_GAP_MS)) {
         const remainingInPhase = Math.max(0, Number(phase.targetSeconds) * 1000 - phaseCreditedMs)
         const awarded = Math.min(elapsed, remainingInPhase)
         creditedMs += awarded

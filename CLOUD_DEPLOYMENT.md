@@ -16,6 +16,11 @@ included in the container image, Firestore document, logs, or source control.
 
 Required production settings:
 
+- `HOMEWORK_DEPLOYMENT_MODE=google-iap`
+- `HOMEWORK_ACCESS_AUDIENCE=/projects/417461782805/locations/us-west1/services/saoirse-homework`
+- `HOMEWORK_ACCESS_EMAILS=meghan.oreillygreen@gmail.com,saoirse.rafferty@gmail.com`
+- `HOMEWORK_PARENT_EMAILS=meghan.oreillygreen@gmail.com`
+
 - `GOOGLE_CLOUD_PROJECT=saoirse-homework`
 - `HOMEWORK_PERSISTENCE=firestore`
 - `HOMEWORK_FIRESTORE_DOCUMENT=homework_state/saoirse`
@@ -37,3 +42,17 @@ Deployment invariants:
 - The runtime service account has only Firestore user, Secret Manager accessor,
   and Secret Manager version-adder permissions.
 - Calendar uses only `calendar.events.readonly` plus basic account identity.
+
+Cloud Parent controls use the cryptographically verified Google IAP identity on
+every request. Only the configured parent account receives the parent role.
+Use separate Chrome profiles for parent and child; the signed-in parent profile
+has parent access without a macOS guardian.
+
+Du Chinese uses self-timed reading and flashcard phases in Google IAP mode.
+Keep the homework tab open and pause for breaks. It does not verify activity on
+the external site, and browser sleep or heartbeat throttling can pause credit.
+
+Calendar production readiness also requires publishing the OAuth consent app
+and reconnecting Calendar after publishing. Tokens issued in Testing expire
+after seven days. Until publishing and reconnection are verified, calendar
+authorization is temporary even though the website itself is deployed.

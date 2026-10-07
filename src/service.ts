@@ -56,6 +56,8 @@ type LearningSessionResponse = StateResponse & {
 }
 
 export type ParentAuthorizationStatus = {
+  mode?: 'google'
+  accountEmail?: string
   configured: boolean
   guardianConnected: boolean
   authenticated: boolean

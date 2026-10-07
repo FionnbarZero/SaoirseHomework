@@ -295,6 +295,10 @@ function requireUserSessionBroker(request) {
 }
 
 function requireParent(request, options = {}) {
+  if (privateAccess.googleIap) {
+    if (request.privateIdentity?.role === 'parent') return { email: request.privateIdentity.email, purpose: 'sensitive' }
+    throw Object.assign(new Error('Sign in with the parent Google account to use Parent controls.'), { status: 403, code: 'parent_authorization_required' })
+  }
   const result = parentAuthorization.validateSession(parentSessionToken(request), options)
   if (result.valid) return result.session
   const error = new Error(options.sensitive
@@ -376,7 +380,9 @@ function resolveSessionRequest(body) {
     }
     const configuredPlan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
     const inAppNinjaPreview = securityMode === 'preview' && body.activityId === 'ninja-dojo'
-    const plan = inAppNinjaPreview
+    const plan = privateAccess.googleIap && body.activityId === 'du-chinese'
+      ? { ...configuredPlan, phases: configuredPlan.phases.map(phase => ({ ...phase, verification: 'self-timed' })) }
+      : inAppNinjaPreview
       ? {
           ...configuredPlan,
           phases: configuredPlan.phases.map((phase) => ({
@@ -519,6 +525,12 @@ function securityResponse() {
 }
 
 function parentStatus(request) {
+  if (privateAccess.googleIap) return {
+    configured: true, guardianConnected: false, mode: 'google',
+    authenticated: request.privateIdentity?.role === 'parent',
+    accountEmail: request.privateIdentity?.email,
+    purpose: 'sensitive',
+  }
   const result = parentAuthorization.validateSession(parentSessionToken(request))
   return {
     configured: parentAuthorizationConfigured,

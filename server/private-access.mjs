@@ -18,11 +18,12 @@ function httpsOrigin(value, label) {
 export function createPrivateAccess(options = {}) {
   const env = options.env ?? process.env
   const mode = env.HOMEWORK_DEPLOYMENT_MODE || 'local'
-  if (!['local', 'private-cloud'].includes(mode)) throw new Error('Unknown HOMEWORK_DEPLOYMENT_MODE')
+  if (!['local', 'private-cloud', 'google-iap'].includes(mode)) throw new Error('Unknown HOMEWORK_DEPLOYMENT_MODE')
   if (mode === 'local') return { enabled: false, authenticate: async () => null }
 
-  const team = httpsOrigin(env.HOMEWORK_ACCESS_TEAM_ORIGIN, 'HOMEWORK_ACCESS_TEAM_ORIGIN')
-  if (!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(team.hostname) || team.port) {
+  const iap = mode === 'google-iap'
+  const team = httpsOrigin(iap ? 'https://cloud.google.com' : env.HOMEWORK_ACCESS_TEAM_ORIGIN, 'HOMEWORK_ACCESS_TEAM_ORIGIN')
+  if (!iap && (!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(team.hostname) || team.port)) {
     throw new Error('HOMEWORK_ACCESS_TEAM_ORIGIN must be your Cloudflare Access team origin')
   }
   const site = httpsOrigin(env.HOMEWORK_PUBLIC_ORIGIN, 'HOMEWORK_PUBLIC_ORIGIN')
@@ -31,21 +32,24 @@ export function createPrivateAccess(options = {}) {
   if (!audience || !emails.size || [...emails].some(email => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
     throw new Error('Private cloud hosting requires an Access application audience and an exact email allowlist')
   }
-  const keys = options.keys ?? createRemoteJWKSet(new URL('/cdn-cgi/access/certs', team), { timeoutDuration: 5000 })
+  const parents = new Set(String(env.HOMEWORK_PARENT_EMAILS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean))
+  if (iap && (!parents.size || [...parents].some(email => !emails.has(email)))) throw new Error('Google IAP requires parent accounts within the app allowlist')
+  const keys = options.keys ?? createRemoteJWKSet(new URL(iap ? 'https://www.gstatic.com/iap/verify/public_key-jwk' : new URL('/cdn-cgi/access/certs', team)), { timeoutDuration: 5000 })
 
   return {
     enabled: true,
+    googleIap: iap,
     publicOrigin: site.origin,
     async authenticate(request) {
       if (request.headers.host !== site.host) throw denied('This hostname is not configured for the private app.', 403)
-      const token = request.headers['cf-access-jwt-assertion']
+      const token = request.headers[iap ? 'x-goog-iap-jwt-assertion' : 'cf-access-jwt-assertion']
       if (typeof token !== 'string' || token.length > 16384) throw denied()
       let payload
       try {
         ;({ payload } = await jwtVerify(token, keys, {
-          issuer: team.origin,
+          issuer: iap ? 'https://cloud.google.com/iap' : team.origin,
           audience,
-          algorithms: ['RS256'],
+          algorithms: [iap ? 'ES256' : 'RS256'],
           requiredClaims: ['exp', 'iat', 'sub', 'email'],
           clockTolerance: 5,
           ...(options.currentDate ? { currentDate: options.currentDate } : {}),
@@ -61,7 +65,7 @@ export function createPrivateAccess(options = {}) {
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.origin !== site.origin) {
         throw denied('Open the private homework website before making changes.', 403)
       }
-      return { email, subject: payload.sub }
+      return { email, subject: payload.sub, ...(iap ? { role: parents.has(email) ? 'parent' : 'child' } : {}) }
     },
   }
 }

@@ -728,6 +728,27 @@ test('reading needs twenty active minutes, saves to its day, and cannot start on
   store.close()
 })
 
+test('self-timed practice supports background heartbeats, pauses between phases, and rejects sleep gaps', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  const session = store.startSession({ kind: 'required', activityId: 'du-chinese', sessionKey: 'Monday', label: 'Du Chinese', targetSeconds: 65,
+    plan: { phases: [{ id: 'reading', label: 'Reading', targetSeconds: 60, verification: 'self-timed' }, { id: 'flashcards', label: 'Flashcards', targetSeconds: 5, verification: 'self-timed' }] },
+  })
+  assert.equal(session.selfTimed, true)
+  assert.equal(session.managedChromeRequired, false)
+  clock.advance(60_000)
+  const next = store.heartbeatSession(session.id, true)
+  assert.equal(next.phaseId, 'flashcards')
+  assert.equal(next.status, 'paused')
+  assert.equal(next.creditedSeconds, 60)
+  store.heartbeatSession(session.id, true)
+  clock.advance(90_000)
+  assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 60)
+  clock.advance(5_000)
+  assert.equal(store.heartbeatSession(session.id, true).status, 'completed')
+  store.close()
+})
+
 test('heartbeats award only bounded active monotonic time', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', clock.options())

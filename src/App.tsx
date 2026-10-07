@@ -702,7 +702,7 @@ function EntryScreen({
           <span className="orbit-number">×</span>
           <span className="orbit-star">★</span>
         </div>
-        <p className="eyebrow">FIONNBAR’S</p>
+        <p className="eyebrow">SAOIRSE’S</p>
         <h1>Homework<br /><em>Quest</em></h1>
         <p className="entry-copy">A little progress every day adds up to a brilliant week.</p>
         <button className="primary-button enter-button" onClick={onEnter} disabled={starting || !ready}>

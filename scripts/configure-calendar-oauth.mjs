@@ -16,8 +16,8 @@ if (!installed?.client_id || !String(installed.client_id).endsWith('.apps.google
 if (!installed.client_secret) {
   throw new Error('The Google Desktop OAuth credential has no token-exchange secret')
 }
-if (installed.project_id !== 'weeklydictationapp') {
-  throw new Error('The Desktop OAuth credential is not from the WeeklyDictationApp project')
+if (installed.project_id !== 'saoirse-homework') {
+  throw new Error('The Desktop OAuth credential is not from the Saoirse Homework project')
 }
 if (!Array.isArray(installed.redirect_uris) || !installed.redirect_uris.some((uri) => /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(uri))) {
   throw new Error('The Desktop OAuth credential does not allow a loopback redirect')

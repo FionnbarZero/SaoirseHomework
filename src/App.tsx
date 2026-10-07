@@ -725,7 +725,7 @@ function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view:
   return (
     <aside className="sidebar">
       <button className="brand" onClick={() => navigate('path')} aria-label="Homework Quest home">
-        <span className="brand-mark">F</span>
+        <span className="brand-mark">S</span>
         <span><strong>Homework</strong><small>QUEST</small></span>
       </button>
       <nav className="main-nav" aria-label="Main navigation">

@@ -184,6 +184,11 @@ function App() {
   const [sessionError, setSessionError] = useState('')
   const [entryStarting, setEntryStarting] = useState(false)
   const [entryError, setEntryError] = useState('')
+  const [stateSaving, setStateSaving] = useState(false)
+  const [completionSaving, setCompletionSaving] = useState(false)
+  const [browserBackupAvailable, setBrowserBackupAvailable] = useState(true)
+  const completionInFlight = useRef(false)
+  const reconnectInFlight = useRef(false)
   const latestState = useRef(state)
   const heartbeatInFlight = useRef(false)
   const sessionWantsRunning = useRef(Boolean(state.activeTimer?.running))
@@ -213,12 +218,23 @@ function App() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-    if (!hydrated || serviceStatus !== 'online' || state.activeTimer) return
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+      setBrowserBackupAvailable(true)
+    } catch {
+      setBrowserBackupAvailable(false)
+    }
+    if (!hydrated || serviceStatus !== 'online' || state.activeTimer) {
+      setStateSaving(false)
+      return
+    }
+    let cancelled = false
+    setStateSaving(true)
     const timeout = window.setTimeout(() => {
       saveStateToService(state)
-        .then(({ meta }) => setServiceMeta(meta))
+        .then(({ meta }) => { if (!cancelled) setServiceMeta(meta) })
         .catch((error) => {
+          if (cancelled) return
           if (isStaleWeekError(error)) {
             loadStateFromService()
               .then(({ state: storedState, meta }) => {
@@ -231,8 +247,9 @@ function App() {
           }
           setServiceStatus('offline')
         })
+        .finally(() => { if (!cancelled) setStateSaving(false) })
     }, 250)
-    return () => window.clearTimeout(timeout)
+    return () => { cancelled = true; window.clearTimeout(timeout) }
   }, [state, hydrated, serviceStatus])
 
   useEffect(() => {
@@ -277,13 +294,25 @@ function App() {
   }, [hydrated, serviceStatus])
 
   const reconnectService = () => {
+    if (reconnectInFlight.current) return
+    reconnectInFlight.current = true
     setServiceStatus('connecting')
-    saveStateToService(latestState.current)
-      .then(({ meta }) => {
+    // Read the confirmed server state; do not overwrite it with an old browser
+    // snapshot or pretend that offline checkmarks were accepted.
+    hydrateFromService(latestState.current)
+      .then(({ state: storedState, meta }) => {
+        sessionWantsRunning.current = Boolean(storedState.activeTimer?.running)
+        setState(storedState)
+        if (storedState.activeTimer) setView('session')
         setServiceMeta(meta)
         setServiceStatus('online')
+        setSessionError('')
       })
-      .catch(() => setServiceStatus('offline'))
+      .catch(() => {
+        setServiceStatus('offline')
+        setSessionError('Still unable to confirm saved progress. Check your connection and try again.')
+      })
+      .finally(() => { reconnectInFlight.current = false })
   }
 
   useEffect(() => {
@@ -363,8 +392,12 @@ function App() {
       getSecurityStatus()
         .then((status) => {
           if (!cancelled) {
-            localStorage.setItem(SECURITY_STATUS_KEY, JSON.stringify(status))
             setSecurityStatus(status)
+            try {
+              localStorage.setItem(SECURITY_STATUS_KEY, JSON.stringify(status))
+            } catch {
+              setBrowserBackupAvailable(false)
+            }
           }
         })
         .catch(() => {
@@ -393,8 +426,15 @@ function App() {
   }
 
   const toggleSelfReported = async (activityId: string) => {
+    if (completionInFlight.current) return
+    if (serviceStatus !== 'online') {
+      setSessionError('Not saved. Reconnect with Retry before changing an activity. Your last confirmed checkmarks are unchanged.')
+      return
+    }
     const completed = !latestState.current.requiredByDay[selectedDay].includes(activityId)
-    if (serviceStatus === 'online') {
+    completionInFlight.current = true
+    setCompletionSaving(true)
+    try {
       try {
         const response = await setDailyCompletion(
           selectedDay,
@@ -405,6 +445,7 @@ function App() {
         )
         setState(response.state)
         setServiceMeta(response.meta)
+        setSessionError('')
         return
       } catch (error) {
         if (isStaleWeekError(error)) {
@@ -413,18 +454,15 @@ function App() {
           setServiceMeta(response.meta)
           return
         }
-        setServiceStatus('offline')
+        throw error
       }
+    } catch {
+      setServiceStatus('offline')
+      setSessionError('Save not confirmed. Use Retry to check the saved result before marking this activity again.')
+    } finally {
+      completionInFlight.current = false
+      setCompletionSaving(false)
     }
-    setState((current) => ({
-      ...current,
-      requiredByDay: {
-        ...current.requiredByDay,
-        [selectedDay]: completed
-          ? [...current.requiredByDay[selectedDay], activityId]
-          : current.requiredByDay[selectedDay].filter((id) => id !== activityId),
-      },
-    }))
   }
 
   const startTimer = async (timer: ActiveTimer) => {
@@ -612,10 +650,11 @@ function App() {
   return (
     <div className="app-shell">
       <ProblemReporter screen={view} day={selectedPlanDay} connection={serviceStatus} />
-      <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} />
+      <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} saveMessage={serviceStatus === 'offline' ? 'Not connected — changes cannot be saved' : serviceStatus === 'connecting' ? 'Checking saved progress…' : stateSaving || completionSaving ? 'Saving…' : 'Progress saved to your homework account'} />
       <main className="main-shell">
-        <Topbar state={state} serviceStatus={serviceStatus} />
+        <Topbar state={state} serviceStatus={serviceStatus} saving={stateSaving || completionSaving} retry={reconnectService} />
         <div className="page-wrap">
+          {!browserBackupAvailable && <p role="status">Browser backup is unavailable. Stay online and wait for saving to finish before closing this tab.</p>}
           {sessionError && (
             <div className="session-error" role="alert">
               <ShieldCheck size={17} /> <span>{sessionError}</span>
@@ -725,7 +764,7 @@ function EntryScreen({
   )
 }
 
-function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view: View) => void; rewardCount: number }) {
+function Sidebar({ view, navigate, rewardCount, saveMessage }: { view: View; navigate: (view: View) => void; rewardCount: number; saveMessage: string }) {
   const items: { id: View; label: string; icon: typeof Home }[] = [
     { id: 'path', label: 'Home', icon: Home },
     { id: 'day', label: 'Daily plan', icon: Music2 },
@@ -750,13 +789,13 @@ function Sidebar({ view, navigate, rewardCount }: { view: View; navigate: (view:
         <button className={view === 'parent' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('parent')}>
           <Settings2 size={20} /> <span>Parent</span>
         </button>
-        <div className="safe-note"><ShieldCheck size={16} /> Progress saved to your homework account</div>
+        <div className="safe-note" role="status"><ShieldCheck size={16} /> {saveMessage}</div>
       </div>
     </aside>
   )
 }
 
-function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'connecting' | 'online' | 'offline' }) {
+function Topbar({ state, serviceStatus, saving, retry }: { state: AppState; serviceStatus: 'connecting' | 'online' | 'offline'; saving: boolean; retry: () => void }) {
   const completedDays = DAYS.filter((day) => dayIsComplete(state, day)).length
   return (
     <header className="topbar">
@@ -766,8 +805,9 @@ function Topbar({ state, serviceStatus }: { state: AppState; serviceStatus: 'con
       </div>
       <div className="topbar-actions">
         <span className={serviceStatus === 'online' ? 'connection connected' : 'connection'}>
-          <span /> {serviceStatus === 'online' ? 'SQLite connected' : serviceStatus === 'connecting' ? 'Connecting…' : 'Browser backup'}
+          <span /> {serviceStatus === 'online' ? saving ? 'Saving…' : 'Saved online' : serviceStatus === 'connecting' ? 'Connecting…' : 'Not connected'}
         </span>
+        {serviceStatus === 'offline' && <button className="secondary-button" onClick={retry}>Retry</button>}
         <div className="week-score"><Trophy size={18} /> {completedDays}/5 days</div>
         <button className="avatar" aria-label="Saoirse’s profile">S</button>
       </div>

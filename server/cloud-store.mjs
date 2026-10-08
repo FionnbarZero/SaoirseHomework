@@ -142,7 +142,9 @@ export async function createFirestoreBackedStore(filename, options = {}) {
   }
 
   async function flushIfDirty() {
-    flushPromise = flushPromise.then(async () => {
+    // Preserve rejection for the caller of the failed write, but allow the next
+    // request to retry all still-dirty state after a transient network failure.
+    flushPromise = flushPromise.catch(() => {}).then(async () => {
       while (persistedRevision < dirtyRevision) {
         const targetRevision = dirtyRevision
         await writeSnapshot(targetRevision)

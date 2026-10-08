@@ -74,7 +74,7 @@ has been replaced.
 
 ## Reward decision and follow-up — October 8, 2026
 
-Owner decision: use honor-system YouTube rewards for now. The prepared change
+Owner decision: use honor-system YouTube rewards for now. This release
 uses self-timed rewards in Google IAP mode, without requiring the local Chrome
 extension. Use now starts the timer; Open YouTube launches another tab. Keep the
 homework tab open and pause manually for breaks/ads. The app shows an end-of-time
@@ -89,9 +89,18 @@ requirements and parent recovery controls; assess other tabs, sleep, offline use
 and bypasses on a real Chromebook. Do not treat this note as authorization to
 install device management or change account/security settings now.
 
-Release status: prepared locally, not deployed. Resolve the cloud-save retry and
-offline-completion findings from the October 8 review before publishing. No
-production reward credits or other user records were changed during testing.
-Validation: 174 tests passed, TypeScript/production build passed, and an isolated
+Release readiness: cloud saves now retry after a temporary Firestore failure,
+while preserving revision-conflict protection. Daily self-checks require an
+online confirmation: a failed request leaves the previous checkmark unchanged,
+and Retry reloads confirmed server progress rather than overwriting it with a
+stale browser snapshot. The status area distinguishes saving, saved, and offline.
+Browser-backup failures are reported without breaking online saving. No database
+schema changes are included, and no production credits or completion records
+were changed during testing.
+
+Validation: 177 tests passed, TypeScript/production build passed, and an isolated
 browser preview verified the reward instructions, YouTube link, pause, reload,
 resume, credit deduction, and end-of-time reminder with a synthetic credit.
+Save-recovery browser checks covered a failure before saving, rejected offline
+checkmarks, and recovery after a successful save lost its confirmation. Progress
+was retained after reload. Calendar reconnection remains a separate follow-up.

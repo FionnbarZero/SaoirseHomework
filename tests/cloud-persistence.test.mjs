@@ -15,6 +15,7 @@ function snapshot(value) {
 
 class FakeFirestore {
   value = null
+  failuresRemaining = 0
 
   doc(path) {
     assert.equal(path, 'homework_state/saoirse')
@@ -24,6 +25,10 @@ class FakeFirestore {
   }
 
   async runTransaction(callback) {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1
+      throw new Error('Temporary Firestore outage')
+    }
     let nextValue = this.value
     const transaction = {
       get: async () => snapshot(this.value),
@@ -64,6 +69,62 @@ test('Firestore snapshots restore the exact SQLite-backed state', async () => {
   })
   assert.ok(firestore.value.revision > uploadedRevision)
   await second.close()
+})
+
+test('a failed cloud save can retry all dirty state, including later changes', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'saoirse-cloud-retry-'))
+  const firestore = new FakeFirestore()
+  const store = await createFirestoreBackedStore(join(directory, 'first.sqlite'), {
+    projectId: 'test-project', firestore,
+  })
+  t.after(() => store.db.close())
+  const confirmedRevision = firestore.value.revision
+
+  store.addAudit('before_outage', { durable: true })
+  firestore.failuresRemaining = 1
+  await assert.rejects(store.flushIfDirty(), /Temporary Firestore outage/)
+  assert.equal(firestore.value.revision, confirmedRevision)
+
+  store.addAudit('after_outage', { durable: true })
+  await Promise.all([store.flushIfDirty(), store.flushIfDirty()])
+  assert.equal(firestore.value.revision, confirmedRevision + 1)
+
+  const restored = await createFirestoreBackedStore(join(directory, 'restored.sqlite'), {
+    projectId: 'test-project', firestore,
+  })
+  t.after(() => restored.db.close())
+  assert.deepEqual(restored.listAudit(2).map((event) => event.eventType), ['after_outage', 'before_outage'])
+})
+
+test('queued cloud callers retain the failure and can recover on the next request', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'saoirse-cloud-queue-'))
+  const firestore = new FakeFirestore()
+  const store = await createFirestoreBackedStore(join(directory, 'state.sqlite'), {
+    projectId: 'test-project', firestore,
+  })
+  t.after(() => store.db.close())
+  store.addAudit('queued_save', {})
+  firestore.failuresRemaining = 2
+  const results = await Promise.allSettled([store.flushIfDirty(), store.flushIfDirty()])
+  assert.deepEqual(results.map((result) => result.status), ['rejected', 'rejected'])
+  await store.flushIfDirty()
+  assert.equal(firestore.value.revision, 2)
+})
+
+test('retrying a cloud save never overwrites another server revision', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'saoirse-cloud-conflict-'))
+  const firestore = new FakeFirestore()
+  const store = await createFirestoreBackedStore(join(directory, 'state.sqlite'), {
+    projectId: 'test-project', firestore,
+  })
+  t.after(() => store.db.close())
+  const otherServerValue = { ...firestore.value, revision: firestore.value.revision + 1 }
+  firestore.value = otherServerValue
+  store.addAudit('unconfirmed_save', {})
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(store.flushIfDirty(), { code: 'cloud_snapshot_conflict', status: 409 })
+    assert.equal(firestore.value, otherServerValue)
+  }
 })
 
 test('Secret Manager token storage never exposes a disconnected older version', async () => {

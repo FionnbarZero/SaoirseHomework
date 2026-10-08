@@ -16,6 +16,7 @@ import type {
 } from './domain'
 
 export type ServiceMeta = {
+  rewardMode?: 'honor' | 'managed'
   database: string
   schemaVersion: number
   initialized: boolean

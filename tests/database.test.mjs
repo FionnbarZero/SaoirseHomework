@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { createStore, getWeekContext } from '../server/database.mjs'
+import { buildRewardSession } from '../server/reward-session.mjs'
 import { inspectDraft, inspectWritingFindings } from '../src/writing.ts'
 
 function sampleState() {
@@ -867,6 +868,73 @@ test('repeated completion heartbeats cannot duplicate optional credit or rewards
   assert.equal(state.rewardCredits.length, 1)
   assert.equal(state.completionRecords.filter((record) => record.id === `session:${session.id}`).length, 1)
   store.close()
+})
+
+test('reward policy allows honor-system cloud use without relaxing managed local rewards', () => {
+  const credit = { id: 'earned-credit', remainingSeconds: 300 }
+  assert.throws(() => buildRewardSession({ credit }), { code: 'managed_chrome_required' })
+  assert.throws(() => buildRewardSession({ credit, mode: 'unknown' }), { code: 'managed_chrome_required' })
+  assert.throws(() => buildRewardSession({ mode: 'honor' }), /Reward credit not found/)
+  assert.throws(() => buildRewardSession({ credit: { ...credit, remainingSeconds: 0 }, mode: 'honor' }), /Reward credit not found/)
+  const honor = buildRewardSession({ credit, mode: 'honor' })
+  assert.equal(honor.plan.phases[0].verification, 'self-timed')
+  assert.equal(honor.targetSeconds, 300)
+  assert.equal(honor.selectionSeconds, undefined)
+  assert.equal(buildRewardSession({ credit, chromeConnected: true }).plan.phases[0].verification, 'youtube-playback')
+})
+
+test('honor rewards pause, retain unused credit, and complete once without playback proof', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', { ...clock.options(), rewardMode: 'honor' })
+  store.saveState({ ...sampleState(), activeTimer: null })
+  const session = store.startSession(buildRewardSession({ credit: store.getRewardCredit('credit-1'), mode: 'honor' }))
+  assert.equal(store.info().rewardMode, 'honor')
+  assert.equal(session.selfTimed, true)
+  assert.equal(session.managedChromeRequired, false)
+  assert.equal(session.rewardSelectionDeadlineAt, undefined)
+  // A delayed first heartbeat must not expire an honor-system credit.
+  clock.advance(121_000)
+  assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 0)
+  clock.advance(60_000)
+  assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 60)
+  store.heartbeatSession(session.id, false)
+  clock.advance(60_000)
+  assert.equal(store.heartbeatSession(session.id, false).creditedSeconds, 60)
+  store.cancelSession(session.id)
+  assert.equal(store.getRewardCredit('credit-1').remainingSeconds, 240)
+  const resumed = store.startSession(buildRewardSession({ credit: store.getRewardCredit('credit-1'), mode: 'honor' }))
+  for (let i = 0; i < 4; i += 1) {
+    clock.advance(60_000)
+    store.heartbeatSession(resumed.id, true)
+  }
+  assert.equal(store.loadState().activeTimer.status, 'completed')
+  store.heartbeatSession(resumed.id, true)
+  assert.equal(store.getRewardCredit('credit-1'), null)
+  const completions = store.loadState().completionRecords.filter(r => r.id === `session:${resumed.id}`)
+  assert.equal(completions.length, 1)
+  assert.equal(completions[0].method, 'reward-honor')
+  store.close()
+})
+
+test('honor reward restart preserves elapsed time and pauses without spending downtime', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'saoirse-honor-recovery-'))
+  const filename = join(directory, 'homework.sqlite')
+  const clock = controlledClock()
+  const first = createStore(filename, { ...clock.options(), rewardMode: 'honor' })
+  first.saveState({ ...sampleState(), activeTimer: null })
+  const session = first.startSession(buildRewardSession({ credit: first.getRewardCredit('credit-1'), mode: 'honor' }))
+  clock.advance(60_000)
+  first.heartbeatSession(session.id, true)
+  first.close()
+  clock.advance(3_600_000)
+  const reopened = createStore(filename, { ...clock.options(), rewardMode: 'honor' })
+  assert.equal(reopened.loadState().activeTimer.status, 'paused')
+  assert.equal(reopened.loadState().activeTimer.selfTimed, true)
+  assert.equal(reopened.loadState().activeTimer.remainingSeconds, 240)
+  assert.equal(reopened.heartbeatSession(session.id, true).remainingSeconds, 240)
+  reopened.cancelSession(session.id)
+  assert.equal(reopened.getRewardCredit('credit-1').remainingSeconds, 240)
+  reopened.close()
 })
 
 test('YouTube rewards count only managed foreground content playback', () => {

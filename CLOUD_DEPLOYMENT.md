@@ -65,7 +65,33 @@ Du Chinese uses self-timed reading and flashcard phases in Google IAP mode.
 Keep the homework tab open and pause for breaks. It does not verify activity on
 the external site, and browser sleep or heartbeat throttling can pause credit.
 
-Calendar production readiness also requires publishing the OAuth consent app
-and reconnecting Calendar after publishing. Tokens issued in Testing expire
-after seven days. Until publishing and reconnection are verified, calendar
-authorization is temporary even though the website itself is deployed.
+Calendar OAuth publishing was confirmed **In production** in the Google Cloud
+console on October 8, 2026, after owner approval. This did not change homework
+IAP access or Calendar scopes. Fresh authorization and uploading the replacement
+token to Secret Manager remain pending. Tokens issued in Testing expire after
+seven days; publishing alone does not establish that the deployed Calendar token
+has been replaced.
+
+## Reward decision and follow-up — October 8, 2026
+
+Owner decision: use honor-system YouTube rewards for now. The prepared change
+uses self-timed rewards in Google IAP mode, without requiring the local Chrome
+extension. Use now starts the timer; Open YouTube launches another tab. Keep the
+homework tab open and pause manually for breaks/ads. The app shows an end-of-time
+reminder but does not monitor playback or block YouTube. Unused time is retained
+when ending a session. Closing the tab, browser sleep, or a service restart can
+pause counting; restart recovery does not spend downtime. Managed local installs
+keep their existing verified-playback behavior.
+
+**Deferred until the live app is complete:** implement computer/website blocking
+and enforced reward limits. First agree on Chromebook management/extension
+requirements and parent recovery controls; assess other tabs, sleep, offline use,
+and bypasses on a real Chromebook. Do not treat this note as authorization to
+install device management or change account/security settings now.
+
+Release status: prepared locally, not deployed. Resolve the cloud-save retry and
+offline-completion findings from the October 8 review before publishing. No
+production reward credits or other user records were changed during testing.
+Validation: 174 tests passed, TypeScript/production build passed, and an isolated
+browser preview verified the reward instructions, YouTube link, pause, reload,
+resume, credit deduction, and end-of-time reminder with a synthetic credit.

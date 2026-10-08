@@ -635,7 +635,7 @@ function App() {
               openRewards={() => setView('rewards')}
             />
           )}
-          {view === 'rewards' && <RewardsView state={state} startTimer={startTimer} />}
+          {view === 'rewards' && <RewardsView state={state} startTimer={startTimer} honorSystem={serviceMeta?.rewardMode === 'honor'} />}
           {view === 'parent' && (
             <ParentRoute
               state={state}
@@ -2094,11 +2094,11 @@ function WritingView({
   )
 }
 
-function RewardsView({ state, startTimer }: { state: AppState; startTimer: (timer: ActiveTimer) => void }) {
+function RewardsView({ state, startTimer, honorSystem }: { state: AppState; startTimer: (timer: ActiveTimer) => void; honorSystem: boolean }) {
   return (
     <section className="page">
       <div className="rewards-hero">
-        <div><p className="eyebrow">REWARD VAULT</p><h2>Time you earned yourself.</h2><p>Credits stay safe until Homework mode ends for the day.</p></div>
+        <div><p className="eyebrow">REWARD VAULT</p><h2>Time you earned yourself.</h2><p>Unused reward time stays in your account for later.</p></div>
         <div className="ticket-count"><Gift size={30} /><strong>{state.rewardCredits.length}</strong><span>credits</span></div>
       </div>
       <div className="reward-content">
@@ -2120,7 +2120,11 @@ function RewardsView({ state, startTimer }: { state: AppState; startTimer: (time
         </div>
         <aside className="reward-rules">
           <h3><Volume2 size={20} /> How reward time works</h3>
-          <ol><li><span>1</span>Choose a YouTube video.</li><li><span>2</span>Your timer starts when it plays.</li><li><span>3</span>Pauses, ads, and buffering don’t count.</li></ol>
+          {honorSystem ? <>
+            <p><strong>Honor system</strong> · No extension or computer blocking.</p>
+            <ol><li><span>1</span>Choose Use now to start your timer, then Open YouTube.</li><li><span>2</span>Keep this homework tab open. Pause here for breaks, ads, or buffering.</li><li><span>3</span>Stop watching when your time is up. YouTube will not stop automatically.</li></ol>
+            <p>Closing this tab or putting the Chromebook to sleep can pause the timer. End the session to save unused time.</p>
+          </> : <ol><li><span>1</span>Choose a YouTube video.</li><li><span>2</span>Your timer starts when it plays.</li><li><span>3</span>Pauses, ads, and buffering don’t count.</li></ol>}
           <div className="future-rewards"><small>MORE COMING LATER</small><div><span>Roblox</span><span>Codex</span></div></div>
         </aside>
       </div>
@@ -2170,9 +2174,12 @@ function SessionView({
   const done = timer.status === 'completed'
   const managed = timer.managedChromeRequired === true
   const inApp = timer.inAppBrowserRequired === true
-  const selectingReward = timer.kind === 'reward' && !timer.rewardPlaybackStarted && !done
+  const honorReward = timer.kind === 'reward' && timer.selfTimed === true
+  const selectingReward = timer.kind === 'reward' && !honorReward && !timer.rewardPlaybackStarted && !done
   const statusLabel = done
-    ? 'SESSION COMPLETE'
+    ? honorReward ? 'REWARD TIME IS OVER' : 'SESSION COMPLETE'
+    : honorReward
+      ? timer.running ? 'HONOR-SYSTEM REWARD TIMER' : 'REWARD TIMER PAUSED'
     : selectingReward
       ? 'CHOOSE A VIDEO'
       : timer.kind === 'reward' && timer.rewardPlaybackActive
@@ -2189,7 +2196,9 @@ function SessionView({
           ? 'APPROVED PAGE REQUIRED'
           : 'SESSION PAUSED'
   const sessionCopy = done
-    ? 'You did it. Your progress is ready to save.'
+    ? honorReward ? 'Your reward time is over. Please stop watching and close YouTube. This app does not block other tabs.' : 'You did it. Your progress is ready to save.'
+    : honorReward
+      ? 'Your timer starts when you choose Use now. Open YouTube in another tab and keep this homework tab open. Pause here for breaks, ads, or buffering. This timer does not monitor playback or block YouTube. Browser sleep can pause counting; return here to check your time.'
     : selectingReward
       ? 'Managed Chrome opened a separate YouTube window. Start a video before the selection window ends to use this credit.'
       : timer.kind === 'reward'
@@ -2206,7 +2215,7 @@ function SessionView({
   return (
     <section className="session-page">
       <div className={`session-card ${inApp ? 'in-app-session-card' : ''}`}>
-        <div className="session-status"><span className={timer.running ? 'pulse' : ''} /> {statusLabel}</div>
+        <div className="session-status" role="status" aria-live="polite"><span className={timer.running ? 'pulse' : ''} /> {statusLabel}</div>
         <div className="timer-ring" style={{ '--progress': `${percent * 3.6}deg` } as React.CSSProperties}>
           <div><strong>{timer.waitingForVerification ? '—:—' : formatTimer(selectingReward ? selectionRemaining : displayRemaining)}</strong><small>{timer.waitingForVerification ? 'login gate' : selectingReward ? 'to choose' : displayRemaining === 0 && !done ? 'verifying' : 'remaining'}</small></div>
         </div>
@@ -2226,7 +2235,7 @@ function SessionView({
             />
           </div>
         )}
-        {!done && !inApp && timer.launchUrl && timer.kind !== 'reward' && (
+        {!done && !inApp && timer.launchUrl && (timer.kind !== 'reward' || honorReward) && (
           <a className="row-button session-launch" href={timer.launchUrl} target="_blank" rel="noreferrer">
             <Play size={16} fill="currentColor" /> Open {timer.phaseLabel ?? timer.label}
           </a>
@@ -2237,9 +2246,9 @@ function SessionView({
             <button className="text-button danger" onClick={cancel}><X size={17} /> End session</button>
           </div>
         ) : (
-          <button className="primary-button" onClick={complete}><Check size={19} /> Return to learning path</button>
+          <button className="primary-button" onClick={complete}><Check size={19} /> {timer.kind === 'reward' ? 'Return to rewards' : 'Return to learning path'}</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> {timer.selfTimed ? 'Self-timed practice · pause when taking a break' : timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'Time counts while this homework tab is focused' : 'Time counts while this homework tab is focused'}</div>
+        <div className="focus-note"><ShieldCheck size={17} /> {honorReward ? 'Honor system · stop watching when time is up' : timer.selfTimed ? 'Self-timed practice · pause when taking a break' : timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'Time counts while this homework tab is focused' : 'Time counts while this homework tab is focused'}</div>
       </div>
     </section>
   )
@@ -3041,6 +3050,8 @@ function ParentView({
                     ? 'Parent override'
                     : record.method === 'reward-playback'
                       ? 'Reward playback'
+                    : record.method === 'reward-honor'
+                      ? 'Honor-system reward'
                     : record.method === 'game-verified'
                       ? 'Game-verified'
                       : 'Imported'

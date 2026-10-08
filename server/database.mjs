@@ -2268,7 +2268,7 @@ export function createStore(filename, options = {}) {
     const managedChrome = ['managed-chrome', 'youtube-playback'].includes(plan.phases[0].verification)
     const inAppBrowser = plan.phases[0].verification === 'in-app-browser'
     const externallyVerified = managedChrome || inAppBrowser
-    const selectionSeconds = input.kind === 'reward'
+    const selectionSeconds = input.kind === 'reward' && plan.phases[0].verification !== 'self-timed'
       ? Math.floor(Number(input.selectionSeconds ?? 120))
       : null
     if (selectionSeconds !== null &&
@@ -2304,7 +2304,8 @@ export function createStore(filename, options = {}) {
   }
 
   function applySessionCompletion(row, completedAt) {
-    const method = row.kind === 'reward' ? 'reward-playback' : 'time-in-session'
+    const honorReward = row.kind === 'reward' && planFromRow(row).plan.phases[0].verification === 'self-timed'
+    const method = row.kind === 'reward' ? honorReward ? 'reward-honor' : 'reward-playback' : 'time-in-session'
     const result = insertCompletion.run(
       `session:${row.id}`, row.activity_id, row.session_key ?? null, method, 'server-heartbeat', row.id,
       completedAt, JSON.stringify({
@@ -3272,6 +3273,7 @@ export function createStore(filename, options = {}) {
       database: filename,
       schemaVersion: SCHEMA_VERSION,
       initialized: isInitialized(),
+      rewardMode: options.rewardMode === 'honor' ? 'honor' : 'managed',
       lastWriteAt: db.prepare(`SELECT value FROM app_meta WHERE key = 'last_write_at'`).get()?.value ?? null,
     }
   }

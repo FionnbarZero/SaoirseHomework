@@ -262,7 +262,7 @@ export type CompletionRecord = {
   id: string
   activityId: string
   sessionKey?: string
-  method: 'self-reported' | 'time-in-session' | 'game-verified' | 'parent-override' | 'reward-playback' | 'imported'
+  method: 'self-reported' | 'time-in-session' | 'game-verified' | 'parent-override' | 'reward-playback' | 'reward-honor' | 'imported'
   source: string
   completedAt: string
 }

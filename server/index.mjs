@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildActivitySessionPlan } from './activity-config.mjs'
+import { buildRewardSession } from './reward-session.mjs'
 import { createStore } from './database.mjs'
 import { createFirestoreBackedStore } from './cloud-store.mjs'
 import { createGoogleLiveIntegration } from './google-live.mjs'
@@ -80,6 +81,7 @@ const parentAuthorizationConfigured = requireRootOwnership
   : guardianSharedSecret.length >= 32
 const storeOptions = {
   timeZone,
+  rewardMode: privateAccess.googleIap ? 'honor' : 'managed',
   enforceFilePermissions: requireRootOwnership,
   googleLiveConfiguration: {
     mode: googleMode,
@@ -120,13 +122,6 @@ const expectedChromeExtensionId = process.env.HOMEWORK_CHROME_EXTENSION_ID || 'm
 const readingGameOrigin = new URL(
   process.env.HOMEWORK_READING_GAME_ORIGIN || serviceOrigin,
 ).origin
-const youtubeLaunchUrl = 'https://www.youtube.com/'
-const youtubePlaybackOrigins = [
-  'https://youtube.com',
-  'https://www.youtube.com',
-  'https://m.youtube.com',
-  'https://music.youtube.com',
-]
 const days = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])
 const selfReportedActivities = new Set(activeRequiredActivities().filter((activity) => activity.method === 'self').map((activity) => activity.id))
 const parentOverrideActivities = new Set(activeRequiredActivities().map((activity) => activity.id))
@@ -435,33 +430,11 @@ function resolveSessionRequest(body) {
   }
 
   if (body.kind === 'reward') {
-    const credit = store.getRewardCredit(body.activityId)
-    if (!credit || credit.remainingSeconds <= 0) throw new Error('Reward credit not found')
-    if (!store.getChromeExtensionStatus().connected) {
-      const error = new Error('Managed Chrome must be connected before YouTube reward time can start')
-      error.status = 409
-      error.code = 'managed_chrome_required'
-      throw error
-    }
-    return {
-      kind: 'reward',
-      activityId: credit.id,
-      label: 'YouTube reward',
-      targetSeconds: credit.remainingSeconds,
-      selectionSeconds: 2 * 60,
-      plan: {
-        phases: [{
-          id: 'youtube-playback',
-          label: 'YouTube playback',
-          targetSeconds: credit.remainingSeconds,
-          launchUrl: youtubeLaunchUrl,
-          allowedOrigins: youtubePlaybackOrigins,
-          creditOrigins: youtubePlaybackOrigins,
-          advanceOrigins: [],
-          verification: 'youtube-playback',
-        }],
-      },
-    }
+    return buildRewardSession({
+      credit: store.getRewardCredit(body.activityId),
+      mode: storeOptions.rewardMode,
+      chromeConnected: store.getChromeExtensionStatus().connected,
+    })
   }
 
   throw new Error('Unsupported session kind')

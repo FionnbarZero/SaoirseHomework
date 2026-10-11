@@ -153,7 +153,6 @@ function loadState(): AppState {
       },
       writingReviewQueue: Array.isArray(parsed.writingReviewQueue) ? parsed.writingReviewQueue : [],
       activityConfiguration: {
-        ninjaDojo: { ...defaultState.activityConfiguration.ninjaDojo, ...savedConfiguration?.ninjaDojo },
         duChinese: { ...defaultState.activityConfiguration.duChinese, ...savedConfiguration?.duChinese },
         levelChinese: { ...defaultState.activityConfiguration.levelChinese, ...savedConfiguration?.levelChinese },
       },
@@ -947,9 +946,7 @@ function DayView({
         {requiredActivitiesForDay(day).map((activity) => {
           const done = completed.includes(activity.id)
           const self = activity.method === 'self'
-          const configuration = activity.id === 'ninja-dojo'
-            ? state.activityConfiguration.ninjaDojo
-            : activity.id === 'du-chinese'
+          const configuration = activity.id === 'du-chinese'
               ? state.activityConfiguration.duChinese
               : activity.id === 'level-chinese'
                 ? state.activityConfiguration.levelChinese
@@ -2246,7 +2243,7 @@ function SessionView({
     : timer.selfTimed
       ? 'Open the activity in another tab and keep this homework tab open. Pause for breaks. This timer records practice time; it does not verify work on the other website. Return here to move from reading to flashcards. Browser sleep may pause the timer.'
     : inApp
-      ? 'Ninja Dojo is authenticated to this local homework session. Time counts only while this homework tab is visible and focused.'
+      ? 'This embedded activity is authenticated to this homework session. Time counts only while this tab is visible and focused.'
     : timer.waitingForVerification
       ? 'Sign in through Clever. The timer begins only after managed Chrome verifies Level Learning.'
       : managed
@@ -2843,12 +2840,6 @@ function ParentView({
           <span className="mock-badge">LOCAL CONFIGURATION</span>
         </div>
         <div className="activity-config-grid">
-          <fieldset>
-            <legend><span>Ninja Dojo</span><b className={activityConfig.ninjaDojo.ready ? 'ready' : ''}>{activityConfig.ninjaDojo.ready ? 'Ready' : 'Needs URL'}</b></legend>
-            <label><span>5th Grade Learning Hub URL</span><input type="url" placeholder="https://…" value={activityConfig.ninjaDojo.launchUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, ninjaDojo: { ...current.ninjaDojo, launchUrl: event.target.value, ready: false } }))} /></label>
-            <label><span>Additional approved origins</span><textarea rows={3} placeholder="https://login.example.org" value={activityConfig.ninjaDojo.redirectOrigins.join('\n')} onChange={(event) => setActivityConfig((current) => ({ ...current, ninjaDojo: { ...current.ninjaDojo, redirectOrigins: parseOrigins(event.target.value), ready: false } }))} /></label>
-            <small>17 active minutes on an approved origin.</small>
-          </fieldset>
           <fieldset>
             <legend><span>Du Chinese</span><b className={activityConfig.duChinese.ready ? 'ready' : ''}>{activityConfig.duChinese.ready ? 'Ready' : 'Needs URLs'}</b></legend>
             <label><span>Reading URL</span><input type="url" placeholder="https://…" value={activityConfig.duChinese.readingUrl} onChange={(event) => setActivityConfig((current) => ({ ...current, duChinese: { ...current.duChinese, readingUrl: event.target.value, ready: false } }))} /></label>

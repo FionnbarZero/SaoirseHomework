@@ -42,12 +42,15 @@ test('the English hand-in checkbox appears and counts only on Friday', () => {
   state.optionalCompleted = Array.from({ length: 9 }, (_, index) => `session:${index}`)
   state.requiredByDay.Friday = activeRequiredActivities('Friday').filter((activity) => !activity.id.endsWith('-turned-in')).map((activity) => activity.id)
   assert.equal(dayIsComplete(state, 'Friday'), false)
-  assert.equal(progressForDay(state, 'Friday').requiredTotal, 7)
+  assert.equal(progressForDay(state, 'Friday').requiredTotal, 6)
   state.requiredByDay.Friday.push(checks('Friday')[0].id)
   assert.equal(dayIsComplete(state, 'Friday'), true)
-  assert.equal(progressForDay(state, 'Monday').requiredTotal, 7)
-  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 7)
-  assert.equal(getFridayFunSummary(state).requiredTotal, 35)
+  assert.equal(progressForDay(state, 'Monday').requiredTotal, 6)
+  assert.equal(progressForDay(state, 'Tuesday').requiredTotal, 6)
+  assert.equal(getFridayFunSummary(state).requiredTotal, 30)
+  for (const day of PLAN_DAYS) {
+    assert.equal(requiredActivitiesForDay(day).some((activity) => activity.id === 'ninja-dojo'), false)
+  }
 })
 
 test('the seven-day plan keeps weekends practice-only and reading Monday through Thursday', () => {

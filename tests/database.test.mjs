@@ -52,9 +52,9 @@ function sampleState() {
     }],
     activeTimer: {
       kind: 'required',
-      activityId: 'ninja-dojo',
+      activityId: 'independent-reading',
       sessionKey: 'Monday',
-      label: 'Ninja Dojo',
+      label: 'Read for 20 minutes',
       totalSeconds: 1020,
       remainingSeconds: 917,
       running: false,
@@ -630,7 +630,7 @@ test('verified completion proof unlocks free mode and a correction rotates the l
 
   for (const activityId of [
     'mandarin', 'science', 'du-chinese', 'math', 'english-packet',
-    'ninja-dojo', 'independent-reading',
+    'independent-reading',
   ]) {
     store.setDailyCompletion({
       day: 'Monday',
@@ -655,8 +655,8 @@ test('verified completion proof unlocks free mode and a correction rotates the l
     weekId,
     day: 'Monday',
     eligibleAt: free.session.completionProof.eligibleAt,
-    requiredCompleted: 7,
-    requiredTarget: 7,
+    requiredCompleted: 6,
+    requiredTarget: 6,
     optionalCompleted: 2,
     optionalTarget: 2,
   })
@@ -756,9 +756,9 @@ test('heartbeats award only bounded active monotonic time', () => {
 
   const session = store.startSession({
     kind: 'required',
-    activityId: 'ninja-dojo',
+    activityId: 'independent-reading',
     sessionKey: 'Monday',
-    label: 'Ninja Dojo',
+    label: 'Read for 20 minutes',
     targetSeconds: 10,
   })
 
@@ -774,7 +774,7 @@ test('heartbeats award only bounded active monotonic time', () => {
   clock.advance(5_000)
   const completed = store.heartbeatSession(session.id, true)
   assert.equal(completed.status, 'completed')
-  assert.equal(store.loadState().requiredByDay.Monday.includes('ninja-dojo'), true)
+  assert.equal(store.loadState().requiredByDay.Monday.includes('independent-reading'), true)
   store.close()
 })
 
@@ -783,9 +783,9 @@ test('paused and hidden intervals earn no session credit', () => {
   const store = createStore(':memory:', clock.options())
   const session = store.startSession({
     kind: 'required',
-    activityId: 'ninja-dojo',
+    activityId: 'du-chinese',
     sessionKey: 'Friday',
-    label: 'Ninja Dojo',
+    label: 'Du Chinese',
     targetSeconds: 10,
   })
 
@@ -804,14 +804,14 @@ test('in-app browser sessions require their one-session authentication capabilit
   const store = createStore(':memory:', clock.options())
   const session = store.startSession({
     kind: 'required',
-    activityId: 'ninja-dojo',
+    activityId: 'du-chinese',
     sessionKey: 'Monday',
-    label: 'Ninja Dojo',
+    label: 'Embedded activity',
     targetSeconds: 10,
     plan: {
       phases: [{
-        id: 'learning-hub',
-        label: '5th Grade Learning Hub',
+        id: 'embedded-activity',
+        label: 'Embedded activity',
         targetSeconds: 10,
         launchUrl: 'https://ninja.example/learn',
         allowedOrigins: ['https://ninja.example'],
@@ -1064,9 +1064,9 @@ test('a service restart recovers an incomplete session paused without adding dow
     const first = createStore(filename, clock.options('runtime-one'))
     const session = first.startSession({
       kind: 'required',
-      activityId: 'ninja-dojo',
+      activityId: 'independent-reading',
       sessionKey: 'Tuesday',
-      label: 'Ninja Dojo',
+      label: 'Read for 20 minutes',
       targetSeconds: 20,
     })
     clock.advance(5_000)
@@ -1237,13 +1237,12 @@ test('Level Chinese waits for an exact managed-Chrome learning origin', () => {
 test('parent activity configuration persists with readiness and an audit event', () => {
   const store = createStore(':memory:')
   const saved = store.setActivityConfiguration({
-    ninjaDojo: { launchUrl: 'https://hub.example.edu/grade-5', allowedOrigins: [] },
     duChinese: { readingUrl: '', flashcardUrl: '', allowedOrigins: [] },
     levelChinese: { cleverUrl: '', learningUrl: '', allowedOrigins: [] },
   })
 
-  assert.equal(saved.ninjaDojo.ready, true)
-  assert.equal(store.loadState().activityConfiguration.ninjaDojo.launchUrl, 'https://hub.example.edu/grade-5')
+  assert.equal(saved.duChinese.ready, false)
+  assert.equal(store.loadState().activityConfiguration.duChinese.readingUrl, '')
   assert.equal(
     store.listAudit().filter((event) => event.eventType === 'activity_configuration_updated').length,
     1,
@@ -2058,7 +2057,7 @@ test('Friday Free Mode unlocks once, relocks after a correction, and resets on r
   const store = createStore(':memory:', clock.options())
   const required = [
     'mandarin', 'science', 'du-chinese', 'math', 'english-packet',
-    'ninja-dojo', 'english-homework-turned-in',
+    'english-homework-turned-in',
   ]
   const optional = [
     'voena:0', 'voena:1', 'voena:2',

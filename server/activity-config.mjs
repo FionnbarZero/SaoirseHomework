@@ -1,7 +1,5 @@
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const MAX_ALLOWED_ORIGINS = 20
-export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
-const DEFAULT_NINJA_DOJO_ORIGIN = new URL(DEFAULT_NINJA_DOJO_URL).origin
 export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
 export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
 export const DEFAULT_CLEVER_URL = 'https://clever.com/'
@@ -9,12 +7,6 @@ const DEFAULT_DU_CHINESE_ORIGIN = new URL(DEFAULT_DU_CHINESE_READING_URL).origin
 
 export function emptyActivityConfiguration() {
   return {
-    ninjaDojo: {
-      launchUrl: DEFAULT_NINJA_DOJO_URL,
-      redirectOrigins: [],
-      allowedOrigins: [DEFAULT_NINJA_DOJO_ORIGIN],
-      ready: true,
-    },
     duChinese: {
       readingUrl: DEFAULT_DU_CHINESE_READING_URL,
       flashcardUrl: DEFAULT_DU_CHINESE_FLASHCARD_URL,
@@ -72,17 +64,8 @@ function normalizeAllowedOrigins(value, launchUrls) {
 
 export function normalizeActivityConfiguration(input = {}) {
   const defaults = emptyActivityConfiguration()
-  const ninjaInput = input.ninjaDojo ?? defaults.ninjaDojo
   const duInput = input.duChinese ?? defaults.duChinese
   const levelInput = input.levelChinese ?? defaults.levelChinese
-
-  const ninjaLaunchUrl = normalizeUrl(ninjaInput.launchUrl, 'Ninja Dojo launch URL')
-  const ninjaLaunchOrigins = [ninjaLaunchUrl].filter(Boolean).map(originFromUrl)
-  const ninjaRedirects = normalizeAllowedOrigins(
-    ninjaInput.redirectOrigins ?? (ninjaInput.allowedOrigins ?? []).filter((origin) => !ninjaLaunchOrigins.includes(originFromUrl(normalizeUrl(origin, 'Approved origin')))),
-    [],
-  )
-  const ninjaOrigins = normalizeAllowedOrigins(ninjaRedirects, [ninjaLaunchUrl])
 
   const duReadingUrl = normalizeUrl(duInput.readingUrl, 'Du Chinese reading URL')
   const duFlashcardUrl = normalizeUrl(duInput.flashcardUrl, 'Du Chinese flashcard URL')
@@ -103,12 +86,6 @@ export function normalizeActivityConfiguration(input = {}) {
   const levelOrigins = normalizeAllowedOrigins(levelRedirects, [levelCleverUrl, levelLearningUrl])
 
   return {
-    ninjaDojo: {
-      launchUrl: ninjaLaunchUrl,
-      redirectOrigins: ninjaRedirects,
-      allowedOrigins: ninjaOrigins,
-      ready: Boolean(ninjaLaunchUrl),
-    },
     duChinese: {
       readingUrl: duReadingUrl,
       flashcardUrl: duFlashcardUrl,
@@ -146,22 +123,6 @@ export function buildActivitySessionPlan(activityId, configuration) {
       }],
     }
   }
-  if (activityId === 'ninja-dojo') {
-    if (!config.ninjaDojo.ready) throw notConfigured('Ninja Dojo')
-    return {
-      targetSeconds: 17 * 60,
-      phases: [{
-        id: 'learning-hub',
-        label: '5th Grade Learning Hub',
-        targetSeconds: 17 * 60,
-        launchUrl: config.ninjaDojo.launchUrl,
-        allowedOrigins: config.ninjaDojo.allowedOrigins,
-        creditOrigins: config.ninjaDojo.allowedOrigins,
-        verification: 'managed-chrome',
-      }],
-    }
-  }
-
   if (activityId === 'du-chinese') {
     if (!config.duChinese.ready) throw notConfigured('Du Chinese')
     const readingOrigin = originFromUrl(config.duChinese.readingUrl)

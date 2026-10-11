@@ -1194,7 +1194,6 @@ export function createStore(filename, options = {}) {
       insertAudit.run(
         'activity_configuration_updated',
         JSON.stringify({
-          ninjaDojoReady: configuration.ninjaDojo.ready,
           duChineseReady: configuration.duChinese.ready,
           levelChineseReady: configuration.levelChinese.ready,
         }),

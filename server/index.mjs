@@ -133,7 +133,6 @@ const optionalActivities = new Map([
 ])
 const requiredTimedActivities = new Map([
   ['independent-reading', { label: 'Read for 20 minutes' }],
-  ['ninja-dojo', { label: 'Ninja Dojo' }],
   ['level-chinese', { label: 'Level Chinese' }],
   ['du-chinese', { label: 'Du Chinese' }],
 ])
@@ -374,17 +373,8 @@ function resolveSessionRequest(body) {
       throw new Error('Unsupported required activity session')
     }
     const configuredPlan = buildActivitySessionPlan(body.activityId, store.getActivityConfiguration())
-    const inAppNinjaPreview = securityMode === 'preview' && body.activityId === 'ninja-dojo'
     const plan = privateAccess.googleIap && body.activityId === 'du-chinese'
       ? { ...configuredPlan, phases: configuredPlan.phases.map(phase => ({ ...phase, verification: 'self-timed' })) }
-      : inAppNinjaPreview
-      ? {
-          ...configuredPlan,
-          phases: configuredPlan.phases.map((phase) => ({
-            ...phase,
-            verification: 'in-app-browser',
-          })),
-        }
       : configuredPlan
     if (plan.phases.some((phase) => phase.verification === 'managed-chrome') && !store.getChromeExtensionStatus().connected) {
       const error = new Error(`Managed Chrome must be connected before ${activity.label} can start`)

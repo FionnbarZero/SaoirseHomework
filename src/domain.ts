@@ -5,7 +5,6 @@ export const PLAN_DAYS = ['Saturday', 'Sunday', ...DAYS] as const
 export function isSchoolDay(day: LocalDayName): day is DayName {
   return day !== 'Saturday' && day !== 'Sunday'
 }
-export const DEFAULT_NINJA_DOJO_URL = 'https://weeklydictation-g5-beta.web.app/'
 export const DEFAULT_DU_CHINESE_READING_URL = 'https://duchinese.net/lessons'
 export const DEFAULT_DU_CHINESE_FLASHCARD_URL = 'https://duchinese.net/flashcards'
 export const DEFAULT_CLEVER_URL = 'https://clever.com/'
@@ -236,12 +235,6 @@ export type ActiveTimer = {
 }
 
 export type ActivityConfiguration = {
-  ninjaDojo: {
-    launchUrl: string
-    redirectOrigins: string[]
-    allowedOrigins: string[]
-    ready: boolean
-  }
   duChinese: {
     readingUrl: string
     flashcardUrl: string
@@ -439,14 +432,6 @@ export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
     method: 'self',
     icon: 'Aa',
   },
-  {
-    id: 'ninja-dojo',
-    title: 'Ninja Dojo',
-    description: 'Focused time in the 5th Grade Learning Hub.',
-    method: 'timer',
-    minutes: 17,
-    icon: '忍',
-  },
 ]
 
 export const OPTIONAL_ACTIVITIES: OptionalActivity[] = [
@@ -522,12 +507,6 @@ export const defaultState: AppState = {
   guardianConnected: false,
   chromeConnected: false,
   activityConfiguration: {
-    ninjaDojo: {
-      launchUrl: DEFAULT_NINJA_DOJO_URL,
-      redirectOrigins: [],
-      allowedOrigins: ['https://weeklydictation-g5-beta.web.app'],
-      ready: true,
-    },
     duChinese: {
       readingUrl: DEFAULT_DU_CHINESE_READING_URL,
       flashcardUrl: DEFAULT_DU_CHINESE_FLASHCARD_URL,

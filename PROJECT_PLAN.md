@@ -45,7 +45,7 @@ The full homework flow can be locked on an iPad, but the current Mac loopback se
 - **Immediate parent-operated option:** Apple Guided Access can temporarily restrict any iPad to one app and requires the Guided Access passcode, Face ID, or Touch ID to exit. A parent must start the session manually. See [Apple’s Guided Access guide](https://support.apple.com/guide/ipad/lock-ipad-to-one-app-ipada16d1374/ipados).
 - **Managed full-integration option:** build a signed native iPad app that contains the learning path and controlled web activities. Supervise the iPad and use MDM **App Lock / Single App Mode**, or allowlist that app for **Autonomous Single App Mode** so it can enter the restricted state when homework begins and leave only after verified completion. Apple states that persistent Single App Mode and autonomous programmatic entry require supervision and management. See [Apple’s Single App Mode guidance](https://developer.apple.com/videos/play/wwdc2022/10152/) and [App Lock payload documentation](https://developer.apple.com/documentation/devicemanagement/applock).
 - Do not plan around Automatic Assessment Configuration unless Apple grants the required assessment entitlement; a household homework app should not assume eligibility.
-- Because Single App Mode permits only one app, Du Chinese, Level Chinese, Ninja Dojo, writing, and the weekly path must run inside the native homework container or through explicitly designed managed transitions. The Mac Chrome extension cannot simply be reused on iPadOS.
+- Because Single App Mode permits only one app, Du Chinese, Level Chinese, writing, and the weekly path must run inside the native homework container or through explicitly designed managed transitions. The Mac Chrome extension cannot simply be reused on iPadOS.
 - A supervised-device pilot must verify authentication cookies, external-site compatibility, text entry, Google delivery, accessibility, sleep/restart recovery, and parent emergency exit before claiming full iPad support.
 
 ## 3. Child interface
@@ -79,7 +79,6 @@ The full homework flow can be locked on an iPad, but the current Mac loopback se
 | Daily Math Practice | Self-reported | Fionnbar changes the control to a green check. |
 | Daily English Packet | Self-reported | Fionnbar changes the control to a green check. |
 | Reading Response Writing Game | Writing-evidence verified | Read a passage of Fionnbar’s choice, write a response, complete the correction game in its own frame, revise, and check again until no supported errors remain. Accuracy is reported but does not block completion. |
-| Ninja Dojo | Time-in-session | Open 5th Grade Learning Hub in a controlled view for 17 active minutes. |
 | English Escape | Coming soon | Visible but excluded from completion until its app is ready; future duration is 10 active minutes. |
 
 Self-reported completion is intentionally honor-based. The parent dashboard records and can correct it.
@@ -147,13 +146,6 @@ There are no extra wildcard sessions in the revised model.
 - After all correction, practice, and spelling responses are complete, show the percent correct on first attempts and a line graph of cumulative first-try accuracy.
 - The local service verifies every game response and requires a final clean checked version before recording daily completion. A browser-only completion signal is insufficient. Expired writing sessions restart safely without discarding versions.
 - When live Google delivery is authorized, include every completed version, its response score, and graph data in the weekly Google document and automatic teacher email workflow.
-
-### Ninja Dojo
-
-- Open the reviewed 5th Grade Learning Hub entry point at `https://weeklydictation-g5-beta.web.app/`.
-- Allow the exact entry origin plus reviewed login, asset, and child-page redirect origins.
-- Count 17 active foreground minutes.
-- Then show **Return to Learning Path** and record time-in-session completion.
 
 ### English Escape
 
@@ -449,7 +441,6 @@ Default retention:
 
 ## 15. Required external inputs
 
-- Any additional Ninja Dojo login or redirect origins discovered during managed-Chrome testing.
 - Any additional Du Chinese login or redirect origins discovered during managed-Chrome testing.
 - The Clever login, district identity-provider, and Level Learning origins.
 - The school delivery email address.
@@ -460,7 +451,7 @@ Default retention:
 
 1. **Feasibility prototypes:** second-Mac child account, guardian recovery, Chrome forced-extension policy, Google OAuth/send proof, and writing-evidence completion contract.
 2. **Core learning path:** entry screen, weekly path, daily lists, self-reporting, segmented optional pool, Sunday head start, banking, persistence, and parent dashboard.
-3. **Controlled activities:** generic timer shell, Ninja Dojo, practice timers, Du Chinese, Level Chinese, and verified reading-response writing integration.
+3. **Controlled activities:** generic timer shell, practice timers, Du Chinese, Level Chinese, and verified reading-response writing integration.
 4. **Rewards:** earning ledger, banked credits, controlled YouTube playback, recovery, and focus restoration.
 5. **Writing:** layered local proofreading, correction games, spelling-module integration, weekly Google document, and Friday delivery.
 6. **Hardening:** failure recovery, privacy controls, accessibility, Chrome-update testing, child-account bypass testing, and optional MDM evaluation.

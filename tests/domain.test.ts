@@ -58,8 +58,8 @@ test('completed timers name the activity and move Saoirse forward', () => {
     'Alright! You are finished with Practice Jazz Band. On to the next thing!',
   )
   assert.equal(
-    completedActivityMessage('Read for 20 minutes'),
-    'Alright! You are finished with Read for 20 minutes. On to the next thing!',
+    completedActivityMessage('Read Scientific American for 15 minutes'),
+    'Alright! You are finished with Read Scientific American for 15 minutes. On to the next thing!',
   )
 })
 
@@ -108,8 +108,8 @@ test('the seven-day plan keeps weekends practice-only and reading Monday through
     assert.equal(isSchoolDay(day), day !== 'Saturday' && day !== 'Sunday')
     const reading = requiredActivitiesForDay(day).find((activity) => activity.id === 'independent-reading')
     if (['Monday', 'Tuesday', 'Wednesday', 'Thursday'].includes(day)) {
-      assert.equal(reading?.title, 'Read for 20 minutes')
-      assert.equal(reading?.minutes, 20)
+      assert.equal(reading?.title, 'Read Scientific American for 15 minutes')
+      assert.equal(reading?.minutes, 15)
       assert.equal(reading?.method, 'timer')
     } else assert.equal(reading, undefined)
     const dailyActivities = requiredActivitiesForDay(day)

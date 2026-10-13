@@ -68,8 +68,9 @@ test('activity configuration normalizes launch and redirect origins exactly', ()
 
 test('configured session plans preserve the required activity phases', () => {
   const reading = buildActivitySessionPlan('independent-reading', emptyActivityConfiguration())
-  assert.equal(reading.targetSeconds, 1200)
-  assert.equal(reading.phases[0].targetSeconds, 1200)
+  assert.equal(reading.targetSeconds, 900)
+  assert.equal(reading.phases[0].targetSeconds, 900)
+  assert.equal(reading.phases[0].label, 'Read Scientific American for 15 minutes')
   assert.equal(reading.phases[0].verification, 'browser-focus')
   const configuration = normalizeActivityConfiguration({
     duChinese: {

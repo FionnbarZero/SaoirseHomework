@@ -54,7 +54,7 @@ function sampleState() {
       kind: 'required',
       activityId: 'independent-reading',
       sessionKey: 'Monday',
-      label: 'Read for 20 minutes',
+      label: 'Read Scientific American for 15 minutes',
       totalSeconds: 1020,
       remainingSeconds: 917,
       running: false,
@@ -706,16 +706,16 @@ function controlledClock(start = '2026-10-03T16:00:00.000Z') {
   }
 }
 
-test('reading needs twenty active minutes, saves to its day, and cannot start on Friday or weekends', () => {
+test('Scientific American reading needs fifteen active minutes, saves to its day, and cannot start on Friday or weekends', () => {
   const clock = controlledClock('2026-10-05T16:00:00.000Z')
   const store = createStore(':memory:', clock.options())
-  const request = { kind: 'required', activityId: 'independent-reading', sessionKey: 'Monday', label: 'Read for 20 minutes', targetSeconds: 1200 }
+  const request = { kind: 'required', activityId: 'independent-reading', sessionKey: 'Monday', label: 'Read Scientific American for 15 minutes', targetSeconds: 900 }
   for (const sessionKey of ['Friday', 'Saturday', 'Sunday']) {
     assert.throws(() => store.startSession({ ...request, sessionKey }), { code: 'activity_not_scheduled' })
   }
   const session = store.startSession(request)
   let result
-  for (let index = 0; index < 239; index++) {
+  for (let index = 0; index < 179; index++) {
     clock.advance(5000)
     result = store.heartbeatSession(session.id, true)
   }
@@ -758,7 +758,7 @@ test('heartbeats award only bounded active monotonic time', () => {
     kind: 'required',
     activityId: 'independent-reading',
     sessionKey: 'Monday',
-    label: 'Read for 20 minutes',
+    label: 'Read Scientific American for 15 minutes',
     targetSeconds: 10,
   })
 
@@ -1066,7 +1066,7 @@ test('a service restart recovers an incomplete session paused without adding dow
       kind: 'required',
       activityId: 'independent-reading',
       sessionKey: 'Tuesday',
-      label: 'Read for 20 minutes',
+      label: 'Read Scientific American for 15 minutes',
       targetSeconds: 20,
     })
     clock.advance(5_000)

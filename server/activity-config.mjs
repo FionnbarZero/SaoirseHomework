@@ -114,11 +114,11 @@ export function buildActivitySessionPlan(activityId, configuration) {
   const config = normalizeActivityConfiguration(configuration)
   if (activityId === 'independent-reading') {
     return {
-      targetSeconds: 20 * 60,
+      targetSeconds: 15 * 60,
       phases: [{
         id: 'reading',
-        label: 'Read for 20 minutes',
-        targetSeconds: 20 * 60,
+        label: 'Read Scientific American for 15 minutes',
+        targetSeconds: 15 * 60,
         verification: 'browser-focus',
       }],
     }

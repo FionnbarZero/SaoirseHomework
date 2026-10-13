@@ -382,10 +382,10 @@ export function getBrowserWeekContext(date = new Date()): WeekContext {
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
   {
     id: 'independent-reading',
-    title: 'Read for 20 minutes',
-    description: 'Choose a book and read. Keep this timer open while you read.',
+    title: 'Read Scientific American for 15 minutes',
+    description: 'Read Scientific American. Keep this timer open while you read.',
     method: 'timer',
-    minutes: 20,
+    minutes: 15,
     icon: '📖',
     days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday'],
   },

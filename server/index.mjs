@@ -133,7 +133,7 @@ const optionalActivities = new Map([
   ['jazz-band', { label: 'Practice Jazz Band', sessions: 5, targetSeconds: 20 * 60 }],
 ])
 const requiredTimedActivities = new Map([
-  ['independent-reading', { label: 'Read for 20 minutes' }],
+  ['independent-reading', { label: 'Read Scientific American for 15 minutes' }],
   ['level-chinese', { label: 'Level Chinese' }],
   ['du-chinese', { label: 'Du Chinese' }],
 ])

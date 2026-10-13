@@ -41,6 +41,7 @@ import {
   WEEKLY_REQUIRED_REWARD_CENTS,
   activeRequiredActivities,
   completedWeeklyRequiredCount,
+  calendarDayForPlan,
   requiredActivitiesForDay,
   dayIsComplete,
   completedActivityMessage,
@@ -60,6 +61,7 @@ import {
   type AppState,
   type DayName,
   type LocalDayName,
+  type WeekContext,
   type Draft,
   type SentenceMeaningReview,
 } from './domain'
@@ -1001,6 +1003,7 @@ function DayView({
         <h2>A little practice, your choice.</h2>
         <p>No required homework today. Choose any unfinished practice session below.</p>
       </div>
+      <CalendarSchedule context={state.weekContext} day={day} />
       <PracticeChoices state={state} day={day} startTimer={startTimer} />
       <div className="head-start-note"><Sparkles size={20} /><div><strong>Your weekly practice bank</strong><p>Sessions count toward the week shown above. The next week opens on Sunday at 4:00 a.m.</p></div></div>
     </section>
@@ -1009,7 +1012,7 @@ function DayView({
   const progress = progressForDay(state, day)
   const free = dayIsComplete(state, day)
   if (day === 'Friday' && free) {
-    return <><FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} /><PracticeChoices state={state} day={day} startTimer={startTimer} /></>
+    return <><FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} /><CalendarSchedule context={state.weekContext} day={day} /><PracticeChoices state={state} day={day} startTimer={startTimer} /></>
   }
   return (
     <section className="page">
@@ -1083,28 +1086,34 @@ function DayView({
         })}
       </div>
 
-      <CalendarSchedule weekId={state.weekContext.weekId} day={day} timeZone={state.weekContext.timeZone} />
+      <CalendarSchedule context={state.weekContext} day={day} />
 
       <PracticeChoices state={state} day={day} startTimer={startTimer} />
     </section>
   )
 }
 
-function CalendarSchedule({ weekId, day, timeZone }: { weekId: string; day: DayName; timeZone: string }) {
+function CalendarSchedule({ context, day }: { context: WeekContext; day: LocalDayName }) {
+  const { dateId, calendarWeekId } = calendarDayForPlan(context, day)
+  // A new date gets fresh state, so failed loads cannot display another day's events.
+  return <CalendarScheduleDate key={`${dateId}:${context.timeZone}`} weekId={calendarWeekId} dateId={dateId} day={day} timeZone={context.timeZone} />
+}
+
+function CalendarScheduleDate({ weekId, dateId, day, timeZone }: { weekId: string; dateId: string; day: LocalDayName; timeZone: string }) {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [status, setStatus] = useState<CalendarStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
-
-  const dayOffset = DAYS.indexOf(day)
-  const date = new Date(`${weekId}T00:00:00.000Z`)
-  date.setUTCDate(date.getUTCDate() + dayOffset)
-  const dateId = date.toISOString().slice(0, 10)
+  const [failed, setFailed] = useState(false)
+  const [retry, setRetry] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setMessage('')
+    setEvents([])
+    setStatus(null)
+    setFailed(false)
     getCalendarWeek(weekId)
       .then((response) => {
         if (cancelled) return
@@ -1114,13 +1123,14 @@ function CalendarSchedule({ weekId, day, timeZone }: { weekId: string; day: DayN
       })
       .catch((error) => {
         if (cancelled) return
+        setFailed(true)
         setMessage(error instanceof Error ? error.message : 'Calendar activities are unavailable right now.')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [weekId, dateId])
+  }, [weekId, dateId, retry])
 
   const formatTime = (value: string) => new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -1130,6 +1140,8 @@ function CalendarSchedule({ weekId, day, timeZone }: { weekId: string; day: DayN
 
   const content = loading
     ? <div className="calendar-empty">Loading today’s schedule…</div>
+    : failed
+      ? <div className="calendar-empty"><strong>Could not load {day}’s schedule.</strong><button className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>
     : !status?.configured
       ? <div className="calendar-empty"><strong>Calendar setup is waiting for a parent.</strong><span>Homework still works normally without it.</span></div>
       : !status.connected
@@ -1145,6 +1157,7 @@ function CalendarSchedule({ weekId, day, timeZone }: { weekId: string; day: DayN
 
   return <section className="calendar-schedule" aria-labelledby="calendar-heading">
     <div className="section-label"><span id="calendar-heading">TODAY’S CALENDAR</span><span>READ ONLY</span></div>
+    <p className="calendar-message">{new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' }).format(new Date(`${dateId}T12:00:00Z`))}</p>
     <div className="calendar-event-list">{content}</div>
     {message && <p className="calendar-message" role="status">{message}</p>}
   </section>

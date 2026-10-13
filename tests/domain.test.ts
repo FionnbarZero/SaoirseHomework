@@ -13,6 +13,7 @@ import {
   activeRequiredActivities,
   completedWeeklyRequiredCount,
   completedActivityMessage,
+  calendarDayForPlan,
   dayIsComplete,
   defaultState,
   getFridayFunSummary,
@@ -32,6 +33,17 @@ import {
   scoreWritingResponses,
   writingReviewStatus,
 } from '../src/writing.ts'
+
+test('calendar dates include weekends and Sunday head-start across the week rollover', () => {
+  const context = { ...defaultState.weekContext, weekId: '2026-10-12', localDay: 'Tuesday' as const, headStart: false }
+  assert.deepEqual(calendarDayForPlan(context, 'Friday'), { dateId: '2026-10-16', calendarWeekId: '2026-10-12' })
+  assert.deepEqual(calendarDayForPlan(context, 'Saturday'), { dateId: '2026-10-17', calendarWeekId: '2026-10-12' })
+  assert.deepEqual(calendarDayForPlan(context, 'Sunday'), { dateId: '2026-10-11', calendarWeekId: '2026-10-05' })
+  const beforeRollover = { ...context, weekId: '2026-10-05', localDay: 'Sunday' as const }
+  const afterRollover = { ...context, localDay: 'Sunday' as const, headStart: true }
+  assert.deepEqual(calendarDayForPlan(beforeRollover, 'Sunday'), calendarDayForPlan(afterRollover, 'Sunday'))
+  assert.deepEqual(calendarDayForPlan({ ...afterRollover, weekId: '2027-01-04' }, 'Sunday'), { dateId: '2027-01-03', calendarWeekId: '2026-12-28' })
+})
 
 test('optional sessions have stable unique keys', () => {
   assert.equal(optionalSessionKey('voena', 0), 'voena:0')

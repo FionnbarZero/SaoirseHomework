@@ -548,12 +548,15 @@ function chromeResponse() {
   }
 }
 
-const server = createServer(async (request, response) => {
+const withStoreContext = (work) => store.withRequestContext ? store.withRequestContext(work) : work()
+
+const server = createServer((request, response) => withStoreContext(async () => {
   const url = new URL(request.url || '/', serviceOrigin)
   try {
     // Apply to HTML, static files, data, and AI endpoints alike. No health or
     // loopback exception may accidentally become a public route through a tunnel.
     request.privateIdentity = await privateAccess.authenticate(request)
+    await store.recoverIfNeeded?.()
     if (privateAccess.enabled) {
       response.setHeader('X-Content-Type-Options', 'nosniff')
       response.setHeader('Referrer-Policy', 'same-origin')
@@ -1222,7 +1225,7 @@ const server = createServer(async (request, response) => {
       code: error?.code || 'unexpected_error',
     }, headers)
   }
-})
+}))
 
 server.listen(port, host, () => {
   console.log(`Homework service listening on ${host}:${port}`)
@@ -1236,15 +1239,21 @@ server.listen(port, host, () => {
 })
 
 const googleQueueInterval = setInterval(() => {
-  void googleLive.runQueue()
-    .then(() => store.flushIfDirty?.())
+  void withStoreContext(async () => {
+    await store.recoverIfNeeded?.()
+    await googleLive.runQueue()
+    await store.flushIfDirty?.()
+  })
     .catch((error) => console.error('Google delivery queue failed:', error.message))
 }, 60_000)
 googleQueueInterval.unref()
 const initialGoogleQueueRun = setTimeout(() => {
-  void googleLive.runQueue().catch((error) => console.error('Google delivery queue failed:', error.message))
-  void googleLive.queueWritingLogSync(store.loadState().drafts)
-    .then(() => store.flushIfDirty?.())
+  void withStoreContext(async () => {
+    await store.recoverIfNeeded?.()
+    await googleLive.runQueue()
+    await googleLive.queueWritingLogSync(store.loadState().drafts)
+    await store.flushIfDirty?.()
+  })
     .catch((error) => console.error('Writing log startup sync failed:', error.message))
 }, 2_000)
 initialGoogleQueueRun.unref()

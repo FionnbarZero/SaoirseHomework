@@ -379,6 +379,20 @@ export function getBrowserWeekContext(date = new Date()): WeekContext {
   }
 }
 
+export function calendarDayForPlan(context: WeekContext, day: LocalDayName) {
+  // Sunday normally starts the upcoming homework week. Before the 4 a.m.
+  // rollover, today's Sunday still belongs to the ending homework week.
+  const offset = day === 'Sunday'
+    ? context.localDay === 'Sunday' && !context.headStart ? 6 : -1
+    : day === 'Saturday' ? 5 : DAYS.indexOf(day)
+  const date = new Date(`${context.weekId}T00:00:00.000Z`)
+  date.setUTCDate(date.getUTCDate() + offset)
+  const dateId = date.toISOString().slice(0, 10)
+  const monday = new Date(date)
+  monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7)
+  return { dateId, calendarWeekId: monday.toISOString().slice(0, 10) }
+}
+
 export const REQUIRED_ACTIVITIES: RequiredActivity[] = [
   {
     id: 'independent-reading',

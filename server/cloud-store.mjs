@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { promisify } from 'node:util'
@@ -94,14 +95,57 @@ export async function createFirestoreBackedStore(filename, options = {}) {
     await writeFile(filename, database, { mode: 0o600 })
   }
 
-  const local = createStore(filename, options.storeOptions)
+  let activeFilename = filename
+  let local = createStore(activeFilename, options.storeOptions)
   let dirtyRevision = 1
   let persistedRevision = 0
   let flushPromise = Promise.resolve()
+  let generation = 0
+  let recoveryNeeded = false
+  let recoveryPromise = null
+  const requests = new AsyncLocalStorage()
+
+  function conflictError() {
+    return cloudStoreError('Progress changed on another server. Reconnect to load the saved progress, then retry your last action.', 'cloud_snapshot_conflict', 409)
+  }
+
+  function assertCurrent(expected = requests.getStore()?.generation ?? generation) {
+    if (recoveryNeeded || expected !== generation) throw conflictError()
+  }
+
+  async function recoverIfNeeded() {
+    if (recoveryNeeded) {
+      recoveryPromise ??= (async () => {
+        // Failed requests must remain failed. Restore only confirmed cloud data;
+        // never replay an unconfirmed timer or reward operation automatically.
+        const latest = await document.get()
+        const payload = latest.exists ? snapshotBuffer(latest.data()?.snapshot) : null
+        if (!payload?.length) throw cloudStoreError('The saved homework database is unavailable.', 'cloud_snapshot_invalid')
+        let database
+        try { database = await gunzip(payload) }
+        catch { throw cloudStoreError('The saved homework database could not be restored.', 'cloud_snapshot_invalid') }
+        // A fresh cache avoids both open databases and orphaned WAL files from
+        // a previous process. Open it successfully before closing the old cache.
+        const replacementFilename = `${filename}.recovered-${randomUUID()}`
+        await writeFile(replacementFilename, database, { mode: 0o600, flag: 'wx' })
+        const replacement = createStore(replacementFilename, options.storeOptions)
+        local.close()
+        local = replacement
+        activeFilename = replacementFilename
+        remoteRevision = Number(latest.data()?.revision) || 0
+        dirtyRevision = 1
+        persistedRevision = 0
+        recoveryNeeded = false
+      })().finally(() => { recoveryPromise = null })
+      await recoveryPromise
+    }
+    const request = requests.getStore()
+    if (request) request.generation = generation
+  }
 
   async function writeSnapshot(targetRevision) {
     local.checkpoint()
-    const database = await readFile(filename)
+    const database = await readFile(activeFilename)
     const payload = await gzip(database, { level: 9 })
     if (payload.length > MAX_SNAPSHOT_BYTES) {
       throw cloudStoreError(
@@ -114,11 +158,7 @@ export async function createFirestoreBackedStore(filename, options = {}) {
       const current = await transaction.get(document)
       const currentRevision = current.exists ? Number(current.data()?.revision) || 0 : 0
       if (currentRevision !== remoteRevision) {
-        throw cloudStoreError(
-          'Homework data changed in another server instance. Please retry.',
-          'cloud_snapshot_conflict',
-          409,
-        )
+        throw conflictError()
       }
       const revision = currentRevision + 1
       transaction.set(document, {
@@ -142,38 +182,53 @@ export async function createFirestoreBackedStore(filename, options = {}) {
   }
 
   async function flushIfDirty() {
+    const expected = requests.getStore()?.generation ?? generation
     // Preserve rejection for the caller of the failed write, but allow the next
     // request to retry all still-dirty state after a transient network failure.
     flushPromise = flushPromise.catch(() => {}).then(async () => {
+      assertCurrent(expected)
       while (persistedRevision < dirtyRevision) {
         const targetRevision = dirtyRevision
-        await writeSnapshot(targetRevision)
+        try {
+          await writeSnapshot(targetRevision)
+        } catch (error) {
+          if (error?.code === 'cloud_snapshot_conflict') {
+            recoveryNeeded = true
+            generation += 1
+          }
+          throw error
+        }
       }
     })
     return flushPromise
   }
 
   const cloud = {
-    ...local,
+    get db() { return local.db },
     info() {
+      assertCurrent()
       return {
         ...local.info(),
         database: `firestore:${documentPath}`,
       }
     },
     flushIfDirty,
+    recoverIfNeeded,
+    withRequestContext(work) {
+      return requests.run({ generation }, work)
+    },
     async close() {
       await flushIfDirty()
       local.close()
     },
   }
 
-  for (const name of mutatingMethods) {
-    const method = local[name]
-    if (typeof method !== 'function') continue
+  for (const name of Object.keys(local)) {
+    if (name in cloud || typeof local[name] !== 'function') continue
     cloud[name] = (...args) => {
-      const result = method(...args)
-      markDirty()
+      assertCurrent()
+      const result = local[name](...args)
+      if (mutatingMethods.has(name)) markDirty()
       return result
     }
   }

@@ -21,7 +21,12 @@ Durable data uses Firestore document `homework_state/saoirse`. The server keeps
 the existing SQLite behavior in its ephemeral filesystem, checkpoints it, gzip
 compresses it, and commits a new Firestore revision before completing each API
 response. Cloud Run must remain limited to one instance to preserve the
-single-writer guarantee.
+single-writer guarantee. If overlapping instances conflict during replacement,
+the losing request returns an error rather than overwriting confirmed progress.
+On the next authenticated request, that instance reloads the latest cloud snapshot;
+the user can reconnect and retry the failed action. Requests already in flight
+against the old snapshot cannot write to or confirm the replacement snapshot.
+Recovery does not replay unconfirmed reward or timer operations automatically.
 
 The Google Calendar OAuth client ID and client secret are Cloud Run environment
 secrets. The refresh token is stored separately in Secret Manager and is never

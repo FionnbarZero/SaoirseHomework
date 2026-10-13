@@ -35,7 +35,6 @@ import {
   OPTIONAL_ACTIVITIES,
   OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
-  REQUIRED_ACTIVITY_VALUE_LABEL,
   REQUIRED_ACTIVITIES,
   WEEKLY_REQUIRED_ACTIVITY_TOTAL,
   WEEKLY_REQUIRED_REWARD_CENTS,
@@ -55,7 +54,6 @@ import {
   optionalActivitiesForDay,
   optionalSessionKey,
   progressForDay,
-  weeklyMoneyCentsForCompletionCount,
   type ActiveTimer,
   type ActivityConfiguration,
   type AppState,
@@ -141,7 +139,6 @@ type View = 'path' | 'day' | 'writing' | 'rewards' | 'parent' | 'session'
 
 type MoneyBurst = {
   id: number
-  cents: number
 }
 
 const STORAGE_KEY = 'fionnbar-homework-v1'
@@ -222,9 +219,7 @@ function App() {
       return
     }
     if (weeklyRequiredCompleted > previous) {
-      const previousCents = weeklyMoneyCentsForCompletionCount(previous)
-      const earnedCents = weeklyMoneyCentsForCompletionCount(weeklyRequiredCompleted)
-      setMoneyBurst({ id: Date.now(), cents: earnedCents - previousCents })
+      setMoneyBurst({ id: Date.now() })
     }
     previousRequiredCompletionCount.current = weeklyRequiredCompleted
   }, [hydrated, weeklyRequiredCompleted])
@@ -868,7 +863,7 @@ function WeeklyMoneyPie({ state, celebrating }: { state: AppState; celebrating: 
       aria-valuemin={0}
       aria-valuemax={WEEKLY_REQUIRED_REWARD_CENTS}
       aria-valuenow={earnedCents}
-      title={`${completed} of ${WEEKLY_REQUIRED_ACTIVITY_TOTAL} required activities complete. Each activity is one-thirtieth of the $20.00 weekly goal.`}
+      title={`${completed} of ${WEEKLY_REQUIRED_ACTIVITY_TOTAL} required activities complete. Weekly goal: $20.00.`}
     >
       <div className="money-pie" style={{ '--money-progress': `${progress * 360}deg` } as React.CSSProperties}>
         <div><span aria-hidden="true">💵</span><strong>{earned}</strong></div>
@@ -880,7 +875,6 @@ function WeeklyMoneyPie({ state, celebrating }: { state: AppState; celebrating: 
 
 function CoinBurst({ burst }: { burst: MoneyBurst | null }) {
   if (!burst) return null
-  const amount = `$${(burst.cents / 100).toFixed(2)}`
   return (
     <>
       <div className="coin-burst" aria-hidden="true" key={burst.id}>
@@ -894,9 +888,9 @@ function CoinBurst({ burst }: { burst: MoneyBurst | null }) {
             } as React.CSSProperties}
           >$</span>
         ))}
-        <b>+{amount}</b>
+        <b>Quest complete!</b>
       </div>
-      <span className="sr-only" role="status">Activity complete. {amount} added to the weekly money pie.</span>
+      <span className="sr-only" role="status">Activity complete. Weekly money pie updated.</span>
     </>
   )
 }
@@ -1056,7 +1050,6 @@ function DayView({
                   {activity.method === 'timer' && <><Clock3 size={13} /> {activity.minutes} MIN ACTIVE TIME</>}
                   {activity.method === 'verified' && <><ShieldCheck size={13} /> GAME VERIFIED</>}
                   {activity.method === 'coming-soon' && 'COMING SOON'}
-                  {activity.method !== 'coming-soon' && <span className="activity-money-value">+{REQUIRED_ACTIVITY_VALUE_LABEL}</span>}
                 </div>
               </div>
               {self && (

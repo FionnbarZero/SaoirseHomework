@@ -6,7 +6,6 @@ import {
   OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
   PLAN_DAYS,
-  REQUIRED_ACTIVITY_VALUE_LABEL,
   WEEKLY_REQUIRED_ACTIVITY_TOTAL,
   WEEKLY_REQUIRED_REWARD_CENTS,
   isSchoolDay,
@@ -88,7 +87,6 @@ test('every timed activity has a distinct, clear completion message', () => {
 test('thirty required activities divide the exact twenty-dollar weekly goal', () => {
   assert.equal(WEEKLY_REQUIRED_ACTIVITY_TOTAL, 30)
   assert.equal(WEEKLY_REQUIRED_REWARD_CENTS, 2_000)
-  assert.equal(REQUIRED_ACTIVITY_VALUE_LABEL, '$0.67')
   const state = structuredClone(defaultState)
   assert.equal(completedWeeklyRequiredCount(state), 0)
   assert.equal(earnedWeeklyMoneyCents(state), 0)

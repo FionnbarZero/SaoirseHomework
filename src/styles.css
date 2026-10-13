@@ -190,7 +190,6 @@ a.row-button { text-decoration: none; }
 .activity-copy h3 { margin: 0 0 4px; font-size: 14px; }
 .activity-copy p { margin: 0; color: #858b88; font-size: 11px; }
 .method-label { display: flex; align-items: center; gap: 4px; margin-top: 7px; color: #989d99; font-size: 8px; font-weight: 900; letter-spacing: .09em; }
-.activity-money-value { margin-left: 5px; border-radius: 999px; padding: 4px 7px; color: #35633f; background: #e2efdc; letter-spacing: .04em; }
 .status-check { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%; border: 2px solid #bd655a; color: white; background: transparent; cursor: pointer; display: grid; place-items: center; }
 .status-check span { width: 14px; height: 2px; border-radius: 1px; background: #bd655a; transform: rotate(-45deg); }
 .status-check.checked { border-color: var(--teal); background: var(--teal); }

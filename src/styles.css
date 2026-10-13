@@ -262,6 +262,20 @@ a.row-button { text-decoration: none; }
 .head-start-note strong { font-family: Georgia, serif; font-size: 18px; }
 .head-start-note p { margin: 4px 0 0; color: #856c3b; font-size: 10px; line-height: 1.45; }
 .daily-practice { margin-top: 32px; padding-top: 26px; border-top: 1px solid var(--line); }
+.activities-page > .daily-practice { margin-top: 0; padding-top: 0; border-top: 0; }
+.drill-options { margin: 24px 0 32px; }
+.drill-intro { margin: 0 0 14px; color: #68746f; font-size: 12px; line-height: 1.6; }
+.drill-group { margin-bottom: 14px; border: 1px solid var(--line); border-radius: 17px; overflow: hidden; background: #fbf9f4; }
+.drill-group summary { padding: 16px 19px; display: flex; align-items: center; justify-content: space-between; list-style: none; color: white; background: #315f58; font-size: 16px; font-weight: 800; cursor: pointer; }
+.drill-group summary::-webkit-details-marker { display: none; }
+.drill-group[open] summary svg { transform: rotate(90deg); }
+.drill-choice-grid { padding: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.drill-choice { padding: 16px 10px; min-height: 145px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; border: 1px solid #d9ded2; border-radius: 13px; color: #315f58; background: #f3f5ea; text-align: center; cursor: pointer; }
+.drill-choice:hover:not(:disabled) { background: #e5efdb; border-color: #315f58; }
+.drill-choice strong { font-size: 13px; }
+.drill-choice small { font-size: 10px; line-height: 1.4; }
+.drill-choice:disabled { opacity: .55; cursor: default; }
+.drill-choice:focus-visible, .drill-group summary:focus-visible { outline: 3px solid var(--gold); outline-offset: -3px; }
 .daily-practice .page-heading { margin-bottom: 20px; }
 .daily-practice .page-heading h2 { font-size: 28px; }
 .daily-practice .page-heading p + p { margin-top: 6px; }

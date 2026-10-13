@@ -135,7 +135,7 @@ import {
   type WritingLogState,
 } from './service'
 
-type View = 'path' | 'day' | 'writing' | 'rewards' | 'parent' | 'session'
+type View = 'path' | 'day' | 'activities' | 'writing' | 'rewards' | 'parent' | 'session'
 
 type MoneyBurst = {
   id: number
@@ -200,6 +200,7 @@ function App() {
   const [moneyBurst, setMoneyBurst] = useState<MoneyBurst | null>(null)
   const [browserBackupAvailable, setBrowserBackupAvailable] = useState(true)
   const completionInFlight = useRef(false)
+  const sessionStartInFlight = useRef(false)
   const reconnectInFlight = useRef(false)
   const latestState = useRef(state)
   const heartbeatInFlight = useRef(false)
@@ -499,10 +500,12 @@ function App() {
   }
 
   const startTimer = async (timer: ActiveTimer) => {
+    if (sessionStartInFlight.current) return
     if (serviceStatus !== 'online') {
       setSessionError('Controlled sessions need the local SQLite service. Reconnect it from the Parent screen.')
       return
     }
+    sessionStartInFlight.current = true
     try {
       await saveStateToService({ ...latestState.current, activeTimer: null })
       const response = await startControlledSession(timer)
@@ -517,6 +520,8 @@ function App() {
       setView('session')
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'The controlled session could not start.')
+    } finally {
+      sessionStartInFlight.current = false
     }
   }
 
@@ -695,7 +700,13 @@ function App() {
               <button onClick={() => setSessionError('')} aria-label="Dismiss message"><X size={16} /></button>
             </div>
           )}
-          {view === 'path' && <PathView state={state} selectedDay={selectedPlanDay} openDay={openDay} />}
+          {view === 'path' && <PathView state={state} selectedDay={selectedPlanDay} openDay={openDay} startTimer={startTimer} />}
+          {view === 'activities' && (
+            <section className="page activities-page">
+              <DayTabs day={selectedPlanDay} setDay={setSelectedDay} />
+              <PracticeChoices state={state} day={selectedPlanDay} startTimer={startTimer} />
+            </section>
+          )}
           {view === 'day' && (
             <DayView
               state={state}
@@ -802,6 +813,7 @@ function Sidebar({ view, navigate, rewardCount, saveMessage }: { view: View; nav
   const items: { id: View; label: string; icon: typeof Home }[] = [
     { id: 'path', label: 'Home', icon: Home },
     { id: 'day', label: 'Daily plan', icon: Music2 },
+    { id: 'activities', label: 'Activities', icon: Clock3 },
     { id: 'rewards', label: 'Rewards', icon: Gift },
   ]
   return (
@@ -895,7 +907,7 @@ function CoinBurst({ burst }: { burst: MoneyBurst | null }) {
   )
 }
 
-function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDay: LocalDayName; openDay: (day: LocalDayName) => void }) {
+function PathView({ state, selectedDay, openDay, startTimer }: { state: AppState; selectedDay: LocalDayName; openDay: (day: LocalDayName) => void; startTimer: (timer: ActiveTimer) => void }) {
   const optionalTotal = state.optionalCompleted.length
   const today = state.weekContext.localDay
   const todaySchoolDay = isSchoolDay(today) ? today : 'Monday'
@@ -960,6 +972,7 @@ function PathView({ state, selectedDay, openDay }: { state: AppState; selectedDa
           <div className="quote-card">“Small steps are still progress.”</div>
         </aside>
       </div>
+      <PracticeChoices state={state} day={today} startTimer={startTimer} />
     </section>
   )
 }
@@ -989,16 +1002,19 @@ function DayView({
   openPath: () => void
   openRewards: () => void
 }) {
+  const dailyStart = <>
+    <DayTabs day={day} setDay={setDay} />
+    <CalendarSchedule context={state.weekContext} day={day} />
+    <DrillOptions state={state} day={day} startTimer={startTimer} />
+  </>
   if (!isSchoolDay(day)) {
     return <section className="page weekend-page">
-      <DayTabs day={day} setDay={setDay} />
+      {dailyStart}
       <div className="page-heading">
         <p className="eyebrow">{day.toUpperCase()} · OPTIONAL PRACTICE</p>
         <h2>A little practice, your choice.</h2>
         <p>No required homework today. Choose any unfinished practice session below.</p>
       </div>
-      <CalendarSchedule context={state.weekContext} day={day} />
-      <PracticeChoices state={state} day={day} startTimer={startTimer} />
       <div className="head-start-note"><Sparkles size={20} /><div><strong>Your weekly practice bank</strong><p>Sessions count toward the week shown above. The next week opens on Sunday at 4:00 a.m.</p></div></div>
     </section>
   }
@@ -1006,11 +1022,11 @@ function DayView({
   const progress = progressForDay(state, day)
   const free = dayIsComplete(state, day)
   if (day === 'Friday' && free) {
-    return <><FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} /><CalendarSchedule context={state.weekContext} day={day} /><PracticeChoices state={state} day={day} startTimer={startTimer} /></>
+    return <section className="page">{dailyStart}<FridayFunView state={state} setDay={setDay} openPath={openPath} openRewards={openRewards} /></section>
   }
   return (
     <section className="page">
-      <DayTabs day={day} setDay={setDay} />
+      {dailyStart}
       <div className="page-heading split-heading day-heading">
         <div>
           <p className="eyebrow">{day.toUpperCase()}’S QUEST</p>
@@ -1079,9 +1095,6 @@ function DayView({
         })}
       </div>
 
-      <CalendarSchedule context={state.weekContext} day={day} />
-
-      <PracticeChoices state={state} day={day} startTimer={startTimer} />
     </section>
   )
 }
@@ -1170,8 +1183,6 @@ function FridayFunView({
   const summary = getFridayFunSummary(state)
   return (
     <section className="page friday-fun-page">
-      <DayTabs day="Friday" setDay={setDay} />
-
       <div className="friday-hero">
         <div className="friday-sparkles" aria-hidden="true"><span>✦</span><span>★</span><span>✦</span></div>
         <div className="friday-trophy"><Trophy size={58} strokeWidth={1.8} /></div>
@@ -1211,6 +1222,39 @@ function FridayFunView({
   )
 }
 
+function DrillOptions({ state, day, startTimer }: {
+  state: AppState
+  day: LocalDayName
+  startTimer: (timer: ActiveTimer) => void
+}) {
+  const available = optionalActivitiesForDay(day)
+  return <section className="drill-options" aria-label="Music and drill options">
+    <p className="drill-intro">Pick one activity for each drill. Each choice opens its 20-minute timer. Track your weekly sessions on Home or Activities.</p>
+    {[1, 2].map((drill) => <details className="drill-group" key={drill} open>
+      <summary>Drill {drill} Options <ChevronRight size={18} /></summary>
+      <div className="drill-choice-grid">
+        {OPTIONAL_ACTIVITIES.map((activity) => {
+          const next = Array.from({ length: activity.sessions }, (_, index) => index)
+            .find((index) => !state.optionalCompleted.includes(optionalSessionKey(activity.id, index)))
+          const scheduled = available.some((choice) => choice.id === activity.id)
+          const disabled = next === undefined || !scheduled
+          return <button className="drill-choice" key={activity.id} disabled={disabled} onClick={() => {
+            if (next === undefined || !scheduled) return
+            startTimer({ kind: 'optional', activityId: activity.id, sessionKey: optionalSessionKey(activity.id, next),
+              label: `${activity.title} · Session ${next + 1}`, totalSeconds: activity.minutes * 60,
+              remainingSeconds: activity.minutes * 60, running: true })
+          }}>
+            <span className="large-activity-icon" aria-hidden="true">{activity.icon}</span>
+            <strong>{activity.title}</strong>
+            <small>{next === undefined ? 'All sessions complete' : !scheduled ? 'Available Sunday–Thursday' : `${activity.minutes} min · Start session ${next + 1}`}</small>
+            {!disabled && <Play size={15} aria-hidden="true" />}
+          </button>
+        })}
+      </div>
+    </details>)}
+  </section>
+}
+
 function PracticeChoices({
   state,
   day,
@@ -1233,15 +1277,16 @@ function PracticeChoices({
       )}
       <div className="page-heading split-heading">
         <div>
-          <p className="eyebrow">{headStart ? 'GET A HEAD START' : 'PRACTICE · PART OF YOUR DAILY PLAN'}</p>
-          <h2 id="practice-heading">Choose an activity</h2>
+          <p className="eyebrow">WEEKLY MUSIC & DRILLS</p>
+          <h2 id="practice-heading">Activities tracker</h2>
           <p>{headStart ? `Bank sessions early for the week of ${getWeekLabel(state.weekContext.weekId)}.` : weekend ? 'Practice is optional today—there is no daily session target.' : remaining > 0 ? `Choose ${remaining} more ${remaining === 1 ? 'session' : 'sessions'} to reach ${day}’s practice target.` : `${day}’s practice target is complete. You can bank more for later in the week.`}</p>
           <p>Pick any unfinished session below. Every session counts toward your weekly total.</p>
         </div>
         <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of {OPTIONAL_SESSION_TOTAL}<br />banked</span></div>
       </div>
       <div className="practice-grid">
-        {optionalActivitiesForDay(day).map((activity) => {
+        {OPTIONAL_ACTIVITIES.map((activity) => {
+          const scheduled = optionalActivitiesForDay(day).some((choice) => choice.id === activity.id)
           const completedCount = Array.from({ length: activity.sessions }).filter((_, index) => state.optionalCompleted.includes(optionalSessionKey(activity.id, index))).length
           return (
             <article className={`practice-card practice-${activity.id}`} key={activity.id}>
@@ -1253,7 +1298,7 @@ function PracticeChoices({
                   const key = optionalSessionKey(activity.id, index)
                   const done = state.optionalCompleted.includes(key)
                   return (
-                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done} aria-label={`${activity.title}, session ${index + 1}${done ? ', complete' : ', start'}`} title={done ? 'Session complete' : `Start ${activity.title}, session ${index + 1}`} onClick={() => startTimer({
+                    <button key={key} className={done ? 'segment done' : 'segment'} disabled={done || !scheduled} aria-label={`${activity.title}, session ${index + 1}${done ? ', complete' : !scheduled ? ', available Sunday through Thursday' : ', start'}`} title={done ? 'Session complete' : !scheduled ? 'Available Sunday–Thursday' : `Start ${activity.title}, session ${index + 1}`} onClick={() => startTimer({
                       kind: 'optional', activityId: activity.id, sessionKey: key,
                       label: `${activity.title} · Session ${index + 1}`,
                       totalSeconds: activity.minutes * 60, remainingSeconds: activity.minutes * 60, running: true,

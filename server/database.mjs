@@ -31,6 +31,7 @@ const OPTIONAL_SESSION_KEYS = new Set([
   'band:0', 'band:1', 'band:2',
   'volleyball:0', 'volleyball:1', 'volleyball:2',
   'jazz-band:0', 'jazz-band:1', 'jazz-band:2', 'jazz-band:3', 'jazz-band:4',
+  'gym:0', 'gym:1', 'gym:2',
 ])
 const OPTIONAL_TARGETS = { Monday: 2, Tuesday: 4, Wednesday: 6, Thursday: 8, Friday: 9 }
 const DEFAULT_TIME_ZONE = 'America/Los_Angeles'

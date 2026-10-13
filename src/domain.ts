@@ -496,6 +496,15 @@ export const OPTIONAL_ACTIVITIES: OptionalActivity[] = [
     detail: 'Practice this week’s jazz band music with steady rhythm and careful listening.',
     days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'],
   },
+  {
+    id: 'gym',
+    title: 'Gym',
+    instruction: 'Gym Practice',
+    sessions: 3,
+    minutes: 20,
+    icon: '💪',
+    detail: 'Get moving and work on strength and fitness.',
+  },
 ]
 
 export function optionalActivitiesForDay(day: LocalDayName) {
@@ -511,6 +520,7 @@ const TIMED_ACTIVITY_COMPLETION_MESSAGES: Record<string, string> = {
   band: 'Time! Band practice served. Main-character energy unlocked. Next quest!',
   volleyball: 'Time! Volleyball drills: cooked. Court skills leveled up. Next quest!',
   'jazz-band': 'Time! Jazz Band was smooth. Absolute vibe. Next quest!',
+  gym: 'Time! Gym session crushed. Strength era unlocked. Next quest!',
 }
 
 export function completedActivityMessage(activityId: string, label: string) {

@@ -131,6 +131,7 @@ const optionalActivities = new Map([
   ['band', { label: 'Band Practice', sessions: 3, targetSeconds: 20 * 60 }],
   ['volleyball', { label: 'Volleyball Drills', sessions: 3, targetSeconds: 20 * 60 }],
   ['jazz-band', { label: 'Practice Jazz Band', sessions: 5, targetSeconds: 20 * 60 }],
+  ['gym', { label: 'Gym', sessions: 3, targetSeconds: 20 * 60 }],
 ])
 const requiredTimedActivities = new Map([
   ['independent-reading', { label: 'Read Scientific American for 15 minutes' }],

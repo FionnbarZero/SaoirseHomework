@@ -54,13 +54,24 @@ test('optional sessions have stable unique keys', () => {
   assert.equal(jazzBand?.minutes, 20)
   assert.equal(jazzBand?.sessions, 5)
   assert.deepEqual(jazzBand?.days, ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
-  assert.equal(OPTIONAL_SESSION_TOTAL, 17)
+  assert.equal(OPTIONAL_SESSION_TOTAL, 20)
   for (const day of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'] as const) {
     assert.equal(optionalActivitiesForDay(day).some((activity) => activity.id === 'jazz-band'), true)
   }
   for (const day of ['Friday', 'Saturday'] as const) {
     assert.equal(optionalActivitiesForDay(day).some((activity) => activity.id === 'jazz-band'), false)
   }
+})
+
+test('Gym is a twenty-minute drill available every day with three weekly sessions', () => {
+  const gym = OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'gym')
+  assert.equal(gym?.title, 'Gym')
+  assert.equal(gym?.minutes, 20)
+  assert.equal(gym?.sessions, 3)
+  for (const day of PLAN_DAYS) {
+    assert.equal(optionalActivitiesForDay(day).some((activity) => activity.id === 'gym'), true)
+  }
+  assert.equal(optionalSessionKey('gym', 2), 'gym:2')
 })
 
 test('every timed activity has a distinct, clear completion message', () => {
@@ -72,6 +83,7 @@ test('every timed activity has a distinct, clear completion message', () => {
     ['band', 'Band Practice · Session 1'],
     ['volleyball', 'Volleyball Drills · Session 1'],
     ['jazz-band', 'Practice Jazz Band · Session 1'],
+    ['gym', 'Gym · Session 1'],
   ].map(([activityId, label]) => completedActivityMessage(activityId, label))
 
   assert.equal(new Set(messages).size, messages.length)
@@ -81,6 +93,7 @@ test('every timed activity has a distinct, clear completion message', () => {
   }
   assert.equal(messages[0], 'Time! Scientific American = devoured. Big-brain mode unlocked. Next quest!')
   assert.equal(messages[6], 'Time! Jazz Band was smooth. Absolute vibe. Next quest!')
+  assert.equal(messages[7], 'Time! Gym session crushed. Strength era unlocked. Next quest!')
   assert.equal(completedActivityMessage('future-activity', 'Future Activity · Session 2'), 'Time! Future Activity is done. You cooked. Next quest!')
 })
 

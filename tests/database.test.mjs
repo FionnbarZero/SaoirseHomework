@@ -870,6 +870,43 @@ test('repeated completion heartbeats cannot duplicate optional credit or rewards
   store.close()
 })
 
+test('Gym completes after twenty minutes and awards its session only once', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', clock.options())
+  try {
+    const session = store.startSession({
+      kind: 'optional', activityId: 'gym', sessionKey: 'gym:0',
+      label: 'Gym · Session 1', targetSeconds: 1200,
+    })
+    for (let index = 0; index < 239; index++) {
+      clock.advance(5000)
+      store.heartbeatSession(session.id, true)
+    }
+    assert.deepEqual(store.loadState().optionalCompleted, [])
+    clock.advance(5000)
+    assert.equal(store.heartbeatSession(session.id, true).status, 'completed')
+    store.heartbeatSession(session.id, true)
+    const state = store.loadState()
+    assert.deepEqual(state.optionalCompleted, ['gym:0'])
+    assert.equal(state.rewardCredits.length, 1)
+    assert.equal(state.rewardCredits[0].remainingSeconds, 300)
+  } finally {
+    store.close()
+  }
+})
+
+test('Gym session keys survive state import while invalid session keys are rejected', () => {
+  const store = createStore(':memory:')
+  try {
+    const state = sampleState()
+    state.optionalCompleted = ['gym:0', 'gym:1', 'gym:2', 'gym:3']
+    store.saveState(state)
+    assert.deepEqual(store.loadState().optionalCompleted, ['gym:0', 'gym:1', 'gym:2'])
+  } finally {
+    store.close()
+  }
+})
+
 test('reward policy allows honor-system cloud use without relaxing managed local rewards', () => {
   const credit = { id: 'earned-credit', remainingSeconds: 300 }
   assert.throws(() => buildRewardSession({ credit }), { code: 'managed_chrome_required' })

@@ -91,6 +91,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .week-score { display: flex; align-items: center; gap: 7px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); padding: 0 16px; font-size: 12px; font-weight: 800; }
 .week-score svg { color: var(--gold); }
 .avatar { width: 37px; height: 37px; border: 0; border-radius: 50%; background: var(--orange); color: white; font-family: Georgia, serif; font-size: 17px; font-weight: 800; cursor: pointer; }
+.weekly-money { display: flex; align-items: center; gap: 9px; }
+.money-pie { --money-progress: 0deg; width: 62px; height: 62px; flex: 0 0 auto; padding: 5px; border-radius: 50%; background: conic-gradient(#65a36c var(--money-progress), #ece4d1 0); box-shadow: 0 7px 20px rgba(47,92,59,.15), inset 0 0 0 1px rgba(50,91,57,.1); }
+.money-pie > div { width: 100%; height: 100%; display: grid; place-items: center; align-content: center; border-radius: 50%; color: #244c31; background: #fffaf0; box-shadow: inset 0 0 0 1px #e8dec9; }
+.money-pie span { height: 13px; font-size: 13px; line-height: 1; }
+.money-pie strong { font-family: Georgia, serif; font-size: 12px; letter-spacing: -.02em; line-height: 1.1; }
+.money-pie-copy small, .money-pie-copy strong { display: block; }
+.money-pie-copy small { color: #728279; font-size: 7px; font-weight: 900; letter-spacing: .11em; }
+.money-pie-copy strong { margin-top: 3px; color: #315e3c; font-size: 9px; white-space: nowrap; }
+.weekly-money.celebrating .money-pie { animation: money-pie-catch .7s 1s ease-out both; }
+.coin-burst { position: fixed; inset: 0; z-index: 100; pointer-events: none; overflow: hidden; }
+.coin-burst span { position: absolute; left: 50vw; top: 55vh; width: 31px; height: 31px; display: grid; place-items: center; border: 2px solid #b77c12; border-radius: 50%; color: #70490a; background: radial-gradient(circle at 35% 30%, #fff3a6, #efbd3f 55%, #d49318); box-shadow: 0 5px 12px rgba(104,70,13,.2), inset 0 0 0 3px rgba(255,244,172,.36); font-family: Georgia, serif; font-size: 16px; font-weight: 900; opacity: 0; animation: coin-fly-to-pie 1.35s var(--coin-delay) cubic-bezier(.2,.76,.28,1) forwards; }
+.coin-burst b { position: absolute; left: 50%; top: calc(55vh + 48px); transform: translateX(-50%); border-radius: 999px; padding: 8px 13px; color: #315e3c; background: rgba(255,250,240,.96); box-shadow: 0 8px 24px rgba(48,67,52,.14); font-family: Georgia, serif; font-size: 18px; opacity: 0; animation: money-earned-pop 1.05s ease-out both; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
+@keyframes coin-fly-to-pie {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.15) rotate(0deg); }
+  18% { opacity: 1; transform: translate(calc(-50% + var(--scatter-x)), calc(-50% + var(--scatter-y))) scale(1.08) rotate(140deg); }
+  65% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(50vw - 105px), calc(-55vh + 40px)) scale(.28) rotate(720deg); }
+}
+@keyframes money-earned-pop { 0% { opacity: 0; transform: translate(-50%, 14px) scale(.7); } 22%, 70% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, -22px) scale(.9); } }
+@keyframes money-pie-catch { 0%, 40% { transform: scale(1); } 60% { transform: scale(1.18) rotate(5deg); } 78% { transform: scale(.94) rotate(-3deg); } 100% { transform: none; } }
 .page-wrap { min-height: calc(100vh - 80px); background-color: var(--cream); background-image: radial-gradient(rgba(75,73,65,.06) .7px, transparent .7px); background-size: 18px 18px; }
 .page { max-width: 1180px; margin: auto; padding: 46px 42px 70px; }
 .page-heading { margin-bottom: 34px; }
@@ -169,6 +190,7 @@ a.row-button { text-decoration: none; }
 .activity-copy h3 { margin: 0 0 4px; font-size: 14px; }
 .activity-copy p { margin: 0; color: #858b88; font-size: 11px; }
 .method-label { display: flex; align-items: center; gap: 4px; margin-top: 7px; color: #989d99; font-size: 8px; font-weight: 900; letter-spacing: .09em; }
+.activity-money-value { margin-left: 5px; border-radius: 999px; padding: 4px 7px; color: #35633f; background: #e2efdc; letter-spacing: .04em; }
 .status-check { width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%; border: 2px solid #bd655a; color: white; background: transparent; cursor: pointer; display: grid; place-items: center; }
 .status-check span { width: 14px; height: 2px; border-radius: 1px; background: #bd655a; transform: rotate(-45deg); }
 .status-check.checked { border-color: var(--teal); background: var(--teal); }
@@ -637,6 +659,7 @@ a.row-button { text-decoration: none; }
   .activity-config-grid { grid-template-columns: 1fr; }
   .google-proof-form { border-right: 0; border-bottom: 1px solid var(--line); }
   .parent-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .money-pie-copy { display: none; }
 }
 
 @media (max-width: 720px) {
@@ -651,6 +674,11 @@ a.row-button { text-decoration: none; }
   .sidebar-foot { display: none; }
   .topbar { height: 66px; padding: 0 17px; }
   .connection, .week-score { display: none; }
+  .topbar-actions { gap: 8px; }
+  .money-pie { width: 52px; height: 52px; padding: 4px; }
+  .money-pie span { height: 10px; font-size: 10px; }
+  .money-pie strong { font-size: 10px; }
+  .avatar { width: 32px; height: 32px; }
   .page-wrap { min-height: calc(100vh - 66px); }
   .page { padding: 32px 17px 50px; }
   .split-heading { display: block; }
@@ -697,4 +725,5 @@ a.row-button { text-decoration: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  .coin-burst { display: none; }
 }

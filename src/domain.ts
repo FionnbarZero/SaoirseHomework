@@ -567,6 +567,26 @@ export function activeRequiredActivities(day?: LocalDayName) {
   return (day ? requiredActivitiesForDay(day) : REQUIRED_ACTIVITIES).filter((activity) => activity.method !== 'coming-soon')
 }
 
+export const WEEKLY_REQUIRED_REWARD_CENTS = 2_000
+export const WEEKLY_REQUIRED_ACTIVITY_TOTAL = DAYS.reduce(
+  (total, day) => total + activeRequiredActivities(day).length,
+  0,
+)
+export const REQUIRED_ACTIVITY_VALUE_LABEL = `$${(WEEKLY_REQUIRED_REWARD_CENTS / WEEKLY_REQUIRED_ACTIVITY_TOTAL / 100).toFixed(2)}`
+
+export function completedWeeklyRequiredCount(state: AppState) {
+  return DAYS.reduce((total, day) => total + completedRequiredCount(state, day), 0)
+}
+
+export function weeklyMoneyCentsForCompletionCount(completed: number) {
+  const bounded = Math.max(0, Math.min(WEEKLY_REQUIRED_ACTIVITY_TOTAL, completed))
+  return Math.round((bounded / WEEKLY_REQUIRED_ACTIVITY_TOTAL) * WEEKLY_REQUIRED_REWARD_CENTS)
+}
+
+export function earnedWeeklyMoneyCents(state: AppState) {
+  return weeklyMoneyCentsForCompletionCount(completedWeeklyRequiredCount(state))
+}
+
 export function optionalSessionKey(activityId: string, index: number) {
   return `${activityId}:${index}`
 }

@@ -35,8 +35,12 @@ import {
   OPTIONAL_ACTIVITIES,
   OPTIONAL_SESSION_TOTAL,
   OPTIONAL_TARGETS,
+  REQUIRED_ACTIVITY_VALUE_LABEL,
   REQUIRED_ACTIVITIES,
+  WEEKLY_REQUIRED_ACTIVITY_TOTAL,
+  WEEKLY_REQUIRED_REWARD_CENTS,
   activeRequiredActivities,
+  completedWeeklyRequiredCount,
   requiredActivitiesForDay,
   dayIsComplete,
   completedActivityMessage,
@@ -46,9 +50,11 @@ import {
   getFridayFunSummary,
   getToday,
   getWeekLabel,
+  earnedWeeklyMoneyCents,
   optionalActivitiesForDay,
   optionalSessionKey,
   progressForDay,
+  weeklyMoneyCentsForCompletionCount,
   type ActiveTimer,
   type ActivityConfiguration,
   type AppState,
@@ -131,6 +137,11 @@ import {
 
 type View = 'path' | 'day' | 'writing' | 'rewards' | 'parent' | 'session'
 
+type MoneyBurst = {
+  id: number
+  cents: number
+}
+
 const STORAGE_KEY = 'fionnbar-homework-v1'
 const SECURITY_STATUS_KEY = 'fionnbar-homework-security-v1'
 
@@ -187,16 +198,40 @@ function App() {
   const [entryError, setEntryError] = useState('')
   const [stateSaving, setStateSaving] = useState(false)
   const [completionSaving, setCompletionSaving] = useState(false)
+  const [moneyBurst, setMoneyBurst] = useState<MoneyBurst | null>(null)
   const [browserBackupAvailable, setBrowserBackupAvailable] = useState(true)
   const completionInFlight = useRef(false)
   const reconnectInFlight = useRef(false)
   const latestState = useRef(state)
   const heartbeatInFlight = useRef(false)
   const sessionWantsRunning = useRef(Boolean(state.activeTimer?.running))
+  const previousRequiredCompletionCount = useRef<number | null>(null)
+  const weeklyRequiredCompleted = completedWeeklyRequiredCount(state)
 
   useEffect(() => {
     latestState.current = state
   }, [state])
+
+  useEffect(() => {
+    if (!hydrated) return
+    const previous = previousRequiredCompletionCount.current
+    if (previous === null) {
+      previousRequiredCompletionCount.current = weeklyRequiredCompleted
+      return
+    }
+    if (weeklyRequiredCompleted > previous) {
+      const previousCents = weeklyMoneyCentsForCompletionCount(previous)
+      const earnedCents = weeklyMoneyCentsForCompletionCount(weeklyRequiredCompleted)
+      setMoneyBurst({ id: Date.now(), cents: earnedCents - previousCents })
+    }
+    previousRequiredCompletionCount.current = weeklyRequiredCompleted
+  }, [hydrated, weeklyRequiredCompleted])
+
+  useEffect(() => {
+    if (!moneyBurst) return
+    const timeout = window.setTimeout(() => setMoneyBurst(null), 1_800)
+    return () => window.clearTimeout(timeout)
+  }, [moneyBurst])
 
   useEffect(() => {
     let cancelled = false
@@ -653,7 +688,8 @@ function App() {
       <ProblemReporter screen={view} day={selectedPlanDay} connection={serviceStatus} />
       <Sidebar view={view} navigate={navigate} rewardCount={state.rewardCredits.length} saveMessage={serviceStatus === 'offline' ? 'Not connected — changes cannot be saved' : serviceStatus === 'connecting' ? 'Checking saved progress…' : stateSaving || completionSaving ? 'Saving…' : 'Progress saved to your homework account'} />
       <main className="main-shell">
-        <Topbar state={state} serviceStatus={serviceStatus} saving={stateSaving || completionSaving} retry={reconnectService} />
+        <Topbar state={state} serviceStatus={serviceStatus} saving={stateSaving || completionSaving} retry={reconnectService} celebrating={Boolean(moneyBurst)} />
+        <CoinBurst burst={moneyBurst} />
         <div className="page-wrap">
           {!browserBackupAvailable && <p role="status">Browser backup is unavailable. Stay online and wait for saving to finish before closing this tab.</p>}
           {sessionError && (
@@ -796,7 +832,7 @@ function Sidebar({ view, navigate, rewardCount, saveMessage }: { view: View; nav
   )
 }
 
-function Topbar({ state, serviceStatus, saving, retry }: { state: AppState; serviceStatus: 'connecting' | 'online' | 'offline'; saving: boolean; retry: () => void }) {
+function Topbar({ state, serviceStatus, saving, retry, celebrating }: { state: AppState; serviceStatus: 'connecting' | 'online' | 'offline'; saving: boolean; retry: () => void; celebrating: boolean }) {
   const completedDays = DAYS.filter((day) => dayIsComplete(state, day)).length
   return (
     <header className="topbar">
@@ -810,9 +846,56 @@ function Topbar({ state, serviceStatus, saving, retry }: { state: AppState; serv
         </span>
         {serviceStatus === 'offline' && <button className="secondary-button" onClick={retry}>Retry</button>}
         <div className="week-score"><Trophy size={18} /> {completedDays}/5 days</div>
+        <WeeklyMoneyPie state={state} celebrating={celebrating} />
         <button className="avatar" aria-label="Saoirse’s profile">S</button>
       </div>
     </header>
+  )
+}
+
+function WeeklyMoneyPie({ state, celebrating }: { state: AppState; celebrating: boolean }) {
+  const completed = completedWeeklyRequiredCount(state)
+  const earnedCents = earnedWeeklyMoneyCents(state)
+  const progress = WEEKLY_REQUIRED_ACTIVITY_TOTAL > 0 ? completed / WEEKLY_REQUIRED_ACTIVITY_TOTAL : 0
+  const earned = `$${(earnedCents / 100).toFixed(2)}`
+  return (
+    <div
+      className={`weekly-money ${celebrating ? 'celebrating' : ''}`}
+      role="progressbar"
+      aria-label={`Weekly money earned: ${earned} of $20.00`}
+      aria-valuemin={0}
+      aria-valuemax={WEEKLY_REQUIRED_REWARD_CENTS}
+      aria-valuenow={earnedCents}
+      title={`${completed} of ${WEEKLY_REQUIRED_ACTIVITY_TOTAL} required activities complete. Each activity is one-thirtieth of the $20.00 weekly goal.`}
+    >
+      <div className="money-pie" style={{ '--money-progress': `${progress * 360}deg` } as React.CSSProperties}>
+        <div><span aria-hidden="true">💵</span><strong>{earned}</strong></div>
+      </div>
+      <div className="money-pie-copy"><small>WEEKLY MONEY</small><strong>{completed}/{WEEKLY_REQUIRED_ACTIVITY_TOTAL} · $20 GOAL</strong></div>
+    </div>
+  )
+}
+
+function CoinBurst({ burst }: { burst: MoneyBurst | null }) {
+  if (!burst) return null
+  const amount = `$${(burst.cents / 100).toFixed(2)}`
+  return (
+    <>
+      <div className="coin-burst" aria-hidden="true" key={burst.id}>
+        {Array.from({ length: 8 }, (_, index) => (
+          <span
+            key={index}
+            style={{
+              '--coin-delay': `${index * 55}ms`,
+              '--scatter-x': `${(index - 3.5) * 24}px`,
+              '--scatter-y': `${-70 - (index % 3) * 24}px`,
+            } as React.CSSProperties}
+          >$</span>
+        ))}
+        <b>+{amount}</b>
+      </div>
+      <span className="sr-only" role="status">Activity complete. {amount} added to the weekly money pie.</span>
+    </>
   )
 }
 
@@ -970,6 +1053,7 @@ function DayView({
                   {activity.method === 'timer' && <><Clock3 size={13} /> {activity.minutes} MIN ACTIVE TIME</>}
                   {activity.method === 'verified' && <><ShieldCheck size={13} /> GAME VERIFIED</>}
                   {activity.method === 'coming-soon' && 'COMING SOON'}
+                  {activity.method !== 'coming-soon' && <span className="activity-money-value">+{REQUIRED_ACTIVITY_VALUE_LABEL}</span>}
                 </div>
               </div>
               {self && (

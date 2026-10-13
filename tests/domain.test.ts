@@ -52,15 +52,25 @@ test('optional sessions have stable unique keys', () => {
   }
 })
 
-test('completed timers name the activity and move Saoirse forward', () => {
-  assert.equal(
-    completedActivityMessage('Practice Jazz Band · Session 3'),
-    'Alright! You are finished with Practice Jazz Band. On to the next thing!',
-  )
-  assert.equal(
-    completedActivityMessage('Read Scientific American for 15 minutes'),
-    'Alright! You are finished with Read Scientific American for 15 minutes. On to the next thing!',
-  )
+test('every timed activity has a distinct, clear completion message', () => {
+  const messages = [
+    ['independent-reading', 'Read Scientific American for 15 minutes'],
+    ['du-chinese', 'Du Chinese'],
+    ['voena', 'Voena · Session 1'],
+    ['drums', 'Bass Drills · Session 1'],
+    ['band', 'Band Practice · Session 1'],
+    ['volleyball', 'Volleyball Drills · Session 1'],
+    ['jazz-band', 'Practice Jazz Band · Session 1'],
+  ].map(([activityId, label]) => completedActivityMessage(activityId, label))
+
+  assert.equal(new Set(messages).size, messages.length)
+  for (const message of messages) {
+    assert.match(message, /^Time! /)
+    assert.match(message, /Next quest!$/)
+  }
+  assert.equal(messages[0], 'Time! Scientific American = devoured. Big-brain mode unlocked. Next quest!')
+  assert.equal(messages[6], 'Time! Jazz Band was smooth. Absolute vibe. Next quest!')
+  assert.equal(completedActivityMessage('future-activity', 'Future Activity · Session 2'), 'Time! Future Activity is done. You cooked. Next quest!')
 })
 
 test('thirty required activities divide the exact twenty-dollar weekly goal', () => {

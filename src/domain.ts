@@ -488,9 +488,22 @@ export function optionalActivitiesForDay(day: LocalDayName) {
   return OPTIONAL_ACTIVITIES.filter((activity) => !activity.days || activity.days.includes(day))
 }
 
-export function completedActivityMessage(label: string) {
+const TIMED_ACTIVITY_COMPLETION_MESSAGES: Record<string, string> = {
+  'independent-reading': 'Time! Scientific American = devoured. Big-brain mode unlocked. Next quest!',
+  'du-chinese': 'Time! Du Chinese: crushed. Language XP secured. Next quest!',
+  'level-chinese': 'Time! Level Chinese: cleared. Mandarin glow-up secured. Next quest!',
+  voena: 'Time! Voena vocals ate. No crumbs. Next quest!',
+  drums: 'Time! Bass drills locked in. That groove is certified. Next quest!',
+  band: 'Time! Band practice served. Main-character energy unlocked. Next quest!',
+  volleyball: 'Time! Volleyball drills: cooked. Court skills leveled up. Next quest!',
+  'jazz-band': 'Time! Jazz Band was smooth. Absolute vibe. Next quest!',
+}
+
+export function completedActivityMessage(activityId: string, label: string) {
+  const customMessage = TIMED_ACTIVITY_COMPLETION_MESSAGES[activityId]
+  if (customMessage) return customMessage
   const activity = label.replace(/\s*·\s*Session \d+$/, '')
-  return `Alright! You are finished with ${activity}. On to the next thing!`
+  return `Time! ${activity} is done. You cooked. Next quest!`
 }
 
 export const OPTIONAL_TARGETS: Record<DayName, number> = {

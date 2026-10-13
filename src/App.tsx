@@ -2319,7 +2319,7 @@ function SessionView({
           ? 'APPROVED PAGE REQUIRED'
           : 'SESSION PAUSED'
   const sessionCopy = done
-    ? honorReward ? 'Your reward time is over. Please stop watching and close YouTube. This app does not block other tabs.' : completedActivityMessage(timer.label)
+    ? honorReward ? 'Your reward time is over. Please stop watching and close YouTube. This app does not block other tabs.' : completedActivityMessage(timer.activityId, timer.label)
     : honorReward
       ? 'Your timer starts when you choose Use now. Open YouTube in another tab and keep this homework tab open. Pause here for breaks, ads, or buffering. This timer does not monitor playback or block YouTube. Browser sleep can pause counting; return here to check your time.'
     : selectingReward

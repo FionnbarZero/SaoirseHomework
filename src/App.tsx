@@ -39,12 +39,14 @@ import {
   activeRequiredActivities,
   requiredActivitiesForDay,
   dayIsComplete,
+  completedActivityMessage,
   defaultState,
   formatTimer,
   getBrowserWeekContext,
   getFridayFunSummary,
   getToday,
   getWeekLabel,
+  optionalActivitiesForDay,
   optionalSessionKey,
   progressForDay,
   type ActiveTimer,
@@ -1149,7 +1151,7 @@ function PracticeChoices({
         <div className="big-score"><strong>{state.optionalCompleted.length}</strong><span>of {OPTIONAL_SESSION_TOTAL}<br />banked</span></div>
       </div>
       <div className="practice-grid">
-        {OPTIONAL_ACTIVITIES.map((activity) => {
+        {optionalActivitiesForDay(day).map((activity) => {
           const completedCount = Array.from({ length: activity.sessions }).filter((_, index) => state.optionalCompleted.includes(optionalSessionKey(activity.id, index))).length
           return (
             <article className={`practice-card practice-${activity.id}`} key={activity.id}>
@@ -2233,7 +2235,7 @@ function SessionView({
           ? 'APPROVED PAGE REQUIRED'
           : 'SESSION PAUSED'
   const sessionCopy = done
-    ? honorReward ? 'Your reward time is over. Please stop watching and close YouTube. This app does not block other tabs.' : 'You did it. Your progress is ready to save.'
+    ? honorReward ? 'Your reward time is over. Please stop watching and close YouTube. This app does not block other tabs.' : completedActivityMessage(timer.label)
     : honorReward
       ? 'Your timer starts when you choose Use now. Open YouTube in another tab and keep this homework tab open. Pause here for breaks, ads, or buffering. This timer does not monitor playback or block YouTube. Browser sleep can pause counting; return here to check your time.'
     : selectingReward

@@ -38,6 +38,7 @@ export type OptionalActivity = {
   minutes: number
   icon: string
   detail: string
+  days?: LocalDayName[]
 }
 
 export type Finding = {
@@ -471,7 +472,26 @@ export const OPTIONAL_ACTIVITIES: OptionalActivity[] = [
     icon: '🏐',
     detail: 'Practice passing, setting, serving, and footwork.',
   },
+  {
+    id: 'jazz-band',
+    title: 'Practice Jazz Band',
+    instruction: 'Practice Jazz Band',
+    sessions: 5,
+    minutes: 20,
+    icon: '🎷',
+    detail: 'Practice this week’s jazz band music with steady rhythm and careful listening.',
+    days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'],
+  },
 ]
+
+export function optionalActivitiesForDay(day: LocalDayName) {
+  return OPTIONAL_ACTIVITIES.filter((activity) => !activity.days || activity.days.includes(day))
+}
+
+export function completedActivityMessage(label: string) {
+  const activity = label.replace(/\s*·\s*Session \d+$/, '')
+  return `Alright! You are finished with ${activity}. On to the next thing!`
+}
 
 export const OPTIONAL_TARGETS: Record<DayName, number> = {
   Monday: 2,

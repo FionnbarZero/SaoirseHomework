@@ -7,9 +7,11 @@ import {
   PLAN_DAYS,
   isSchoolDay,
   activeRequiredActivities,
+  completedActivityMessage,
   dayIsComplete,
   defaultState,
   getFridayFunSummary,
+  optionalActivitiesForDay,
   optionalSessionKey,
   requiredActivitiesForDay,
   progressForDay,
@@ -30,7 +32,29 @@ test('optional sessions have stable unique keys', () => {
   assert.notEqual(optionalSessionKey('voena', 0), optionalSessionKey('voena', 1))
   assert.equal(OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'drums')?.title, 'Bass Drills')
   assert.equal(OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'volleyball')?.title, 'Volleyball Drills')
-  assert.equal(OPTIONAL_SESSION_TOTAL, 12)
+  const jazzBand = OPTIONAL_ACTIVITIES.find((activity) => activity.id === 'jazz-band')
+  assert.equal(jazzBand?.title, 'Practice Jazz Band')
+  assert.equal(jazzBand?.minutes, 20)
+  assert.equal(jazzBand?.sessions, 5)
+  assert.deepEqual(jazzBand?.days, ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'])
+  assert.equal(OPTIONAL_SESSION_TOTAL, 17)
+  for (const day of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'] as const) {
+    assert.equal(optionalActivitiesForDay(day).some((activity) => activity.id === 'jazz-band'), true)
+  }
+  for (const day of ['Friday', 'Saturday'] as const) {
+    assert.equal(optionalActivitiesForDay(day).some((activity) => activity.id === 'jazz-band'), false)
+  }
+})
+
+test('completed timers name the activity and move Saoirse forward', () => {
+  assert.equal(
+    completedActivityMessage('Practice Jazz Band · Session 3'),
+    'Alright! You are finished with Practice Jazz Band. On to the next thing!',
+  )
+  assert.equal(
+    completedActivityMessage('Read for 20 minutes'),
+    'Alright! You are finished with Read for 20 minutes. On to the next thing!',
+  )
 })
 
 test('the English hand-in checkbox appears and counts only on Friday', () => {

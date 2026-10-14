@@ -95,6 +95,7 @@ import {
   disconnectCalendar,
   disconnectMockGoogle,
   endControlledSession,
+  skipControlledSession,
   heartbeatControlledSession,
   hydrateFromService,
   getParentAuthorizationStatus,
@@ -193,6 +194,9 @@ function App() {
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(loadSecurityStatus)
   const [hydrated, setHydrated] = useState(false)
   const [sessionError, setSessionError] = useState('')
+  const [timerSkipping, setTimerSkipping] = useState(false)
+  const timerSkipInFlight = useRef(false)
+  const timerActionEpoch = useRef(0)
   const [entryStarting, setEntryStarting] = useState(false)
   const [entryError, setEntryError] = useState('')
   const [stateSaving, setStateSaving] = useState(false)
@@ -354,13 +358,15 @@ function App() {
     if (!sessionId || state.activeTimer?.status === 'completed') return
 
     const reportFocus = async () => {
-      if (heartbeatInFlight.current) return
+      if (heartbeatInFlight.current || timerSkipInFlight.current) return
+      const epoch = timerActionEpoch.current
       const timer = latestState.current.activeTimer
       if (!timer?.id || timer.id !== sessionId || timer.status === 'completed') return
       const active = sessionWantsRunning.current && (timer.selfTimed || (document.visibilityState === 'visible' && document.hasFocus()))
       heartbeatInFlight.current = true
       try {
         const response = await heartbeatControlledSession(sessionId, active)
+        if (epoch !== timerActionEpoch.current) return
         if (timer.selfTimed && response.session?.phaseId !== timer.phaseId) sessionWantsRunning.current = false
         const intent = response.session?.managedChromeRequired
           ? Boolean(response.session.running)
@@ -384,6 +390,7 @@ function App() {
           setSessionError('')
         }
       } catch (error) {
+        if (epoch !== timerActionEpoch.current) return
         setServiceStatus('offline')
         setSessionError(error instanceof Error ? error.message : 'The session service could not be reached.')
       } finally {
@@ -581,6 +588,28 @@ function App() {
     setView('day')
   }
 
+  const skipTimer = async () => {
+    const timer = latestState.current.activeTimer
+    if (!timer?.id || timer.status === 'completed' || timerSkipInFlight.current) return
+    timerSkipInFlight.current = true
+    timerActionEpoch.current += 1
+    setTimerSkipping(true)
+    try {
+      const response = await skipControlledSession(timer.id)
+      sessionWantsRunning.current = false
+      latestState.current = response.state
+      setState(response.state)
+      setServiceMeta(response.meta)
+      setServiceStatus('online')
+      setSessionError('')
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'Skip could not be saved. Please try again.')
+    } finally {
+      timerSkipInFlight.current = false
+      setTimerSkipping(false)
+    }
+  }
+
   const completeTimer = async () => {
     const timer = latestState.current.activeTimer
     if (!timer?.id || timer.status !== 'completed') return
@@ -612,25 +641,28 @@ function App() {
 
   const toggleTimer = async () => {
     const timer = latestState.current.activeTimer
-    if (!timer?.id || timer.status === 'completed') return
+    if (!timer?.id || timer.status === 'completed' || timerSkipInFlight.current) return
+    const epoch = timerActionEpoch.current
     const wantsRunning = !timer.running
     sessionWantsRunning.current = wantsRunning
     setState((current) => current.activeTimer
       ? { ...current, activeTimer: { ...current.activeTimer, running: wantsRunning } }
       : current)
     try {
-      const active = wantsRunning && document.visibilityState === 'visible' && document.hasFocus()
+      const active = wantsRunning && (timer.selfTimed || (document.visibilityState === 'visible' && document.hasFocus()))
       const response = await heartbeatControlledSession(timer.id, active)
+      if (epoch !== timerActionEpoch.current) return
       setState({
         ...response.state,
         activeTimer: response.state.activeTimer
-          ? { ...response.state.activeTimer, running: wantsRunning }
+          ? { ...response.state.activeTimer, running: response.session?.status === 'completed' ? false : wantsRunning }
           : null,
       })
       setServiceMeta(response.meta)
       setServiceStatus('online')
       setSessionError('')
     } catch (error) {
+      if (epoch !== timerActionEpoch.current) return
       setServiceStatus('offline')
       setSessionError(error instanceof Error ? error.message : 'The timer could not be updated.')
     }
@@ -737,6 +769,8 @@ function App() {
               toggle={toggleTimer}
               complete={completeTimer}
               cancel={cancelTimer}
+              skip={skipTimer}
+              skipping={timerSkipping}
             />
           )}
         </div>
@@ -2311,11 +2345,15 @@ function SessionView({
   toggle,
   complete,
   cancel,
+  skip,
+  skipping,
 }: {
   timer: ActiveTimer
   toggle: () => void
   complete: () => void
   cancel: () => void
+  skip: () => void
+  skipping: boolean
 }) {
   const serverRemaining = timer.phaseRemainingSeconds ?? timer.remainingSeconds
   const [displayRemaining, setDisplayRemaining] = useState(serverRemaining)
@@ -2378,7 +2416,7 @@ function SessionView({
       : timer.kind === 'reward'
         ? 'Only visible video playback counts. Pauses, buffering, ads, and time outside the YouTube window do not use your credit.'
     : timer.selfTimed
-      ? 'Open the activity in another tab and keep this homework tab open. Pause for breaks. This timer records practice time; it does not verify work on the other website. Return here to move from reading to flashcards. Browser sleep may pause the timer.'
+      ? 'Your timer keeps counting while you work in another tab, window, or app screen. Keep this homework tab open and pause before taking a break or putting the device to sleep. This is an honor-system timer, not a check of the other website.'
     : inApp
       ? 'This embedded activity is authenticated to this homework session. Time counts only while this tab is visible and focused.'
     : timer.waitingForVerification
@@ -2416,13 +2454,15 @@ function SessionView({
         )}
         {!done ? (
           <div className="session-actions">
-            {!managed && <button className="secondary-button" onClick={toggle}>{timer.running ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}{timer.running ? 'Pause' : 'Resume'}</button>}
-            <button className="text-button danger" onClick={cancel}><X size={17} /> End session</button>
+            {!managed && <button className="secondary-button" onClick={toggle} disabled={skipping}>{timer.running ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}{timer.running ? 'Pause' : 'Resume'}</button>}
+            <button className="secondary-button" onClick={skip} disabled={skipping} aria-describedby="timer-skip-note">{skipping ? 'Saving skip…' : 'Skip timer'}</button>
+            <button className="text-button danger" onClick={cancel} disabled={skipping}><X size={17} /> End session</button>
           </div>
         ) : (
           <button className="primary-button" onClick={complete}><Check size={19} /> {timer.kind === 'reward' ? 'Return to rewards' : 'Return to learning path'}</button>
         )}
-        <div className="focus-note"><ShieldCheck size={17} /> {honorReward ? 'Honor system · stop watching when time is up' : timer.selfTimed ? 'Self-timed practice · pause when taking a break' : timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'Time counts while this homework tab is focused' : 'Time counts while this homework tab is focused'}</div>
+        {!done && <p id="timer-skip-note" className="timer-skip-note">Temporary option: {timer.kind === 'reward' ? 'Skip ends this reward and uses up its remaining time.' : 'Skip finishes the whole activity and awards its usual credit.'}</p>}
+        <div className="focus-note"><ShieldCheck size={17} /> {honorReward ? 'Honor system · stop watching when time is up' : timer.selfTimed ? 'Counts in the background · pause for breaks' : timer.kind === 'reward' ? 'Managed Chrome verifies foreground, non-ad playback' : managed ? 'Managed Chrome verifies the approved origin every five seconds' : inApp ? 'Time counts while this homework tab is focused' : 'Time counts while this homework tab is focused'}</div>
       </div>
     </section>
   )

@@ -408,6 +408,12 @@ export function heartbeatControlledSession(sessionId: string, active: boolean) {
   })
 }
 
+export function skipControlledSession(sessionId: string) {
+  return request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/skip`, {
+    method: 'POST',
+  })
+}
+
 export function endControlledSession(sessionId: string) {
   return request<SessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
     method: 'POST',

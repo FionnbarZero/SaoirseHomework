@@ -490,7 +490,8 @@ a.row-button { text-decoration: none; }
 .in-app-activity-frame { margin-top: 24px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #fff; text-align: left; }
 .in-app-activity-frame > div { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #edf5f1; color: #34736a; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .in-app-activity-frame iframe { display: block; width: 100%; height: min(650px, 64vh); border: 0; background: #fff; }
-.session-actions { margin-top: 23px; display: flex; justify-content: center; align-items: center; gap: 18px; }
+.session-actions { margin-top: 23px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 18px; }
+.timer-skip-note { margin: 14px auto 0; max-width: 440px; font-size: 13px; line-height: 1.5; color: var(--muted); }
 .session-card > .primary-button { margin-top: 22px; }
 .focus-note { margin-top: 26px; padding-top: 17px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 7px; color: #929793; font-size: 9px; }
 

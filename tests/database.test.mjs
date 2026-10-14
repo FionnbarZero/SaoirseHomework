@@ -750,6 +750,97 @@ test('self-timed practice supports background heartbeats, pauses between phases,
   store.close()
 })
 
+test('hosted reading and every drill count delayed background time, pause, and resume', () => {
+  const activities = ['independent-reading', 'voena', 'drums', 'band', 'volleyball', 'jazz-band', 'gym']
+  for (const activityId of activities) {
+    const clock = controlledClock('2026-10-05T16:00:00.000Z')
+    const store = createStore(':memory:', { ...clock.options(), backgroundTimers: true })
+    try {
+      const required = activityId === 'independent-reading'
+      const session = store.startSession({ kind: required ? 'required' : 'optional', activityId,
+        sessionKey: required ? 'Monday' : `${activityId}:0`, label: activityId, targetSeconds: 900 })
+      assert.equal(session.selfTimed, true, activityId)
+      clock.advance(180_000)
+      assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 180, activityId)
+      clock.advance(10_000)
+      const paused = store.heartbeatSession(session.id, false)
+      assert.equal(paused.status, 'paused')
+      assert.equal(paused.creditedSeconds, 190, 'count the interval just before manual Pause')
+      clock.advance(300_000)
+      assert.equal(store.heartbeatSession(session.id, false).creditedSeconds, 190)
+      assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 190)
+      clock.advance(1_000_000)
+      const completed = store.heartbeatSession(session.id, true)
+      assert.equal(completed.status, 'completed')
+      assert.equal(completed.creditedSeconds, 900, 'never exceed the timer target')
+      store.heartbeatSession(session.id, true)
+      assert.equal(store.loadState().completionRecords.length, 1)
+    } finally { store.close() }
+  }
+})
+
+test('hosted Du Chinese background time stops at each phase boundary', () => {
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+  const store = createStore(':memory:', { ...clock.options(), backgroundTimers: true })
+  try {
+    const session = store.startSession({ kind: 'required', activityId: 'du-chinese', sessionKey: 'Monday', label: 'Du Chinese', targetSeconds: 1200,
+      plan: { phases: [{ id: 'reading', label: 'Reading', targetSeconds: 780, verification: 'self-timed' }, { id: 'flashcards', label: 'Flashcards', targetSeconds: 420, verification: 'self-timed' }] },
+    })
+    clock.advance(1000_000)
+    const next = store.heartbeatSession(session.id, true)
+    assert.equal(next.phaseId, 'flashcards')
+    assert.equal(next.creditedSeconds, 780)
+    assert.equal(next.status, 'paused')
+    clock.advance(300_000)
+    assert.equal(store.heartbeatSession(session.id, false).creditedSeconds, 780)
+    store.heartbeatSession(session.id, true)
+    clock.advance(420_000)
+    assert.equal(store.heartbeatSession(session.id, true).status, 'completed')
+  } finally { store.close() }
+})
+
+test('hosted honor rewards count background gaps without charging paused time', () => {
+  const clock = controlledClock()
+  const store = createStore(':memory:', { ...clock.options(), backgroundTimers: true, rewardMode: 'honor' })
+  try {
+    store.saveState({ ...sampleState(), activeTimer: null })
+    const session = store.startSession(buildRewardSession({ credit: store.getRewardCredit('credit-1'), mode: 'honor' }))
+    clock.advance(90_000)
+    assert.equal(store.heartbeatSession(session.id, false).remainingSeconds, 210)
+    clock.advance(90_000)
+    assert.equal(store.heartbeatSession(session.id, true).remainingSeconds, 210)
+    clock.advance(210_000)
+    assert.equal(store.heartbeatSession(session.id, true).status, 'completed')
+    assert.equal(store.loadState().rewardCredits.length, 0)
+  } finally { store.close() }
+})
+
+test('a saved focus timer becomes background-capable after release without counting restart downtime', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'saoirse-background-'))
+  const filename = join(directory, 'state.sqlite')
+  const clock = controlledClock()
+  let store = createStore(filename, clock.options())
+  try {
+    const session = store.startSession({ kind: 'optional', activityId: 'gym', sessionKey: 'gym:0', label: 'Gym', targetSeconds: 1200 })
+    assert.equal(session.selfTimed, false)
+    clock.advance(5000)
+    store.heartbeatSession(session.id, true)
+    store.close()
+    clock.advance(3600_000)
+    store = createStore(filename, { ...clock.options(), backgroundTimers: true })
+    const restored = store.loadState().activeTimer
+    assert.equal(restored.selfTimed, true)
+    assert.equal(restored.status, 'paused')
+    assert.equal(restored.creditedSeconds, 5)
+    assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 5)
+    clock.advance(90_000)
+    assert.equal(store.heartbeatSession(session.id, true).creditedSeconds, 95)
+  } finally {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('heartbeats award only bounded active monotonic time', () => {
   const clock = controlledClock()
   const store = createStore(':memory:', clock.options())
@@ -905,6 +996,97 @@ test('Gym session keys survive state import while invalid session keys are rejec
   } finally {
     store.close()
   }
+})
+
+test('temporary skip finishes a multi-phase required timer with an honest completion record', () => {
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  try {
+    const session = store.startSession({ kind: 'required', activityId: 'du-chinese', sessionKey: 'Monday', label: 'Du Chinese', targetSeconds: 1200,
+      plan: { phases: [{ id: 'reading', label: 'Reading', targetSeconds: 780, verification: 'self-timed' }, { id: 'flashcards', label: 'Flashcards', targetSeconds: 420, verification: 'self-timed' }] },
+    })
+    clock.advance(5000)
+    store.heartbeatSession(session.id, true)
+    const skipped = store.skipSession(session.id)
+    assert.equal(skipped.status, 'completed')
+    assert.equal(skipped.remainingSeconds, 0)
+    assert.equal(skipped.phaseRemainingSeconds, 0)
+    assert.equal(skipped.phaseIndex, 1)
+    assert.equal(skipped.running, false)
+    const state = store.loadState()
+    assert.deepEqual(state.requiredByDay.Monday, ['du-chinese'])
+    assert.deepEqual(state.requiredByDay.Tuesday, [])
+    assert.equal(state.rewardCredits.length, 0)
+    const record = state.completionRecords[0]
+    assert.equal(record.method, 'temporary-skip')
+    assert.equal(record.source, 'timer-skip')
+    const details = JSON.parse(store.db.prepare('SELECT details_json FROM completion_record WHERE id = ?').get(record.id).details_json)
+    assert.equal(details.creditedSeconds, 5)
+    assert.equal(details.skippedSeconds, 1195)
+    store.skipSession(session.id)
+    store.heartbeatSession(session.id, true)
+    assert.equal(store.loadState().completionRecords.length, 1)
+    assert.equal(store.listAudit(50).filter(event => event.eventType === 'session_skipped').length, 1)
+    store.acknowledgeSession(session.id)
+    assert.equal(store.loadState().activeTimer, null)
+    assert.equal(store.skipSession(session.id), null)
+  } finally { store.close() }
+})
+
+test('temporary skip awards optional practice once and persists across reopening', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'saoirse-skip-'))
+  const filename = join(directory, 'state.sqlite')
+  const clock = controlledClock()
+  let store = createStore(filename, clock.options())
+  try {
+    const session = store.startSession({ kind: 'optional', activityId: 'gym', sessionKey: 'gym:0', label: 'Gym', targetSeconds: 1200 })
+    store.skipSession(session.id)
+    store.skipSession(session.id)
+    store.close()
+    store = createStore(filename, clock.options())
+    store.skipSession(session.id)
+    const state = store.loadState()
+    assert.deepEqual(state.optionalCompleted, ['gym:0'])
+    assert.equal(state.rewardCredits.length, 1)
+    assert.equal(state.rewardCredits[0].remainingSeconds, 300)
+    assert.equal(state.activeTimer.status, 'completed')
+    assert.equal(state.completionRecords.length, 1)
+  } finally {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('temporary skip works on managed timers and consumes rewards without creating new credit', () => {
+  for (const mode of ['honor', 'managed']) {
+    const clock = controlledClock()
+    const store = createStore(':memory:', clock.options())
+    try {
+      store.saveState({ ...sampleState(), activeTimer: null })
+      const session = store.startSession(buildRewardSession({ credit: store.getRewardCredit('credit-1'), mode, chromeConnected: true }))
+      assert.equal(store.skipSession(session.id).remainingSeconds, 0)
+      store.skipSession(session.id)
+      assert.equal(store.getRewardCredit('credit-1'), null)
+      assert.equal(store.loadState().rewardCredits.length, 0)
+    } finally { store.close() }
+  }
+})
+
+test('temporary skip rejects missing, cancelled, and previous-week activity sessions', () => {
+  const clock = controlledClock('2026-10-05T16:00:00.000Z')
+  const store = createStore(':memory:', clock.options())
+  try {
+    assert.throws(() => store.skipSession('missing'), { code: 'session_not_found' })
+    const request = { kind: 'optional', activityId: 'gym', sessionKey: 'gym:0', label: 'Gym', targetSeconds: 1200 }
+    const cancelled = store.startSession(request)
+    store.cancelSession(cancelled.id)
+    assert.throws(() => store.skipSession(cancelled.id), { code: 'session_inactive' })
+    const stale = store.startSession(request)
+    clock.setWall('2026-10-12T16:00:00.000Z')
+    assert.throws(() => store.skipSession(stale.id), { code: 'session_expired' })
+    assert.deepEqual(store.loadState().optionalCompleted, [])
+    assert.equal(store.loadState().rewardCredits.length, 0)
+  } finally { store.close() }
 })
 
 test('reward policy allows honor-system cloud use without relaxing managed local rewards', () => {

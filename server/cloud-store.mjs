@@ -21,6 +21,7 @@ const mutatingMethods = new Set([
   'completeWritingGameSession',
   'startSession',
   'heartbeatSession',
+  'skipSession',
   'cancelSession',
   'acknowledgeSession',
   'setDailyCompletion',

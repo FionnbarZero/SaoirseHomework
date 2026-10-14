@@ -82,6 +82,7 @@ const parentAuthorizationConfigured = requireRootOwnership
 const storeOptions = {
   timeZone,
   rewardMode: privateAccess.googleIap ? 'honor' : 'managed',
+  backgroundTimers: privateAccess.googleIap,
   enforceFilePermissions: requireRootOwnership,
   googleLiveConfiguration: {
     mode: googleMode,
@@ -1176,6 +1177,13 @@ const server = createServer((request, response) => withStoreContext(async () => 
         ? { source: 'in-app-browser', sessionToken }
         : {})
       return sendJson(response, 200, sessionResponse())
+    }
+
+    // Temporary owner-approved skip: retains the normal authenticated API gate.
+    const skipMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/skip$/)
+    if (skipMatch && request.method === 'POST') {
+      store.skipSession(decodeURIComponent(skipMatch[1]))
+      return sendJson(response, 200, sessionResponse(), { 'Set-Cookie': expiredInAppSessionHeader() })
     }
 
     const cancelMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/cancel$/)

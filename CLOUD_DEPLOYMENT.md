@@ -66,9 +66,19 @@ every request. Only the configured parent account receives the parent role.
 Use separate Chrome profiles for parent and child; the signed-in parent profile
 has parent access without a macOS guardian.
 
-Du Chinese uses self-timed reading and flashcard phases in Google IAP mode.
-Keep the homework tab open and pause for breaks. It does not verify activity on
-the external site, and browser sleep or heartbeat throttling can pause credit.
+All hosted homework and drill timers count in the background in Google IAP mode,
+including timers saved before this release. Keep the homework tab open; switching
+tabs, windows, or app screens does not pause them. Delayed heartbeats catch up to
+the current phase limit. Pause explicitly for breaks or device sleep: elapsed
+time can count while the browser is suspended. A server restart still pauses
+timers without charging downtime. Du Chinese pauses between its reading and
+flashcard phases so the learner can switch activities. Managed local installs
+retain their verification rules. No database schema changes are required.
+
+Temporary owner-approved **Skip timer** completes an activity and awards its
+normal credit once, recording `temporary-skip` rather than verified time.
+Skipping a reward consumes its remaining time. Remove this bypass when the
+owner requests normal timer enforcement again.
 
 Calendar OAuth publishing was confirmed **In production** in the Google Cloud
 console on October 8, 2026, after owner approval. This did not change homework
@@ -84,8 +94,9 @@ uses self-timed rewards in Google IAP mode, without requiring the local Chrome
 extension. Use now starts the timer; Open YouTube launches another tab. Keep the
 homework tab open and pause manually for breaks/ads. The app shows an end-of-time
 reminder but does not monitor playback or block YouTube. Unused time is retained
-when ending a session. Closing the tab, browser sleep, or a service restart can
-pause counting; restart recovery does not spend downtime. Managed local installs
+when ending a session. Pause before closing the tab or putting the device to sleep;
+background gaps can count toward the current timer. Restart recovery does not
+spend downtime. Managed local installs
 keep their existing verified-playback behavior.
 
 **Deferred until the live app is complete:** implement computer/website blocking

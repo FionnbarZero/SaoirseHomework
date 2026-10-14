@@ -71,6 +71,30 @@ test('Firestore snapshots restore the exact SQLite-backed state', async () => {
   await second.close()
 })
 
+test('timer skip is saved to Firestore and retry cannot duplicate its reward', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'saoirse-cloud-skip-'))
+  const firestore = new FakeFirestore()
+  const store = await createFirestoreBackedStore(join(directory, 'first.sqlite'), { projectId: 'test-project', firestore })
+  t.after(() => store.db.close())
+  const session = store.startSession({ kind: 'optional', activityId: 'gym', sessionKey: 'gym:0', label: 'Gym', targetSeconds: 1200 })
+  await store.flushIfDirty()
+  const beforeSkip = firestore.value.revision
+  store.skipSession(session.id)
+  firestore.failuresRemaining = 1
+  await assert.rejects(store.flushIfDirty(), /Temporary Firestore outage/)
+  assert.equal(firestore.value.revision, beforeSkip)
+  store.skipSession(session.id)
+  await store.flushIfDirty()
+  assert.ok(firestore.value.revision > beforeSkip)
+  const restored = await createFirestoreBackedStore(join(directory, 'restored.sqlite'), { projectId: 'test-project', firestore })
+  t.after(() => restored.db.close())
+  const state = restored.loadState()
+  assert.deepEqual(state.optionalCompleted, ['gym:0'])
+  assert.equal(state.activeTimer.status, 'completed')
+  assert.equal(state.rewardCredits.length, 1)
+  assert.equal(state.completionRecords.length, 1)
+})
+
 test('a failed cloud save can retry all dirty state, including later changes', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'saoirse-cloud-retry-'))
   const firestore = new FakeFirestore()

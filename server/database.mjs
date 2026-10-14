@@ -1269,10 +1269,18 @@ export function createStore(filename, options = {}) {
 
   function planFromRow(row) {
     const parsed = safeJson(row.plan_json, {})
-    if (Array.isArray(parsed.phases) && parsed.phases.length) return { plan: parsed, legacy: false }
+    const legacy = !(Array.isArray(parsed.phases) && parsed.phases.length)
+    const plan = legacy ? normalizeSessionPlan(null, Math.ceil(Number(row.target_ms) / 1000), row.label) : parsed
+    // Hosted honor-system timers must not depend on the homework tab having focus.
+    // Apply at read time so timers saved before this release get the same behavior.
     return {
-      legacy: true,
-      plan: normalizeSessionPlan(null, Math.ceil(Number(row.target_ms) / 1000), row.label),
+      legacy,
+      plan: options.backgroundTimers ? {
+        ...plan,
+        phases: plan.phases.map(phase => phase.verification === 'browser-focus'
+          ? { ...phase, verification: 'self-timed' }
+          : phase),
+      } : plan,
     }
   }
 
@@ -2304,13 +2312,14 @@ export function createStore(filename, options = {}) {
     }
   }
 
-  function applySessionCompletion(row, completedAt) {
+  function applySessionCompletion(row, completedAt, skipped = false) {
     const honorReward = row.kind === 'reward' && planFromRow(row).plan.phases[0].verification === 'self-timed'
-    const method = row.kind === 'reward' ? honorReward ? 'reward-honor' : 'reward-playback' : 'time-in-session'
+    const method = skipped ? 'temporary-skip' : row.kind === 'reward' ? honorReward ? 'reward-honor' : 'reward-playback' : 'time-in-session'
     const result = insertCompletion.run(
-      `session:${row.id}`, row.activity_id, row.session_key ?? null, method, 'server-heartbeat', row.id,
+      `session:${row.id}`, row.activity_id, row.session_key ?? null, method, skipped ? 'timer-skip' : 'server-heartbeat', row.id,
       completedAt, JSON.stringify({
-        creditedSeconds: Math.ceil(Number(row.target_ms) / 1000),
+        creditedSeconds: Math.floor(Number(skipped ? row.credited_ms : row.target_ms) / 1000),
+        ...(skipped ? { skippedSeconds: Math.ceil((Number(row.target_ms) - Number(row.credited_ms)) / 1000) } : {}),
         weekId: row.week_id,
       }),
     )
@@ -2319,11 +2328,11 @@ export function createStore(filename, options = {}) {
     if (row.kind === 'required') {
       db.prepare(`
         INSERT INTO weekly_daily_completion (week_id, day, activity_id, source, completed_at)
-        VALUES (?, ?, ?, 'time-in-session', ?)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(week_id, day, activity_id) DO UPDATE SET
           source = excluded.source,
           completed_at = excluded.completed_at
-      `).run(row.week_id, row.session_key, row.activity_id, completedAt)
+      `).run(row.week_id, row.session_key, row.activity_id, method, completedAt)
     } else if (row.kind === 'optional') {
       const optionalResult = db.prepare(`
         INSERT OR IGNORE INTO weekly_optional_completion (week_id, session_key, completed_at)
@@ -2415,9 +2424,12 @@ export function createStore(filename, options = {}) {
       return sessionFromRow(getSessionRow(row.id))
     }
 
-    if (requestedActive && row.status === 'active' && row.runtime_id === runtimeId && row.last_tick_ms != null) {
+    const backgroundTiming = options.backgroundTimers && phase.verification === 'self-timed'
+    if ((requestedActive || backgroundTiming) && row.status === 'active' && row.runtime_id === runtimeId && row.last_tick_ms != null) {
       const elapsed = tick - Number(row.last_tick_ms)
-      if (elapsed >= 0 && elapsed <= (phase.verification === 'self-timed' ? 75_000 : MAX_HEARTBEAT_GAP_MS)) {
+      // Background browser throttling can delay heartbeats. Credit elapsed time
+      // up to the current phase limit, including the final interval before Pause.
+      if (elapsed >= 0 && (backgroundTiming || elapsed <= (phase.verification === 'self-timed' ? 75_000 : MAX_HEARTBEAT_GAP_MS))) {
         const remainingInPhase = Math.max(0, Number(phase.targetSeconds) * 1000 - phaseCreditedMs)
         const awarded = Math.min(elapsed, remainingInPhase)
         creditedMs += awarded
@@ -2473,6 +2485,39 @@ export function createStore(filename, options = {}) {
     })
     if (completed) addAudit('session_completed', { sessionId: row.id, kind: row.kind, activityId: row.activity_id })
     return sessionFromRow(getSessionRow(row.id))
+  }
+
+  // Temporary owner-approved timer bypass. Keep the audit distinct from timed work.
+  function skipSession(id) {
+    const weekId = ensureCurrentWeek().weekId
+    const row = getSessionRow(id)
+    if (!row) throw serviceError('Session not found', 404, 'session_not_found')
+    if (row.status === 'cancelled') throw serviceError('This session has ended', 409, 'session_inactive')
+    if (row.acknowledged) return null
+    if (row.status === 'completed') return sessionFromRow(row)
+    if (row.kind !== 'reward' && row.week_id !== weekId) {
+      throw serviceError('This session belongs to a previous week', 409, 'session_expired')
+    }
+    const { plan } = planFromRow(row)
+    const phaseIndex = plan.phases.length - 1
+    const now = asIso(wallNow())
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare(`
+        UPDATE activity_session
+        SET credited_ms = target_ms, phase_index = ?, phase_credited_ms = ?, status = 'completed',
+            runtime_id = NULL, last_tick_ms = NULL, reward_playback_active = 0,
+            completed_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(phaseIndex, Number(plan.phases[phaseIndex].targetSeconds) * 1000, now, now, row.id)
+      applySessionCompletion(row, now, true)
+      insertAudit.run('session_skipped', JSON.stringify({ sessionId: row.id, kind: row.kind, activityId: row.activity_id, weekId: row.week_id }), now)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    }
+    return sessionFromRow(getSessionRow(id))
   }
 
   function cancelSession(id) {
@@ -3298,6 +3343,7 @@ export function createStore(filename, options = {}) {
     completeWritingGameSession,
     startSession,
     heartbeatSession,
+    skipSession,
     cancelSession,
     acknowledgeSession,
     setDailyCompletion,
